@@ -62,10 +62,10 @@ Design: §12.2 · Depends: 0.1
 
 Verify: open a new Claude Code session and confirm AGENTS.md content is loaded (ask it for the trust boundaries).
 
-### 0.3 CI ☐
+### 0.3 CI ☑
 Design: §14 (Hygiene row) · Depends: 0.1
-- [ ] `.github/workflows/ci.yml`: Python 3.12 + 3.13 matrix; `uv sync --frozen`; ruff check + format check; pyright; pytest; `uv lock --check`; `pip-audit`
-- [ ] Pin action versions by SHA
+- [x] `.github/workflows/ci.yml`: Python 3.12 + 3.13 + 3.14 matrix; `uv sync --frozen`; ruff check + format check; pyright; pytest; `uv lock --check`; `pip-audit`
+- [x] Pin action versions by SHA
 
 Verify: push the branch; workflow green on both Python versions.
 
@@ -445,3 +445,6 @@ Verify: all phases ☑; CI green on tag.
 | 2026-10-23 | 0.1 | Ruff rules `E W F I B UP S SIM RUF` (`S101` allowed in `tests/`); pyright covers `src` + `tests`, strict on `src` only | Bandit (`S`) checks suit a security-sensitive server; strict typing where it matters |
 | 2026-10-23 | 0.1 | `.gitignore` ignores `*.spec` (PyInstaller template); step 1.1 must confirm spec files aren't silently ignored | Found during 0.1; affects 1.1 |
 | 2026-10-23 | 0.2 | Project name in prose and headings is `independent-okta-mcp`; `okta-mcp` is only the distribution, console script and `okta_mcp` import name | User decision |
+| 2026-10-23 | 0.3 | CI pins `actions/checkout` v7.0.1 and `astral-sh/setup-uv` v10.2.0 by SHA (v10.3.x skipped: released 1–2 days before), uv `0.12.5`; checkout without persisted credentials; `permissions: contents: read` | Supply chain: avoid brand-new releases, least-privilege token. When bumping uv, consider bumping the `uv_build` range in `pyproject.toml` with it |
+| 2026-10-23 | 0.3 | `pip-audit --skip-editable` audits the synced environment (runtime + dev deps); the project itself is skipped as it isn't on PyPI | Audits exactly what CI installs from `uv.lock` |
+| 2026-10-23 | 0.3 | CI matrix 3.12–3.14; 3.15 deferred until CI's uv pin moves to a release (≥ ~2 weeks old) that ships 3.15.0 final, then added as a normal (blocking) job. Image stays on 3.12 | uv 0.12.5 only provides 3.15.0rc1, so a 3.15 job now would test the release candidate. Checks passed locally on 3.14.7 and 3.15.0rc1 |
