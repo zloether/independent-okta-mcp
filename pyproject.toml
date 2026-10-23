@@ -1,0 +1,52 @@
+[project]
+name = "okta-mcp"
+version = "0.0.0"
+description = "Read-only MCP server for the Okta Management API with group-based tool policy"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+dependencies = [
+    "anyio>=4.6",
+    "httpx>=0.28",
+    "jsonschema>=4.23",
+    "pydantic>=2.10",
+    "pyjwt[crypto]>=2.10",
+    "pyyaml>=6.0.2",
+    "uvicorn>=0.34",
+]
+
+[project.scripts]
+okta-mcp = "okta_mcp.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pip-audit>=2.8",
+    "pyright>=1.1.400",
+    "pytest>=8.3",
+    "respx>=0.22",
+    "ruff>=0.11",
+]
+
+[build-system]
+requires = ["uv_build>=0.12,<0.13"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "S", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.pyright]
+include = ["src", "tests"]
+strict = ["src"]
+pythonVersion = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "--strict-config"]
+xfail_strict = true

@@ -21,7 +21,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 
 | Phase | Steps | Status |
 |---|---|---|
-| 0. Bootstrap & spikes | 0.1–0.5 | ☐ |
+| 0. Bootstrap & spikes | 0.1–0.5 | ◐ |
 | 1. Spec & registry core | 1.1–1.6 | ☐ |
 | 2. Okta client & executor | 2.1–2.10 | ☐ |
 | 3. Policy & tool surface | 3.1–3.4 | ☐ |
@@ -39,14 +39,14 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 
 ## Phase 0 — Bootstrap & spikes
 
-### 0.1 Package skeleton ☐
+### 0.1 Package skeleton ☑
 Design: §4.1, §11.1 · Depends: —
-- [ ] `pyproject.toml`: `[project]` (name `okta-mcp`, `requires-python = ">=3.12"`, `license = { file = "LICENSE" }`, `readme = "README.md"`), console script `okta-mcp`, `dev` dependency group (`pytest`, `respx`, `ruff`, `pyright`, `pip-audit`); async tests via anyio's bundled pytest plugin
-- [ ] Runtime deps: `httpx`, `anyio`, `PyJWT[crypto]`, `pydantic`, `PyYAML`, `jsonschema`, `uvicorn`. `mcp` is added in 0.4 once the v2 version is chosen (exact pin)
-- [ ] `src/okta_mcp/__init__.py`, `__main__.py` (prints version, exits 0); `src/okta_mcp/data/` included as package data
-- [ ] Ruff, pyright (strict on `src/`), pytest config in `pyproject.toml`
-- [ ] `uv lock`; commit `uv.lock`
-- [ ] `tests/test_smoke.py` imports the package
+- [x] `pyproject.toml`: `[project]` (name `okta-mcp`, `requires-python = ">=3.12"`, `license = { file = "LICENSE" }`, `readme = "README.md"`), console script `okta-mcp`, `dev` dependency group (`pytest`, `respx`, `ruff`, `pyright`, `pip-audit`); async tests via anyio's bundled pytest plugin
+- [x] Runtime deps: `httpx`, `anyio`, `PyJWT[crypto]`, `pydantic`, `PyYAML`, `jsonschema`, `uvicorn`. `mcp` is added in 0.4 once the v2 version is chosen (exact pin)
+- [x] `src/okta_mcp/__init__.py`, `__main__.py` (prints version, exits 0); `src/okta_mcp/data/` included as package data
+- [x] Ruff, pyright (strict on `src/`), pytest config in `pyproject.toml`
+- [x] `uv lock`; commit `uv.lock`
+- [x] `tests/test_smoke.py` imports the package
 
 Verify:
 ```
