@@ -69,10 +69,10 @@ Design: §14 (Hygiene row) · Depends: 0.1
 
 Verify: push the branch; workflow green on every Python version in the matrix.
 
-### 0.3.1 Dependabot ◐
+### 0.3.1 Dependabot ☑
 Design: §12.1 (Supply chain row) · Depends: 0.3
 - [x] `.github/dependabot.yml`: `uv` and `github-actions` ecosystems, weekly, 14-day cooldown, minor+patch grouped per ecosystem (majors separate)
-- [ ] Repo settings: Dependabot alerts and security updates on (user)
+- [x] Repo settings: Dependabot alerts and security updates on (user)
 
 Verify: GitHub shows the config parsed without errors (Insights → Dependency graph → Dependabot); `gh api repos/zloether/independent-okta-mcp/vulnerability-alerts` returns 204; `…/automated-security-fixes` reports `enabled: true`.
 
@@ -456,4 +456,4 @@ Verify: all phases ☑; CI green on tag.
 | 2026-10-23 | 0.3 | CI pins `actions/checkout` v7.0.1 and `astral-sh/setup-uv` v10.2.0 by SHA (v10.3.x skipped: released 1–2 days before), uv `0.12.5`; checkout without persisted credentials; `permissions: contents: read` | Supply chain: avoid brand-new releases, least-privilege token. When bumping uv, consider bumping the `uv_build` range in `pyproject.toml` with it |
 | 2026-10-23 | 0.3 | `pip-audit --skip-editable` audits the synced environment (runtime + dev deps); the project itself is skipped as it isn't on PyPI | Audits exactly what CI installs from `uv.lock` |
 | 2026-10-23 | 0.3 | CI matrix 3.12–3.14; 3.15 deferred until CI's uv pin moves to a release (≥ ~2 weeks old) that ships 3.15.0 final, then added as a normal (blocking) job. Image stays on 3.12 | uv 0.12.5 only provides 3.15.0rc1, so a 3.15 job now would test the release candidate. Checks passed locally on 3.14.7 and 3.15.0rc1 |
-| 2026-10-23 | 0.3.1 | Dependabot for `uv` + `github-actions`: weekly, 14-day cooldown (security updates bypass it), minor+patch grouped. `mcp` ignored from 0.4 until 4.5. Not covered, stays manual: uv version in `ci.yml`, `uv_build` range in `pyproject.toml` | Keeps SHA pins and lockfile current while matching the "no brand-new releases" rule; SDK upgrades change protocol/auth behavior (V5) and should be deliberate until integration tests exist |
+| 2026-10-23 | 0.3.1 | Dependabot for `uv` + `github-actions`: weekly, 14-day cooldown (security updates bypass it), minor+patch grouped. `mcp` ignored from 0.4 until 4.5. Not covered, stays manual: uv version in `ci.yml` (the `uv_build` range in `[build-system]` *is* covered; first run opened PR #5 for it) | Keeps SHA pins and lockfile current while matching the "no brand-new releases" rule; SDK upgrades change protocol/auth behavior (V5) and should be deliberate until integration tests exist |
