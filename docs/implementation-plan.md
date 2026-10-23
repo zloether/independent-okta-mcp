@@ -21,7 +21,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 
 | Phase | Steps | Status |
 |---|---|---|
-| 0. Bootstrap & spikes | 0.1–0.5 | ☐ |
+| 0. Bootstrap & spikes | 0.1–0.5 | ◐ |
 | 1. Spec & registry core | 1.1–1.6 | ☐ |
 | 2. Okta client & executor | 2.1–2.10 | ☐ |
 | 3. Policy & tool surface | 3.1–3.4 | ☐ |
@@ -39,14 +39,14 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 
 ## Phase 0 — Bootstrap & spikes
 
-### 0.1 Package skeleton ☐
+### 0.1 Package skeleton ☑
 Design: §4.1, §11.1 · Depends: —
-- [ ] `pyproject.toml`: `[project]` (name `okta-mcp`, `requires-python = ">=3.12"`, `license = { file = "LICENSE" }`, `readme = "README.md"`), console script `okta-mcp`, `dev` dependency group (`pytest`, `respx`, `ruff`, `pyright`, `pip-audit`); async tests via anyio's bundled pytest plugin
-- [ ] Runtime deps: `httpx`, `anyio`, `PyJWT[crypto]`, `pydantic`, `PyYAML`, `jsonschema`, `uvicorn`. `mcp` is added in 0.4 once the v2 version is chosen (exact pin)
-- [ ] `src/okta_mcp/__init__.py`, `__main__.py` (prints version, exits 0); `src/okta_mcp/data/` included as package data
-- [ ] Ruff, pyright (strict on `src/`), pytest config in `pyproject.toml`
-- [ ] `uv lock`; commit `uv.lock`
-- [ ] `tests/test_smoke.py` imports the package
+- [x] `pyproject.toml`: `[project]` (name `okta-mcp`, `requires-python = ">=3.12"`, `license = { file = "LICENSE" }`, `readme = "README.md"`), console script `okta-mcp`, `dev` dependency group (`pytest`, `respx`, `ruff`, `pyright`, `pip-audit`); async tests via anyio's bundled pytest plugin
+- [x] Runtime deps: `httpx`, `anyio`, `PyJWT[crypto]`, `pydantic`, `PyYAML`, `jsonschema`, `uvicorn`. `mcp` is added in 0.4 once the v2 version is chosen (exact pin)
+- [x] `src/okta_mcp/__init__.py`, `__main__.py` (prints version, exits 0); `src/okta_mcp/data/` included as package data
+- [x] Ruff, pyright (strict on `src/`), pytest config in `pyproject.toml`
+- [x] `uv lock`; commit `uv.lock`
+- [x] `tests/test_smoke.py` imports the package
 
 Verify:
 ```
@@ -54,11 +54,11 @@ uv sync && uv run okta-mcp && uv run pytest && uv lock --check
 ```
 Done when: standard checks pass on a clean clone.
 
-### 0.2 AGENTS.md, CLAUDE.md, README ☐
+### 0.2 AGENTS.md, CLAUDE.md, README ◐
 Design: §12.2 · Depends: 0.1
-- [ ] `AGENTS.md`: purpose, layout, commands (sync/test/lint), conventions (read-only invariant, registry-first, tests with every change), **trust boundaries** list from design §12.2 with the `/security-review` rule, pointer to this plan, note that `okta-skills` is reference-only
-- [ ] `CLAUDE.md`: single line `@AGENTS.md`
-- [ ] `README.md`: one-paragraph description, status (pre-alpha), links to design + plan, license note
+- [x] `AGENTS.md`: purpose, layout, commands (sync/test/lint), conventions (read-only invariant, registry-first, tests with every change), **trust boundaries** list from design §12.2 with the `/security-review` rule, pointer to this plan, note that `okta-skills` is reference-only
+- [x] `CLAUDE.md`: single line `@AGENTS.md`
+- [x] `README.md`: one-paragraph description, status (pre-alpha), links to design + plan, license note
 
 Verify: open a new Claude Code session and confirm AGENTS.md content is loaded (ask it for the trust boundaries).
 
@@ -441,3 +441,7 @@ Verify: all phases ☑; CI green on tag.
 | 2026-10-23 | — | Design r4 from independent review: path-value character rejection; group IDs only; MCP 2026-07-28 + SDK v2 target; DPoP on by default; stdio-only dev mode; ai-agents out of v1; simple `get-factors`/`get-enrollments`; `user_id` resolver only, after policy | Design §0.1 |
 | 2026-10-23 | — | Deferred past v1: Path B, per-bucket 429, policy hot-reload, cursor key rotation, `/metrics`, tool-call limiter, `GroupResolver`, composite handlers | Single-engineer v1; ~5–8 days saved |
 | 2026-10-23 | — | Data files ship as package data under `src/okta_mcp/data/` | Required by `uv sync --no-editable` in the image |
+| 2026-10-23 | 0.1 | Build backend `uv_build` (`>=0.12,<0.13`); `__version__` read from package metadata; empty `data/` kept with `.gitkeep` (wheel contents checked) | `uv_build` ships everything under the module dir as package data, no extra config; one version source in `pyproject.toml` |
+| 2026-10-23 | 0.1 | Ruff rules `E W F I B UP S SIM RUF` (`S101` allowed in `tests/`); pyright covers `src` + `tests`, strict on `src` only | Bandit (`S`) checks suit a security-sensitive server; strict typing where it matters |
+| 2026-10-23 | 0.1 | `.gitignore` ignores `*.spec` (PyInstaller template); step 1.1 must confirm spec files aren't silently ignored | Found during 0.1; affects 1.1 |
+| 2026-10-23 | 0.2 | Project name in prose and headings is `independent-okta-mcp`; `okta-mcp` is only the distribution, console script and `okta_mcp` import name | User decision |
