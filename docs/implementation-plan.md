@@ -62,7 +62,7 @@ Design: §12.2 · Depends: 0.1
 
 Verify: open a new Claude Code session and confirm AGENTS.md content is loaded (ask it for the trust boundaries).
 
-### 0.3 CI ◐
+### 0.3 CI ☑
 Design: §14 (Hygiene row) · Depends: 0.1
 - [x] `.github/workflows/ci.yml`: Python 3.12 + 3.13 + 3.14 matrix; `uv sync --frozen`; ruff check + format check; pyright; pytest; `uv lock --check`; `pip-audit`
 - [x] Pin action versions by SHA
