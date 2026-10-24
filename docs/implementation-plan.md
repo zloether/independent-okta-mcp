@@ -90,8 +90,9 @@ Throwaway code under `spikes/sdk/` (deleted at end of 4.2, together with the `sp
 
 Verify: SDK client (both revisions) shows different tool lists for the two principals. Findings and choices recorded in Decisions log.
 
-### 0.5 Okta dev-org spike — Path A and service app ☐
+### 0.5 Okta dev-org spike — Path A and service app ◐
 Design: §8.2–8.5, §10, Appendix C · Depends: — · **Needs: Okta dev org admin access (user-driven)**
+Helpers under `spikes/okta/` (deleted with `spikes/sdk/` at end of 4.2). Run: `uv run pytest spikes/okta`; `uv run python spikes/okta/okta_spike.py --help`.
 - [ ] Create dedicated custom AS, scope `okta-mcp`, `groups` access-token claim emitting **IDs** of Okta-mastered `mcp-okta-*` groups, two test groups, two test users
 - [ ] Register a public OIDC client (PKCE); obtain a token via a real MCP client or a local PKCE script
 - [ ] Record: claims present (`uid`, `sub`, `groups` as IDs, `cid`, `scp`) — **V1, V13**
