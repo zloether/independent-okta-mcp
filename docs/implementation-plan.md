@@ -54,7 +54,7 @@ uv sync && uv run okta-mcp && uv run pytest && uv lock --check
 ```
 Done when: standard checks pass on a clean clone.
 
-### 0.2 AGENTS.md, CLAUDE.md, README ◐
+### 0.2 AGENTS.md, CLAUDE.md, README ☑
 Design: §12.2 · Depends: 0.1
 - [x] `AGENTS.md`: purpose, layout, commands (sync/test/lint), conventions (read-only invariant, registry-first, tests with every change), **trust boundaries** list from design §12.2 with the `/security-review` rule, pointer to this plan, note that `okta-skills` is reference-only
 - [x] `CLAUDE.md`: single line `@AGENTS.md`
