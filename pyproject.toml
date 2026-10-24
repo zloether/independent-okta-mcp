@@ -7,8 +7,9 @@ license = { file = "LICENSE" }
 requires-python = ">=3.12"
 dependencies = [
     "anyio>=4.6",
-    "httpx>=0.28",
+    "httpx2>=2.16",
     "jsonschema>=4.23",
+    "mcp==2.3.0",
     "pydantic>=2.10",
     "pyjwt[crypto]>=2.10",
     "pyyaml>=6.0.2",
@@ -23,7 +24,6 @@ dev = [
     "pip-audit>=2.8",
     "pyright>=1.1.400",
     "pytest>=8.3",
-    "respx>=0.22",
     "ruff>=0.11",
 ]
 
@@ -40,6 +40,7 @@ select = ["E", "W", "F", "I", "B", "UP", "S", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
+"spikes/**" = ["S101"]
 
 [tool.pyright]
 include = ["src", "tests"]

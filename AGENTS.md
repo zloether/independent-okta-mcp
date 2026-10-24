@@ -49,7 +49,7 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 - **Fail closed.** Unknown roles, unclassified commands, scope-less operations or invalid policy expose nothing. Don't add fallbacks that widen access.
 - **Tests with every change.** New behavior comes with tests in the same change. HTTP is mocked; fixtures use `example.com` emails and `example.okta.com` hosts only.
 - **Never log** tokens, keys, or Okta result bodies.
-- Python ≥3.12, fully async (`anyio`, `httpx`). Async tests use anyio's pytest plugin (`@pytest.mark.anyio`).
+- Python ≥3.12, fully async (`anyio`, `httpx2`). Async tests use anyio's pytest plugin (`@pytest.mark.anyio`).
 
 ## Trust boundaries
 
