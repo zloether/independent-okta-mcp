@@ -76,17 +76,17 @@ Design: §12.1 (Supply chain row) · Depends: 0.3
 
 Verify: GitHub shows the config parsed without errors (Insights → Dependency graph → Dependabot); `gh api repos/zloether/independent-okta-mcp/vulnerability-alerts` returns 204; `…/automated-security-fixes` reports `enabled: true`.
 
-### 0.4 SDK spike (V5) ☐
+### 0.4 SDK spike (V5) ☑
 Design: §5.2, §8.1, §16 V5 · Depends: 0.1
-Throwaway code under `spikes/sdk/` (deleted at end of 4.2).
-- [ ] Choose and exact-pin `mcp` v2; confirm current protocol revision (2026-07-28 expected) and 2025-11-25 back-compat
-- [ ] Add a Dependabot `ignore` for `mcp` in `.github/dependabot.yml` (removed after 4.5)
-- [ ] Low-level server (`on_*` handlers) over stateless Streamable HTTP
-- [ ] Per-request principal from a fake `Authorization` header (SDK auth hooks or ASGI middleware + contextvar)
-- [ ] `tools/list` returns different tools for two fake principals, with `cacheScope: "private"` and `ttlMs`
-- [ ] Return `structuredContent` + text fallback; tool `annotations`
-- [ ] Evaluate the SDK's resource-server helpers (`token_verifier`/`auth`, `get_access_token()`): do they cover PRM at both URLs and the design §8.5 checks?
-- [ ] Decide `httpx` vs `httpx2` for the Okta client, and the matching HTTP mock for tests (`respx` mocks `httpx` only)
+Throwaway code under `spikes/sdk/` (deleted at end of 4.2, together with the `spikes/**` ruff ignore in `pyproject.toml`). Run: `uv run pytest spikes/sdk`.
+- [x] Choose and exact-pin `mcp` v2; confirm current protocol revision (2026-07-28 expected) and 2025-11-25 back-compat
+- [x] Add a Dependabot `ignore` for `mcp` in `.github/dependabot.yml` (removed after 4.5)
+- [x] Low-level server (`on_*` handlers) over stateless Streamable HTTP
+- [x] Per-request principal from a fake `Authorization` header (SDK auth hooks or ASGI middleware + contextvar)
+- [x] `tools/list` returns different tools for two fake principals, with `cacheScope: "private"` and `ttlMs`
+- [x] Return `structuredContent` + text fallback; tool `annotations`
+- [x] Evaluate the SDK's resource-server helpers (`token_verifier`/`auth`, `get_access_token()`): do they cover PRM at both URLs and the design §8.5 checks?
+- [x] Decide `httpx` vs `httpx2` for the Okta client, and the matching HTTP mock for tests (`respx` mocks `httpx` only)
 
 Verify: SDK client (both revisions) shows different tool lists for the two principals. Findings and choices recorded in Decisions log.
 
@@ -176,7 +176,7 @@ Verify: `uv run pytest tests/okta/test_token.py tests/okta/test_dpop.py`; `/secu
 
 ### 2.3 HTTP client core ☐
 Design: §6.5 · Depends: 2.2 (interface and fake only)
-- [ ] `okta/client.py`: async HTTP client (`httpx` or `httpx2` per 0.4), GET-only public API, global in-flight semaphore, timeouts, origin assertion on every request, per-request DPoP proof + nonce retry at the resource server, request counter hook (principal contextvar), error → `upstream_error` mapping with sanitized 401/403 text
+- [ ] `okta/client.py`: async HTTP client (`httpx2`, per 0.4; tests use `httpx2.MockTransport`), GET-only public API, global in-flight semaphore, timeouts, origin assertion on every request, per-request DPoP proof + nonce retry at the resource server, request counter hook (principal contextvar), error → `upstream_error` mapping with sanitized 401/403 text
 - [ ] Tests: semaphore caps concurrency, non-origin URL refused, fresh DPoP `jti` per request, deadline cancellation aborts in-flight request
 
 Verify: `uv run pytest tests/okta/test_client.py`
@@ -431,7 +431,7 @@ Verify: all phases ☑; CI green on tag.
 | V1 | `groups` claim (IDs) on access tokens; >100 groups | 3.2, 4.3 | 0.5 |
 | V3 | Client registration: pre-registered vs DCR vs CIMD | 4.6 | 0.5 / 4.6 |
 | V4 | `.manage ⇒ .read` implication | 3.2 | 3.2 (Okta docs) |
-| V5 | SDK v2 / 2026-07-28: stateless per-request principal, `cacheScope`, back-compat, auth helpers, `httpx` vs `httpx2` | 0.1 deps, 2.3, 4.2 | 0.4 |
+| V5 | SDK v2 / 2026-07-28: stateless per-request principal, `cacheScope`, back-compat, auth helpers, `httpx` vs `httpx2` | 0.1 deps, 2.3, 4.2 | 0.4 ☑ (see Decisions log) |
 | V6 | Read-only Admin sufficiency per domain | 5.x | 5.x |
 | V8 | Spec accuracy (scopes, operationIds, params) | 1.3, 5.x | 1.5 / 5.x |
 | V9–V11 | `resource` param, discovery, loopback, static client IDs | 4.4, 4.6 | 0.5 |
@@ -457,3 +457,8 @@ Verify: all phases ☑; CI green on tag.
 | 2026-10-23 | 0.3 | `pip-audit --skip-editable` audits the synced environment (runtime + dev deps); the project itself is skipped as it isn't on PyPI | Audits exactly what CI installs from `uv.lock` |
 | 2026-10-23 | 0.3 | CI matrix 3.12–3.14; 3.15 deferred until CI's uv pin moves to a release (≥ ~2 weeks old) that ships 3.15.0 final, then added as a normal (blocking) job. Image stays on 3.12 | uv 0.12.5 only provides 3.15.0rc1, so a 3.15 job now would test the release candidate. Checks passed locally on 3.14.7 and 3.15.0rc1 |
 | 2026-10-23 | 0.3.1 | Dependabot for `uv` + `github-actions`: weekly, 14-day cooldown (security updates bypass it), minor+patch grouped. `mcp` ignored from 0.4 until 4.5. Not covered, stays manual: uv version in `ci.yml` (the `uv_build` range in `[build-system]` *is* covered; first run opened PR #5 for it) | Keeps SHA pins and lockfile current while matching the "no brand-new releases" rule; SDK upgrades change protocol/auth behavior (V5) and should be deliberate until integration tests exist |
+| 2026-10-24 | 0.4 | `mcp==2.3.0` (2026-10-02; latest at the time). Protocol: 2026-07-28 is the "modern" stateless revision (`server/discover`, per-request envelope); handshake-era 2024-11-05 … 2025-11-25 still served by the same app. Spike verified with the SDK client at `mode="2026-07-28"` and `mode="legacy"` (negotiates 2025-11-25) | Newest v2 release; ≥ ~2 weeks old |
+| 2026-10-24 | 0.4 | Server shape: low-level `Server(on_list_tools=…, on_call_tool=…)` + `streamable_http_app(stateless_http=True, json_response=True, auth=AuthSettings(…), token_verifier=…)`; no `Mcp-Session-Id` issued. Handlers return typed results; `ListToolsResult(ttl_ms=…, cache_scope="private")` explicit fields win over server-wide `cache_hints` (SDK default is already `ttl_ms=0, scope="private"`). `get_tool_input_schema` runs before middleware, so it is not caller-scoped; don't use it for per-principal schemas | Verified in `spikes/sdk/` |
+| 2026-10-24 | 0.4 | Principal: SDK `TokenVerifier.verify_token(token) -> AccessToken \| None` + `BearerAuthBackend`/`AuthContextMiddleware`; handlers read `get_access_token()` (contextvar). `AccessToken` carries `subject` and `claims`, enough for our `Principal`. 4.3 builds on this, with three gaps of our own: (1) a verifier exception becomes a 500, so "JWKS not loaded → 503" needs its own handling; (2) the backend only checks `expires_at` and an optional `resource` match, so all §8.5 checks live in our verifier; (3) PRM is registered only at the path-inserted URL (`/.well-known/oauth-protected-resource/mcp`), so the root PRM URL (§8.1) is our own route in 4.4. 401/403 responses already carry `WWW-Authenticate` with `resource_metadata` | Read from SDK source; 401 path verified in spike |
+| 2026-10-24 | 0.4 | DNS-rebinding protection is auto-enabled only when `host` is localhost; for the deployed server, pass `TransportSecuritySettings(allowed_hosts=…, allowed_origins=…)` explicitly (4.2). The modern transport internally re-invokes `on_list_tools` to validate `Mcp-Param` headers, so `tools/list` must stay cheap and side-effect free (it runs under the same request's principal) | Read from SDK source |
+| 2026-10-24 | 0.4 | HTTP client: `httpx2` (replaces 0.1's `httpx`; `mcp` already depends on it, so one HTTP stack). Test mock: `httpx2.MockTransport`; `respx` dropped (mocks `httpx` only). httpx2 pulls in `truststore` (system trust store), so 2.3 should check which CA bundle the Okta client actually uses | Avoids two HTTP/TLS stacks; the GET-only Okta client doesn't need respx's routing DSL |
