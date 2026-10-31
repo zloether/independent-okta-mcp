@@ -228,5 +228,15 @@ __marimo__/
 *.jwk
 *.p12
 
+# Step 0.5 spike: local org IDs, test-user passwords, service key
+.spike/
+
+# Terraform: provider cache, state and per-org inputs
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.jwk.json
+
 # Claude Code: share settings.json, keep personal overrides local
 .claude/settings.local.json

@@ -880,6 +880,8 @@ The `groups` claim carries IDs of Okta-mastered `mcp-okta-*` groups (§8.2).
 
 ## Appendix C — Okta setup runbook (outline; verify against current Okta docs)
 
+Steps 1–4 are automated by `scripts/okta-setup.py` or the `terraform/okta/` module ([guide](../okta-setup.md)).
+
 1. **Dedicated custom AS:** audience `MCP_PUBLIC_URL`; scope `okta-mcp`; `groups` claim on the access token emitting **IDs** of Okta-mastered `mcp-okta-*` groups (V13); access-token lifetime ≤30 min; access policy limiting clients/users.
 2. **Groups:** create role groups; copy their IDs into the policy (names as comments); restrict and alert on `mcp-okta-*` creation/rename.
 3. **Service app:** API Services app, `private_key_jwt` (upload public JWK, note `kid`), "Require DPoP" left on (V15); grant only intended `okta.*.read` scopes; assign Read-only Administrator or a custom role (never Super Admin); store the private key as a container secret.
