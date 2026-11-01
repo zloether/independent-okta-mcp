@@ -440,7 +440,7 @@ Verify: all phases ☑; CI green on tag.
 | V13 | `uid` vs `sub`; ID-emitting groups expression | 4.3 | 0.5 ☑ |
 | V14 | Secrets in "normal" endpoints | 5.x | 5.x |
 | V15 | DPoP default and nonce behavior | 2.2 live check | 0.5 ☑ |
-| T1 | **Discuss with the user (not a design §16 item):** which tools and commands to expose over MCP, and what their responses look like. Goal: be token-conscious. Do as much as possible in code (filtering, projection, summarising, defaults for `select`/`strip_links`, compact envelopes and errors, short synopses) so results stay small in the model's context. Revisit §5.1–5.3, §7.1–7.2 | 1.4, 2.7, 2.8, 3.3 | — |
+| T1 | **Discuss with the user (not a design §16 item; proposal: [`design/t1-tool-surface.md`](design/t1-tool-surface.md)):** which tools and commands to expose over MCP, and what their responses look like. Goal: be token-conscious. Do as much as possible in code (filtering, projection, summarising, defaults for `select`/`strip_links`, compact envelopes and errors, short synopses) so results stay small in the model's context. Revisit §5.1–5.3, §7.1–7.2 | 1.4, 2.7, 2.8, 3.3 | — |
 
 ## Decisions log
 
