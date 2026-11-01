@@ -286,6 +286,52 @@ def test_drift_is_reported_not_changed(config: Path, capsys) -> None:
     assert "revoke them: ['okta.users.manage']" in out
 
 
+@pytest.mark.parametrize(
+    "widen",
+    [
+        lambda okta, app_id: okta.items("oauth2", "v1", "clients", app_id, "roles").append(
+            {"type": "ORG_ADMIN"}
+        ),
+        lambda okta, app_id: okta.items("api", "v1", "apps", app_id, "grants").append(
+            {"scopeId": "okta.apps.read"}
+        ),
+    ],
+)
+def test_service_app_with_extra_access_gets_nothing_more(config: Path, widen, capsys) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    service = okta.find("api", "v1", "apps", label="okta-mcp service")
+    okta.items("api", "v1", "apps", service["id"], "grants")[:1] = []
+    okta.items("oauth2", "v1", "clients", service["id"], "roles").clear()
+    widen(okta, service["id"])
+    capsys.readouterr()
+    okta.writes.clear()
+
+    assert run(okta, "apply", config, "--yes") == 1
+    assert okta.writes == []
+    out = capsys.readouterr().out
+    assert "[manual] service app " in out
+    assert "OKTA_CLIENT_ID" not in out
+
+
+def test_existing_service_app_gets_no_new_access(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    jwk = setup.public_jwk((config.parent / "service.pub.pem").read_bytes())
+    oauth = {
+        "application_type": "service",
+        "grant_types": ["client_credentials"],
+        "jwks": {"keys": [jwk]},
+        "dpop_bound_access_tokens": True,
+    }
+    app = plant_app(okta, "okta-mcp service", "private_key_jwt", oauth)
+
+    assert run(okta, "apply", config, "--yes") == 1
+    assert [p for _, p in okta.writes if app["id"] in p] == []
+    out = capsys.readouterr().out
+    assert f"[manual] grant okta.users.read: existing app {app['id']}" in out
+    assert "[manual] role READ_ONLY_ADMIN: existing app" in out
+
+
 def plant_app(okta: FakeOkta, label: str, auth: str, oauth: dict[str, Any]) -> dict[str, Any]:
     """An app someone else created before setup ran."""
     body = {

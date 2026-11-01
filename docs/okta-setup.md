@@ -58,7 +58,7 @@ When nothing is missing, the tool prints the values to give the server (`MCP_ISS
 `apply` finds objects by name: the group name, the app label, the authorization server name, and the fixed policy and rule names. It then:
 
 - **creates** missing objects;
-- **adds** missing links: app group assignments, service-app grants, the Read-only Administrator role, configured clients in the access policy, and configured groups in the policy rule;
+- **adds** missing links: app group assignments, configured clients in the access policy, and configured groups in the policy rule, plus the grants and the Read-only Administrator role on a service app it creates in the same run;
 - **turns on** Require DPoP on the service app. Okta leaves it off for apps created through the API.
 
 It never deletes anything, never removes grants, roles, clients or groups, and never changes audiences, claim expressions, app types, redirect URIs or token lifetimes. Those differences are reported as `manual`. So are settings that widen access: extra grants or admin roles on the service app (never use Super Admin), policies that apply to `ALL_CLIENTS` or `EVERYONE`, individual users in the rule, and imported groups with an `mcp-okta-` name.
@@ -69,7 +69,9 @@ An existing object that fails any check is not trusted, and nothing that depends
 - a client app: not assigned groups, added to the access policy or listed in `MCP_ALLOWED_CLIENT_IDS`;
 - the authorization server: no scope, claim, policy or rule is added and `MCP_ISSUER` is not printed;
 - the access policy or rule: no clients or groups are added;
-- the service app: no grants, role or Require DPoP, and its client ID is not printed.
+- the service app, or one with grants or admin roles beyond the configured ones: no grants, role or Require DPoP, and its client ID is not printed.
+
+An existing service app that passes every check still gets no new grants or admin role. Its public key is public, so anyone who can create apps could have set one up in advance for a Super Admin to empower. Missing grants or a missing role are reported as `manual`, with the app's ID and creation date. Confirm the app is yours, then grant them in the admin console.
 
 The rule must allow the authorization code grant only, so a rule that also allows refresh tokens is reported. The service app must hold exactly the configured public key, so during a key rotation `check` reports the second key as `manual` until the old one is removed. If two groups, apps or authorization servers share a configured name, the tool stops with an error instead of picking one.
 

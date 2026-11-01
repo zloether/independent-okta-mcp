@@ -540,16 +540,35 @@ class Setup:
                     f"{what} access", f"grant {' '.join(svc.scopes)}; assign {SERVICE_ROLE}"
                 )
                 return
+            existing = None
         elif not self._check_service_app(what, app):
             return  # not trusted: no grants, role or server settings
+        else:
+            # Its public key is public, so anyone who can create apps could have planted it:
+            # never give an app this run didn't create new access (admin confirms by hand).
+            existing = f"existing app {app['id']} created {app.get('created')}"
         client_id = app["credentials"]["oauthClient"]["client_id"]
+        granted = {g["scopeId"] for g in self.okta.get(f"/api/v1/apps/{app['id']}/grants")}
+        roles_path = f"/oauth2/v1/clients/{client_id}/roles"
+        roles = {r["type"] for r in self.okta.get(roles_path)}
+        extra_grants = sorted(granted - set(svc.scopes))
+        extra_roles = sorted(roles - {SERVICE_ROLE, CUSTOM_ROLE})
+        if extra_grants:
+            self.problem("service app grants", f"not in config, revoke them: {extra_grants}")
+        if extra_roles:
+            self.problem(
+                "service app roles",
+                f"remove {extra_roles}; the server needs only {SERVICE_ROLE} (never SUPER_ADMIN)",
+            )
+        if extra_grants or extra_roles:
+            return  # not trusted: no grants, role or server settings
         self.values |= {
             "OKTA_CLIENT_ID": client_id,
             "OKTA_KEY_ID": self.kid,
             "OKTA_SCOPES": " ".join(svc.scopes),
         }
-        self._grants(app["id"])
-        self._roles(client_id)
+        self._grants(app["id"], granted, existing)
+        self._roles(roles_path, roles, existing)
 
     def _create_service_app(self) -> Any:
         return self.okta.request(
@@ -614,40 +633,35 @@ class Setup:
             self.ok(what, app["credentials"]["oauthClient"]["client_id"])
         return True
 
-    def _grants(self, app_id: str) -> None:
-        wanted = self.cfg.service_app.scopes
-        granted = {g["scopeId"] for g in self.okta.get(f"/api/v1/apps/{app_id}/grants")}
-        for scope in wanted:
+    def _grants(self, app_id: str, granted: set[str], existing: str | None) -> None:
+        for scope in self.cfg.service_app.scopes:
             if scope in granted:
                 self.ok(f"grant {scope}")
-                continue
-            body = {"scopeId": scope, "issuer": str(self.okta.http.base_url).rstrip("/")}
-            self.fix(
-                f"grant {scope}",
-                "grant to service app",
-                lambda body=body: self.okta.request("POST", f"/api/v1/apps/{app_id}/grants", body),
-            )
-        if extra := sorted(granted - set(wanted)):
-            self.problem("service app grants", f"not in config, revoke them: {extra}")
+            elif existing:
+                self.problem(f"grant {scope}", f"{existing}; confirm it is yours, then grant it")
+            else:
+                body = {"scopeId": scope, "issuer": str(self.okta.http.base_url).rstrip("/")}
+                self.fix(
+                    f"grant {scope}",
+                    "grant to service app",
+                    lambda body=body: self.okta.request(
+                        "POST", f"/api/v1/apps/{app_id}/grants", body
+                    ),
+                )
 
-    def _roles(self, client_id: str) -> None:
-        path = f"/oauth2/v1/clients/{client_id}/roles"
-        roles = {r["type"] for r in self.okta.get(path)}
+    def _roles(self, path: str, roles: set[str], existing: str | None) -> None:
         if SERVICE_ROLE in roles:
             self.ok(f"role {SERVICE_ROLE}")
         elif CUSTOM_ROLE in roles:
             # Design Appendix C allows a narrower custom role instead; don't add the broad one.
             self.ok(f"role {CUSTOM_ROLE}", f"in place of {SERVICE_ROLE}; review its permissions")
+        elif existing:
+            self.problem(f"role {SERVICE_ROLE}", f"{existing}; confirm it is yours, then assign it")
         else:
             self.fix(
                 f"role {SERVICE_ROLE}",
                 "assign to service app",
                 lambda: self.okta.request("POST", path, {"type": SERVICE_ROLE}),
-            )
-        if extra := sorted(roles - {SERVICE_ROLE, CUSTOM_ROLE}):
-            self.problem(
-                "service app roles",
-                f"remove {extra}; the server needs only {SERVICE_ROLE} (never SUPER_ADMIN)",
             )
 
     def summary(self) -> None:
