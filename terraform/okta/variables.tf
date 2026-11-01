@@ -3,7 +3,7 @@ variable "okta_org_url" {
   type        = string
 
   validation {
-    condition     = can(regex("^https://[^/.]+\\.[^/]+$", var.okta_org_url))
+    condition     = can(regex("^https://[A-Za-z0-9-]+\\.[A-Za-z0-9.-]+$", var.okta_org_url))
     error_message = "Must be https://<org>.<domain> with no path or trailing slash."
   }
 }
