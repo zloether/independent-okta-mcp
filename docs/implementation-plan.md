@@ -95,10 +95,10 @@ Design: §8.2–8.5, §10, Appendix C · Depends: — · **Needs: Okta dev org a
 Helpers under `spikes/okta/` (deleted with `spikes/sdk/` at end of 4.2). Run: `uv run pytest spikes/okta`; `uv run python spikes/okta/okta_spike.py --help`.
 - [x] Create dedicated custom AS, scope `okta-mcp`, `groups` access-token claim emitting **IDs** of Okta-mastered `mcp-okta-*` groups, two test groups, two test users
 - [x] `scripts/okta-setup.py` (`check`/`apply`) for admins, from the setup used here, and the equivalent `terraform/okta/` module; guide in `docs/okta-setup.md`
-- [ ] Register a public OIDC client (PKCE); obtain a token via a real MCP client or a local PKCE script
-- [ ] Record: claims present (`uid`, `sub`, `groups` as IDs, `cid`, `scp`) — **V1, V13**
-- [ ] Test `resource` param on authorize/token — **V9**
-- [ ] Test metadata discovery by each target client (OIDC discovery vs RFC 8414-only) and loopback redirect ports — **V10, V11**
+- [x] Register a public OIDC client (PKCE); obtain a token via a real MCP client or a local PKCE script
+- [x] Record: claims present (`uid`, `sub`, `groups` as IDs, `cid`, `scp`) — **V1, V13**
+- [x] Test `resource` param on authorize/token — **V9**
+- [x] Test metadata discovery (OIDC discovery vs RFC 8414-only) and loopback redirect ports — **V10, V11**. Per-client discovery moved to the 4.6 compatibility matrix (needs the server)
 - [ ] Create API Services app with `private_key_jwt`; record whether "Require DPoP" is on by default and Okta's nonce behavior — **V15**; grant `okta.users.read okta.groups.read`, assign Read-only Admin; fetch a token and call `GET /api/v1/users?limit=1`
 - [ ] Write `docs/design/spike-findings.md` (one section per V-item: result, evidence, design impact)
 
@@ -430,14 +430,14 @@ Verify: all phases ☑; CI green on tag.
 
 | ID | Question | Blocks | Resolved in |
 |---|---|---|---|
-| V1 | `groups` claim (IDs) on access tokens; >100 groups | 3.2, 4.3 | 0.5 |
+| V1 | `groups` claim (IDs) on access tokens; >100 groups | 3.2, 4.3 | 0.5 ☑ (>100 untested) |
 | V3 | Client registration: pre-registered vs DCR vs CIMD | 4.6 | 0.5 / 4.6 |
 | V4 | `.manage ⇒ .read` implication | 3.2 | 3.2 (Okta docs) |
 | V5 | SDK v2 / 2026-07-28: stateless per-request principal, `cacheScope`, back-compat, auth helpers, `httpx` vs `httpx2` | 0.1 deps, 2.3, 4.2 | 0.4 ☑ (see Decisions log) |
 | V6 | Read-only Admin sufficiency per domain | 5.x | 5.x |
 | V8 | Spec accuracy (scopes, operationIds, params) | 1.3, 5.x | 1.5 / 5.x |
-| V9–V11 | `resource` param, discovery, loopback, static client IDs | 4.4, 4.6 | 0.5 |
-| V13 | `uid` vs `sub`; ID-emitting groups expression | 4.3 | 0.5 |
+| V9–V11 | `resource` param, discovery, loopback, static client IDs | 4.4, 4.6 | 0.5 ☑; per-client results in 4.6 |
+| V13 | `uid` vs `sub`; ID-emitting groups expression | 4.3 | 0.5 ☑ |
 | V14 | Secrets in "normal" endpoints | 5.x | 5.x |
 | V15 | DPoP default and nonce behavior | 2.2 live check | 0.5 |
 
@@ -467,3 +467,4 @@ Verify: all phases ☑; CI green on tag.
 | 2026-10-30 | 0.5 | Okta-side setup ships as `scripts/okta-setup.py`, outside the package: it writes to Okta, so it must never be importable from `src/` (read-only invariant). It uses its own `OKTA_SETUP_API_TOKEN` (Super Admin), so it is never confused with server credentials. `apply` only creates objects and adds links; anything else that differs is reported. It reads only the public key; `kid` is the RFC 7638 thumbprint, or the registered `kid` when the key is already uploaded | Verified live: `apply` then `check` on a fresh set of names in the dev org; the created service app minted a DPoP token |
 | 2026-10-30 | 0.5 | `terraform/okta/` (okta/okta `~> 7.1`) mirrors the script's objects and input checks for orgs managed with Terraform. It takes the public key as a JWK (Terraform can't parse PEM) and computes the same RFC 7638 `kid`. Sets `dpop_bound_access_tokens = true` on the `client_credentials` service app although the provider docs say the two don't combine: the provider doesn't enforce it, and V15 shows Okta accepts it | `validate` clean; `plan` against the dev org: 12 to add; bad inputs fail at plan; `kid` matches the script's on a test key. Not yet applied |
 | 2026-10-31 | 0.5 | Setup tooling fails closed: an existing object that fails any check (imported or duplicate group, wrong app type/grants/redirects/keys, inactive AS or wrong audience, `ALL_CLIENTS` policy, rule with `EVERYONE`, extra grants, refresh tokens or long tokens) is reported and nothing that depends on it is created, linked or printed. Duplicate names are an error rather than a guess. Paging follows `next` links only on the org's own origin, since the admin token rides along. A `CUSTOM` admin role on the service app is accepted in place of Read-only Administrator (Appendix C), so the tool trusts the admin's choice of permissions. Terraform's provider takes its org from `okta_org_url`, so the provider and the grants' issuer can't name different orgs. `AGENTS.md` scopes the read-only invariant to `src/` and lists both tools as trust boundaries | `/security-review` and `/code-review` findings; 44 tests; live `check` clean; `plan` 12 to add |
+| 2026-11-01 | 0.5 | V1/V13 hold as designed: `groups` carries the IDs of the user's `mcp-okta-*` Okta groups; principal is `uid` (`sub` is the login). V9: Okta ignores `resource` and always issues the AS's one audience, so the dedicated AS is a hard requirement and the server never relies on `resource`. V11: redirect URIs match exactly (no any-port loopback; `localhost` ≠ `127.0.0.1`), so each client needs a fixed, registered redirect URI. `scp` order varies, so compare as a set. The per-client compatibility matrix moves to 4.6, because real clients only start sign-in from the server's 401 + PRM | `user-token` runs in the trial org, both test users, seven variants ([findings](design/spike-findings.md)) |

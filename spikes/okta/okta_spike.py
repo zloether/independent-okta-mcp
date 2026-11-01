@@ -191,7 +191,7 @@ def _wait_for_code(port: int, state: str) -> str:
 
 def cmd_user_token(args: argparse.Namespace) -> None:
     issuer = args.issuer.rstrip("/")
-    redirect_uri = f"http://127.0.0.1:{args.port}/callback"
+    redirect_uri = f"http://{args.redirect_host}:{args.port}/callback"
     verifier, challenge = pkce_pair()
     state = secrets.token_urlsafe(16)
     params = {
@@ -278,6 +278,7 @@ def main() -> None:
     p.add_argument("--resource", help="RFC 8707 resource (MCP_PUBLIC_URL)")
     p.add_argument("--no-resource-on-token", action="store_true")
     p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--redirect-host", choices=["127.0.0.1", "localhost"], default="127.0.0.1")
     p.set_defaults(func=cmd_user_token)
 
     p = sub.add_parser("service")

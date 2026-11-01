@@ -456,25 +456,25 @@ The SDK v2 ships resource-server helpers (`token_verifier`/`auth` settings, `get
 
 ### 8.2 Authorization server: dedicated Okta custom AS
 
-- Audience = `MCP_PUBLIC_URL` (RFC 8707 resource binding).
+- Audience = `MCP_PUBLIC_URL`. Okta ignores the RFC 8707 `resource` parameter and always issues tokens for this one audience (V9).
 - Scope `MCP_REQUIRED_SCOPE` (default `okta-mcp`).
 - `groups` claim on the **access token** carrying **group IDs**, restricted to Okta-mastered MCP role groups.
 - Access policy/rules restricting which clients and users can obtain tokens.
 
-**Dedicated AS is mandatory** (a custom AS has one static audience; sharing it lets other apps' tokens pass the `aud` check). `MCP_ALLOWED_CLIENT_IDS` is **required**.
+**Dedicated AS is mandatory** (a custom AS has one static audience and ignores `resource`; sharing it lets other apps' tokens pass the `aud` check). `MCP_ALLOWED_CLIENT_IDS` is **required**.
 
-**Groups claim.** The claim value is an expression that emits the IDs of Okta-mastered groups whose name starts with `mcp-okta-`, for example `user.getGroups({'group.type': {'OKTA_GROUP'}}, {'group.profile.name': {'mcp-okta-'}}).![id]` **[unverified syntax, V13]**. Emitting IDs makes renames and look-alike imported groups irrelevant to authorization; the name prefix only bounds claim size. Restrict who can create or rename `mcp-okta-*` groups anyway, and alert on it.
+**Groups claim.** The claim value is an expression that emits the IDs of Okta-mastered groups whose name starts with `mcp-okta-`, for example `user.getGroups({'group.type': {'OKTA_GROUP'}}, {'group.profile.name': {'mcp-okta-'}}).![id]` (verified, V1/V13). Emitting IDs makes renames and look-alike imported groups irrelevant to authorization; the name prefix only bounds claim size. Restrict who can create or rename `mcp-okta-*` groups anyway, and alert on it.
 
 ### 8.3 Browser-based OAuth (Path A)
 
 1. Client calls `/mcp` unauthenticated → `401` with `resource_metadata`.
 2. Client reads PRM → discovers the AS via OIDC discovery (`{issuer}/.well-known/openid-configuration`, which Okta serves and MCP clients must support).
-3. Authorization Code + PKCE (S256) against the custom AS with `resource=MCP_PUBLIC_URL`.
+3. Authorization Code + PKCE (S256) against the custom AS, with `resource=MCP_PUBLIC_URL` if the client sends it (Okta ignores it; V9).
 4. Client presents `Authorization: Bearer …`.
 
-Client registration options, in order: pre-registered public clients (PKCE, exact redirect URIs); Okta DCR if enabled (admin-gated **[unverified]**); Client ID Metadata Documents if/when supported **[unverified]**.
+Client registration options, in order: pre-registered public clients (PKCE, exact redirect URIs); Okta DCR is admin-gated (anonymous registration gets `403`; V11), so not usable by MCP clients; Client ID Metadata Documents if/when supported **[unverified]**.
 
-Interop items to check in spike 0.5 (V9–V11): Okta's handling of the `resource` parameter; whether any target client tries only RFC 8414 path-insertion metadata (such a client is recorded as incompatible in the matrix — the insertion URL lives on Okta's origin and cannot be served here); loopback redirect URIs with arbitrary ports. A **client compatibility matrix** is a required deliverable.
+Spike 0.5 results (V9–V11, [findings](spike-findings.md)): Okta serves OIDC discovery and both RFC 8414 URLs, so path-insertion-only clients work. Redirect URIs match exactly, port and host included (no RFC 8252 any-port loopback; `localhost` ≠ `127.0.0.1`), so a client needs a fixed, registered redirect URI and a configurable `client_id`. A **client compatibility matrix** is a required deliverable of step 4.6, once the server can start a real client's sign-in.
 
 ### 8.4 Cross App Access / ID-JAG (Path B) — future
 
@@ -489,9 +489,9 @@ Okta Cross App Access (IETF *Identity Assertion JWT Authorization Grant*; MCP "e
 | `iss` | Exactly `MCP_ISSUER` |
 | `aud` | Contains `MCP_AUDIENCE` (default `MCP_PUBLIC_URL`) |
 | `exp`/`nbf`/`iat` | ≤60s skew; configurable max token age |
-| `scp`/`scope` | Contains `MCP_REQUIRED_SCOPE` |
+| `scp`/`scope` | Contains `MCP_REQUIRED_SCOPE` (order varies between tokens; V13) |
 | `cid`/`client_id` | In `MCP_ALLOWED_CLIENT_IDS` |
-| `uid` / `sub` | Principal ID = `uid` (stable `00u…`); reject if absent. `sub` (login) kept for display **[unverified, V13]** |
+| `uid` / `sub` | Principal ID = `uid` (stable `00u…`); reject if absent. `sub` (login, mutable) kept for display only (V13) |
 | `groups` | Array of strings (claim `MCP_GROUPS_CLAIM`); anything else → zero groups |
 
 Result: immutable `Principal(uid, sub, client_id, groups, exp)` in a contextvar. JWKS not yet loaded (cold start or issuer unreachable) → `503`; a warm cache keeps serving until TTL. DPoP/mTLS-bound user tokens: out of scope for v1.
@@ -810,18 +810,18 @@ M3 is the least certain line: ~230 commands at 8–10 days only works with gener
 
 | ID | Risk / unknown | Impact | Plan |
 |---|---|---|---|
-| V1 | `groups` claim (IDs) present on access tokens; behavior past 100 groups | Core authz | M0 (spike 0.5). Fallback: service-app group lookup, designed if needed |
+| V1 | `groups` claim (IDs) present on access tokens; behavior past 100 groups | Core authz | **Verified 0.5:** IDs of the user's `mcp-okta-*` Okta groups only. Past 100 untested; fallback (service-app group lookup) designed only if needed |
 | V2 | Okta configuration for a self-hosted resource server as ID-JAG audience | Path B (future) | Deferred with Path B |
 | V3 | Client registration: pre-registered vs DCR vs CIMD | Onboarding | Start with pre-registered public clients; record in the compatibility matrix |
 | V4 | `.manage ⇒ .read` scope implication | Capability gate | Verify; encode explicitly |
 | V5 | MCP SDK v2 and revision 2026-07-28: stateless per-request principal in low-level `on_*` handlers, `cacheScope`/`ttlMs` on list results, back-compat with 2025-11-25 clients, built-in resource-server auth helpers, `httpx` vs `httpx2` and the matching test mock. Facts from the r3 review post-date the author's knowledge and are unconfirmed | Implementation shape | Spike 0.4; pin SDK exact |
 | V6 | Endpoints that succeed under Read-only Administrator | Service-app role | Per-domain smoke in dev org |
 | V8 | Spec accuracy: wrong/missing `security` scopes (empty scopes are now a load error), operationIds that change between spec releases, parameters undocumented in the spec | Registry correctness | `okta_scopes_override` with comments; spec-update diff review; dev-org smoke |
-| V9 | Okta custom AS handling of RFC 8707 `resource` | Path A | Spike 0.5 |
-| V10 | Target clients that only try RFC 8414 path-insertion discovery | Which clients connect | Spike 0.5; such clients are recorded as incompatible (no shim) |
-| V11 | Static `client_id` support; loopback redirects; DCR availability | Which clients connect | Compatibility matrix |
+| V9 | Okta custom AS handling of RFC 8707 `resource` | Path A | **Verified 0.5:** ignored; `aud` is always the AS audience. Dedicated AS required |
+| V10 | Target clients that only try RFC 8414 path-insertion discovery | Which clients connect | **Verified 0.5:** Okta serves the path-insertion URL; no incompatibility |
+| V11 | Static `client_id` support; loopback redirects; DCR availability | Which clients connect | **Verified 0.5:** exact redirect match (port and host); DCR admin-gated. Per-client results in the 4.6 compatibility matrix |
 | V12 | Path B confidential-client prerequisites; product naming/availability | Path B (future) | Deferred with Path B |
-| V13 | `uid` vs `sub` semantics; claim expression emitting IDs of Okta-mastered `mcp-okta-*` groups | Identity; authz | Spike 0.5 |
+| V13 | `uid` vs `sub` semantics; claim expression emitting IDs of Okta-mastered `mcp-okta-*` groups | Identity; authz | **Verified 0.5:** `uid` = user ID, `sub` = login; expression emits IDs |
 | V14 | Which "normal" endpoints return secrets | Data exposure | Dev-org review of every `get`/`list`; extend `scrub.yaml` |
 | V15 | Whether the service app requires DPoP by default; Okta nonce behavior at token and resource endpoints | Service auth | Spike 0.5; DPoP on by default regardless |
 | L1 | ~~License for this repo~~ **Decided 2026-10-23:** Apache-2.0 + Commons Clause, same as okta-skills (free to use; may not be sold). Re-authored `SKILL.md` text is compatible (same licensor, same terms) | Distribution | Keep attribution to okta-skills in `resources/`; `pyproject.toml` declares the license file |

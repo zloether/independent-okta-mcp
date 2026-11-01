@@ -107,4 +107,3 @@ Unlike the script, Terraform owns what it creates: `apply` reverts console chang
 
 - Only native (loopback or custom-scheme redirect) public clients are created. Register other client types by hand, then add their client IDs to the access policy.
 - Only the Read-only Administrator role is managed. You can assign a narrower custom admin role by hand instead; the tool then accepts it and does not add Read-only Administrator, but it does not check the custom role's permissions. In Terraform, replace `okta_app_oauth_role_assignment.service` with a `CUSTOM` assignment.
-- The `groups` claim expression is still being verified against a live org (design §16, V13).
