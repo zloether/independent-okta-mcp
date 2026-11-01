@@ -289,7 +289,7 @@ The coverage report also lists spec GET operations not in the registry (beyond t
 
 - `specs/` holds the pinned Okta Management OpenAPI spec (`okta/okta-management-openapi-spec`, `dist/current/management-minimal.yaml`), downloaded at a fixed upstream commit, with commit, version and sha256 in `PINNED.json`. The Workload Principals spec is not vendored until ai-agents returns.
 - `scripts/update-spec.py` fetches, pins, and prints a diff of GET operations added/removed/changed. Spec updates are PRs; CI re-validates the registry against the new spec.
-- The spec is loaded at startup and in CI with PyYAML's C loader (`CSafeLoader`; ~0.5 s for the full file). The index keeps only GET operations.
+- The spec is loaded at startup and in CI with PyYAML's C loader (`CSafeLoader`; ~1 s for the full file). The index keeps only GET operations.
 
 ### 6.2 Registry format
 
