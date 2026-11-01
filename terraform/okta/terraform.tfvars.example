@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and edit. See docs/okta-setup.md.
+
+okta_org_url   = "https://example.okta.com"
+mcp_public_url = "https://mcp.example.com/mcp"
+
+# Optional; defaults shown.
+# authorization_server = "okta-mcp"
+# scope                = "okta-mcp"
+# access_token_minutes = 30
+# service_app_name     = "okta-mcp service"
+
+groups = ["mcp-okta-helpdesk", "mcp-okta-readers"]
+
+clients = {
+  "Example MCP Client" = ["http://127.0.0.1:8765/callback"]
+}
+
+service_public_jwk_file = "okta-mcp-service.jwk.json"
+service_scopes          = ["okta.users.read", "okta.groups.read"]

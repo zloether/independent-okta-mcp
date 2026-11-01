@@ -1,0 +1,30 @@
+# Config for scripts/okta-setup.py. Copy, edit, then:
+#   uv run python scripts/okta-setup.py check --config okta-setup.yaml
+# Unknown keys are rejected. See docs/okta-setup.md.
+
+# Canonical external URL of the MCP endpoint (MCP_PUBLIC_URL); becomes the AS audience.
+mcp_public_url: https://mcp.example.com/mcp
+
+# Optional; defaults shown.
+authorization_server: okta-mcp
+scope: okta-mcp
+access_token_minutes: 30 # 5–30
+
+# Role groups. Names must start with "mcp-okta-"; their IDs go into policy.yaml.
+groups:
+  - mcp-okta-helpdesk
+  - mcp-okta-readers
+
+# One public (PKCE) OIDC app per approved MCP client, with its exact redirect URIs.
+clients:
+  - name: Example MCP Client
+    redirect_uris:
+      - http://127.0.0.1:8765/callback
+
+# The server's own Okta credential.
+service_app:
+  name: okta-mcp service
+  public_key_file: okta-mcp-service.pub.pem # relative to this file
+  scopes: # okta.*.read only; this is the server's capability ceiling
+    - okta.users.read
+    - okta.groups.read

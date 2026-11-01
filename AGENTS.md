@@ -44,7 +44,7 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 
 ## Conventions
 
-- **Read-only invariant.** The server never writes to Okta. The registry loader rejects non-GET operations; the Okta HTTP client exposes only `get`. Do not add methods, flags or code paths that issue any other HTTP method to Okta.
+- **Read-only invariant.** The server never writes to Okta. The registry loader rejects non-GET operations; the Okta HTTP client exposes only `get`. Do not add methods, flags or code paths in `src/` that issue any other HTTP method to Okta. The one exception is the admin tool `scripts/okta-setup.py`, which an Okta admin runs separately from the server; it creates objects and adds links but never deletes or loosens anything.
 - **Registry first.** A command is a YAML entry in `src/okta_mcp/data/registry/` naming an Okta `operationId` from the pinned spec. Add or change commands there, not in code. Every entry must be classified (`data_classes`); sensitivity is derived, never declared. Code is only for post-v1 composite handlers.
 - **Fail closed.** Unknown roles, unclassified commands, scope-less operations or invalid policy expose nothing. Don't add fallbacks that widen access.
 - **Tests with every change.** New behavior comes with tests in the same change. HTTP is mocked; fixtures use `example.com` emails and `example.okta.com` hosts only.
@@ -62,6 +62,7 @@ Mistakes in these paths are the hardest to undo (design §12.2). Code touching t
 - `src/okta_mcp/exec/cursor.py`, `src/okta_mcp/okta/paginate.py` — token-attached URL following
 - `src/okta_mcp/okta/token.py`, `src/okta_mcp/okta/dpop.py` — service credential handling
 - `Dockerfile`, `docker/compose.example.yaml` — runtime privileges
+- `scripts/okta-setup.py`, `terraform/okta/` — run with a Super Admin credential; create the clients, policy, groups claim and service-app grants that decide who gets tokens
 
 ## okta-skills
 
