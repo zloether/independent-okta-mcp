@@ -1,0 +1,8 @@
+{
+  "url": "https://raw.githubusercontent.com/okta/okta-management-openapi-spec/5cf2dc4d2e288c1b9c33a8f6f53c94d6ea70e679/dist/current/management-minimal.yaml",
+  "commit": "5cf2dc4d2e288c1b9c33a8f6f53c94d6ea70e679",
+  "committed": "2026-10-27T13:04:35Z",
+  "version": "2026.42.1",
+  "sha256": "074366b36fe33ecbaba0e35def4b0665104dd29b528939399fab7851e10fc4c2",
+  "fetched": "2026-11-01"
+}

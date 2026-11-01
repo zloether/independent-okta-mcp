@@ -22,7 +22,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 | Phase | Steps | Status |
 |---|---|---|
 | 0. Bootstrap & spikes | 0.1–0.5 | ◐ |
-| 1. Spec & registry core | 1.1–1.6 | ☐ |
+| 1. Spec & registry core | 1.1–1.6 | ◐ |
 | 2. Okta client & executor | 2.1–2.10 | ☐ |
 | 3. Policy & tool surface | 3.1–3.4 | ☐ |
 | 4. MCP server & auth | 4.1–4.6 | ☐ |
@@ -108,11 +108,11 @@ Verify: findings doc complete for V1, V9, V10, V11, V13, V15; design doc updated
 
 ## Phase 1 — Spec & registry core
 
-### 1.1 Pin Okta spec ☐
+### 1.1 Pin Okta spec ☑
 Design: §6.1 · Depends: 0.1
-- [ ] `scripts/update-spec.py`: download management-minimal spec, write `specs/PINNED.json` (source URL, version, sha256, fetched date), print added/removed/changed GET operations vs. previous pin
-- [ ] Commit initial spec under `src/okta_mcp/data/specs/`
-- [ ] `tests/test_spec_pin.py`: file hashes to `PINNED.json`
+- [x] `scripts/update-spec.py`: download management-minimal spec, write `specs/PINNED.json` (source URL, version, sha256, fetched date), print added/removed/changed GET operations vs. previous pin
+- [x] Commit initial spec under `src/okta_mcp/data/specs/`
+- [x] `tests/test_spec_pin.py`: file hashes to `PINNED.json`
 
 Verify: `uv run python scripts/update-spec.py --check` is a no-op on a clean tree; hash test passes.
 
@@ -144,7 +144,7 @@ Verify: `uv run pytest tests/registry/test_schema.py`
 ### 1.5 Coverage inventory ☐
 Design: §5.6 · Depends: 1.2
 - [ ] Build the okta-skills command catalogue (minus ai-agents) by hand or one-off script run **outside** this repo's code paths (reference only); save as `docs/coverage/catalogue.yaml`: domain, command, operationId(s), kind (simple/resolved/composite/excluded), pagination style and `items_key`, notes on gotchas, exclusion reason (e.g. `getAerialConsent`, `listSupportedSecurityQuestions`)
-- [ ] `scripts/coverage-report.py`: catalogue vs registry vs spec GET ops → `docs/coverage/report.md`
+- [ ] `scripts/coverage-report.py`: catalogue vs registry vs spec GET ops → `docs/coverage/report.md`. First move the importlib loader for hyphenated scripts, now copied in `tests/scripts/test_okta_setup.py` and `test_update_spec.py`, into a `load_script(name)` helper in `tests/scripts/conftest.py`, so this script's tests don't add a third copy
 - [ ] Count commands per kind; **re-estimate M3** in design §15 from the counts and the share of gotcha endpoints that need recorded fixtures
 
 Verify: report generated; every catalogue entry has a kind; Decisions log records the counts and the new estimate.
@@ -469,3 +469,4 @@ Verify: all phases ☑; CI green on tag.
 | 2026-10-31 | 0.5 | Setup tooling fails closed: an existing object that fails any check (imported or duplicate group, wrong app type/grants/redirects/keys, inactive AS or wrong audience, `ALL_CLIENTS` policy, rule with `EVERYONE`, extra grants, refresh tokens or long tokens) is reported and nothing that depends on it is created, linked or printed. Duplicate names are an error rather than a guess. Paging follows `next` links only on the org's own origin, since the admin token rides along. A `CUSTOM` admin role on the service app is accepted in place of Read-only Administrator (Appendix C), so the tool trusts the admin's choice of permissions. Terraform's provider takes its org from `okta_org_url`, so the provider and the grants' issuer can't name different orgs. `AGENTS.md` scopes the read-only invariant to `src/` and lists both tools as trust boundaries | `/security-review` and `/code-review` findings; 44 tests; live `check` clean; `plan` 12 to add |
 | 2026-11-01 | 0.5 | V1/V13 hold as designed: `groups` carries the IDs of the user's `mcp-okta-*` Okta groups; principal is `uid` (`sub` is the login). V9: Okta ignores `resource` and always issues the AS's one audience, so the dedicated AS is a hard requirement and the server never relies on `resource`. V11: redirect URIs match exactly (no any-port loopback; `localhost` ≠ `127.0.0.1`), so each client needs a fixed, registered redirect URI. `scp` order varies, so compare as a set. The per-client compatibility matrix moves to 4.6, because real clients only start sign-in from the server's 401 + PRM. V15: "Require DPoP" is on by default for API Services apps made in the admin console, off for apps made through the API or Terraform; the server keeps DPoP on by default and both setup tools turn it on | `user-token` runs in the trial org, both test users, seven variants ([findings](design/spike-findings.md)) |
 | 2026-11-01 | 0.5 | Re-review of the setup tooling: no High/Medium findings. Hardening applied: (1) `apply` gives grants and the admin role only to a service app it created in the same run; an existing app that passes its checks is reported `manual` with its ID and creation date, since its public key is public and anyone with app-create rights could plant a matching app. (2) Extra grants or admin roles on the service app now make it untrusted (no grants, role or printed settings), like any other failed check. (3) Terraform `okta_org_url` must be `https://` + hostname characters only, so `user@host`, ports, paths and queries are rejected | `/security-review` of `scripts/okta-setup.py` and `terraform/okta/`; 43 setup tests (3 new, failing on the old script); `terraform validate` clean |
+| 2026-11-01 | 1.1 | Spec pinned at upstream commit `5cf2dc4` (version 2026.42.1, 319 GET operations, 3.9 MB). `update-spec.py` resolves a ref to the last commit touching the file and downloads from that commit's raw URL, so `PINNED.json` names an immutable source. "Changed" means the operation object, its path-level parameters, or any component reachable from them through `#/components/` refs differ (421 of 422 path-level parameter lists are refs). Other `$ref`s appear only as data in examples and are not followed. Duplicate operationIds and dangling refs are errors. `--check` downloads the latest and writes nothing: 0 up to date, 1 newer, 2 local file ≠ pin. A plain re-pin warns and replaces a local file ≠ pin, so a run interrupted between the two writes is repairable. `.gitattributes` marks the spec `-text` (the sha256 pins exact bytes) and `linguist-generated`. The `*.spec` gitignore rule doesn't match `management-minimal.yaml` (`git check-ignore` clean); `data/.gitkeep` removed now that `data/specs/` exists. Running the script needs the sandbox off on macOS (httpx2's `truststore` uses the keychain) | Spec is data reviewed in PRs, so the newest commit (5 days old) was taken rather than applying the 2-week package rule. Wheel contains both spec files |

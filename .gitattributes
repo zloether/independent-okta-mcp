@@ -1,0 +1,2 @@
+# Pinned by sha256 (PINNED.json): never rewrite line endings; collapse in PR diffs.
+src/okta_mcp/data/specs/*.yaml -text linguist-generated=true
