@@ -3,8 +3,12 @@
 Only what the registry loader checks against (design §6.2 checks 1-3, 9) and the argument
 schemas are built from (§6.3) is kept: path template, path/query parameters with their inlined
 schemas, `oauth2` scopes, tags, and the shape of the success response.
+
+The index is frozen dataclasses over read-only mappings, but `Param.schema` holds plain dicts and
+lists: copy a schema before changing it.
 """
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.resources import files
@@ -32,8 +36,9 @@ class Param:
 
 @dataclass(frozen=True)
 class Response:
-    """`list`: top-level array. `object`: an object, which wraps a list when `list_keys` is set.
-    `other`: non-JSON, `oneOf`/`anyOf`, or no usable schema."""
+    """`list`: top-level array. `object`: an object; `list_keys` are its array-of-object
+    properties, the candidates for a wrapped list (an `items_key`). `other`: non-JSON,
+    `oneOf`/`anyOf`, or no usable schema."""
 
     kind: Literal["list", "object", "other"]
     list_keys: tuple[str, ...] = ()
@@ -45,7 +50,8 @@ class Operation:
     operation_id: str
     path: str
     params: Mapping[str, Param]
-    scopes: frozenset[str]
+    scope_sets: tuple[frozenset[str], ...]
+    """Alternatives: each `oauth2` security entry is one, and any one granted set suffices."""
     tags: tuple[str, ...]
     response: Response
 
@@ -98,19 +104,41 @@ class _Resolver:
             node = cast(dict[str, Any], node)[part]
         return node
 
-    def properties(self, schema: Any) -> dict[str, Any]:
+    def schema(self, node: Any) -> dict[str, Any] | None:
+        """`node` dereferenced, or None when it isn't a schema object (e.g. a boolean schema)."""
+        node = self.deref(node)
+        return cast(dict[str, Any], node) if isinstance(node, dict) else None
+
+    def properties(self, node: Any, stack: tuple[int, ...] = ()) -> dict[str, Any]:
         """Properties of an object schema, merged across `allOf` parts."""
-        schema = self.deref(schema)
-        if not isinstance(schema, dict):
+        schema = self.schema(node)
+        if schema is None:
             return {}
-        schema = cast(dict[str, Any], schema)
+        if id(schema) in stack:
+            raise SpecError("allOf cycle")
         props = dict(cast(dict[str, Any], schema.get("properties", {})))
         for part in cast(list[Any], schema.get("allOf", [])):
-            props.update(self.properties(part))
+            props.update(self.properties(part, (*stack, id(schema))))
         return props
 
+    def is_object(self, node: Any) -> bool:
+        schema = self.schema(node)
+        return schema is not None and (
+            schema.get("type") == "object" or "properties" in schema or "allOf" in schema
+        )
 
-def _params(r: _Resolver, path_item: dict[str, Any], op: dict[str, Any]) -> dict[str, Param]:
+    def is_object_list(self, node: Any) -> bool:
+        schema = self.schema(node)
+        return (
+            schema is not None
+            and schema.get("type") == "array"
+            and self.is_object(schema.get("items"))
+        )
+
+
+def _params(
+    r: _Resolver, path: str, path_item: dict[str, Any], op: dict[str, Any]
+) -> dict[str, Param]:
     # Operation-level parameters override path-level ones with the same name and location.
     merged: dict[tuple[str, str], dict[str, Any]] = {}
     for raw in [*path_item.get("parameters", []), *op.get("parameters", [])]:
@@ -125,18 +153,28 @@ def _params(r: _Resolver, path_item: dict[str, Any], op: dict[str, Any]) -> dict
         params[name] = Param(
             name=name,
             location=location,
-            required=bool(p.get("required", False)),
+            # OpenAPI requires every path parameter; the spec sometimes omits the flag.
+            required=location == "path" or bool(p.get("required", False)),
             description=str(p.get("description", "")),
             schema=MappingProxyType(r.inline(p.get("schema", {}))),
+        )
+    template_vars = set(re.findall(r"\{([^}]*)\}", path))
+    path_params = {n for n, p in params.items() if p.location == "path"}
+    if template_vars != path_params:
+        raise SpecError(
+            f"{op['operationId']}: path template variables {sorted(template_vars)} "
+            f"!= path parameters {sorted(path_params)}"
         )
     return params
 
 
-def _scopes(op: dict[str, Any]) -> frozenset[str]:
-    # No fallback to spec-level `security`: an operation that declares none gets no scopes,
-    # which the registry loader rejects (fail closed).
+def _scope_sets(op: dict[str, Any]) -> tuple[frozenset[str], ...]:
+    # No fallback to spec-level `security`: an operation that declares none gets no scope sets,
+    # which the registry loader rejects (fail closed). An empty `oauth2` list would be an
+    # always-satisfied alternative, so it is dropped rather than kept.
     entries = cast(list[dict[str, list[str]]], op.get("security", []))
-    return frozenset(s for entry in entries for s in entry.get("oauth2", []))
+    sets = {frozenset(entry["oauth2"]) for entry in entries if entry.get("oauth2")}
+    return tuple(sorted(sets, key=sorted))
 
 
 def _response(r: _Resolver, op: dict[str, Any]) -> Response:
@@ -149,19 +187,28 @@ def _response(r: _Resolver, op: dict[str, Any]) -> Response:
         return Response("list")
     if "oneOf" in schema or "anyOf" in schema:
         return Response("other")
-    if schema.get("type") != "object" and not ("properties" in schema or "allOf" in schema):
+    if not r.is_object(schema):
         return Response("other")
     props = r.properties(schema)
-    list_keys = tuple(k for k, v in props.items() if r.deref(v).get("type") == "array")
+    list_keys = tuple(k for k, v in props.items() if r.is_object_list(v))
     links_next = "next" in r.properties(props["_links"]) if "_links" in props else False
     return Response("object", list_keys, links_next)
 
 
 def build_index(spec: Mapping[str, Any]) -> SpecIndex:
+    try:
+        return _build_index(spec)
+    except (KeyError, TypeError, AttributeError) as e:
+        raise SpecError(f"malformed spec: {e!r}") from e
+
+
+def _build_index(spec: Mapping[str, Any]) -> SpecIndex:
     r = _Resolver(spec)
     operations: dict[str, Operation] = {}
     non_get: dict[str, str] = {}
     for path, item in cast(dict[str, dict[str, Any]], spec["paths"]).items():
+        if "$ref" in item:
+            raise SpecError(f"{path}: path item $ref is not supported")
         for method in _METHODS:
             op = cast(dict[str, Any] | None, item.get(method))
             if op is None:
@@ -177,8 +224,8 @@ def build_index(spec: Mapping[str, Any]) -> SpecIndex:
             operations[op_id] = Operation(
                 operation_id=op_id,
                 path=path,
-                params=MappingProxyType(_params(r, item, op)),
-                scopes=_scopes(op),
+                params=MappingProxyType(_params(r, path, item, op)),
+                scope_sets=_scope_sets(op),
                 tags=tuple(op.get("tags", [])),
                 response=_response(r, op),
             )

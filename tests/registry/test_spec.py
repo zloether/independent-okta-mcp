@@ -7,14 +7,19 @@ from okta_mcp.registry.spec import SpecError, SpecIndex, build_index, load_spec
 
 
 @pytest.fixture(scope="module")
-def pinned() -> SpecIndex:
-    return load_spec()
-
-
-def test_load_time_under_two_seconds() -> None:
+def timed_load() -> tuple[SpecIndex, float]:
     start = time.perf_counter()
-    load_spec()
-    assert time.perf_counter() - start < 2
+    index = load_spec()
+    return index, time.perf_counter() - start
+
+
+@pytest.fixture(scope="module")
+def pinned(timed_load: tuple[SpecIndex, float]) -> SpecIndex:
+    return timed_load[0]
+
+
+def test_load_time_under_two_seconds(timed_load: tuple[SpecIndex, float]) -> None:
+    assert timed_load[1] < 2
 
 
 def test_known_operations_resolve(pinned: SpecIndex) -> None:
@@ -22,7 +27,7 @@ def test_known_operations_resolve(pinned: SpecIndex) -> None:
     assert get_user.path == "/api/v1/users/{id}"
     assert get_user.params["id"].location == "path"
     assert get_user.params["id"].required
-    assert get_user.scopes == frozenset({"okta.users.read"})
+    assert get_user.scope_sets == (frozenset({"okta.users.read"}),)
     assert get_user.tags == ("User",)
     assert get_user.response.kind == "object"
 
@@ -44,8 +49,24 @@ def test_non_get_operations_absent(pinned: SpecIndex) -> None:
     assert not pinned.operations.keys() & pinned.non_get.keys()
 
 
-def test_operations_without_oauth2_have_empty_scopes(pinned: SpecIndex) -> None:
-    assert pinned.operations["listSupportedSecurityQuestions"].scopes == frozenset()
+def test_operations_without_oauth2_have_no_scope_sets(pinned: SpecIndex) -> None:
+    assert pinned.operations["listSupportedSecurityQuestions"].scope_sets == ()
+
+
+def test_oauth2_entries_are_alternatives(pinned: SpecIndex) -> None:
+    assert pinned.operations["getApplicationsCsvExport"].scope_sets == (
+        frozenset({"okta.apps.read"}),
+        frozenset({"okta.apps.read", "okta.governance.labels.read"}),
+    )
+
+
+def test_path_params_required_even_when_spec_omits_flag(pinned: SpecIndex) -> None:
+    assert pinned.operations["getHookKey"].params["id"].required
+
+
+def test_single_resource_with_scalar_arrays_has_no_list_keys(pinned: SpecIndex) -> None:
+    assert pinned.operations["getGroup"].response.list_keys == ()
+    assert pinned.operations["getSession"].response.list_keys == ()
 
 
 def test_query_param_schema_keeps_enum_and_type(pinned: SpecIndex) -> None:
@@ -130,19 +151,25 @@ def test_param_and_schema_refs_are_inlined() -> None:
     assert op.response.kind == "list"
 
 
-def test_scopes_union_across_oauth2_entries() -> None:
-    spec = _spec(
-        {
-            "/x": {
-                "get": {
-                    "operationId": "getX",
-                    "security": [{"apiToken": []}, {"oauth2": ["a.read"]}, {"oauth2": ["b.read"]}],
-                    "responses": _ok({"type": "object"}),
-                }
-            }
-        }
+def test_scope_sets_one_per_oauth2_entry_and_empty_entries_dropped() -> None:
+    security = [
+        {"apiToken": []},
+        {"oauth2": ["b.read", "a.read"]},
+        {"oauth2": ["a.read"]},
+        {"oauth2": []},
+        {"oauth2": ["a.read"]},
+    ]
+    spec = _spec({"/x": {"get": {"operationId": "getX", "security": security, "responses": {}}}})
+    assert build_index(spec).operations["getX"].scope_sets == (
+        frozenset({"a.read"}),
+        frozenset({"a.read", "b.read"}),
     )
-    assert build_index(spec).operations["getX"].scopes == frozenset({"a.read", "b.read"})
+
+
+def test_unflagged_path_param_is_required() -> None:
+    params = [{"name": "id", "in": "path", "schema": {"type": "string"}}]
+    spec = _spec({"/x/{id}": {"get": {"operationId": "getX", "parameters": params}}})
+    assert build_index(spec).operations["getX"].params["id"].required
 
 
 @pytest.mark.parametrize(
@@ -153,13 +180,25 @@ def test_scopes_union_across_oauth2_entries() -> None:
         (
             {
                 "allOf": [
-                    {"properties": {"items": {"type": "array"}}},
+                    {"properties": {"items": {"type": "array", "items": {"type": "object"}}}},
                     {"properties": {"_links": {"properties": {"next": {"type": "object"}}}}},
                 ]
             },
             "object",
             ("items",),
             True,
+        ),
+        (
+            {
+                "type": "object",
+                "properties": {
+                    "amr": {"type": "array", "items": {"type": "string"}},
+                    "odd": True,
+                },
+            },
+            "object",
+            (),
+            False,
         ),
         ({"oneOf": [{"type": "object"}, {"type": "array"}]}, "other", (), False),
     ],
@@ -187,9 +226,34 @@ def test_non_json_response_is_other() -> None:
             "/y": {"get": {"operationId": "dup", "responses": {}}},
         },
         {"/x": {"get": {"operationId": "getX", "parameters": [{"$ref": "#/components/nope"}]}}},
+        {"/x/{id}": {"get": {"operationId": "getX"}}},
+        {
+            "/x": {
+                "get": {
+                    "operationId": "getX",
+                    "parameters": [{"name": "id", "in": "path", "schema": {}}],
+                }
+            }
+        },
+        {"/x": {"get": {"operationId": "getX", "parameters": [{"name": "q"}]}}},
+        {"/x": {"$ref": "#/components/pathItems/x"}},
+        {"/x": {"get": {"operationId": "getX", "responses": _ok({"$ref": "#/components/A"})}}},
     ],
-    ids=["missing-operationId", "duplicate-operationId", "dangling-ref"],
+    ids=[
+        "missing-operationId",
+        "duplicate-operationId",
+        "dangling-ref",
+        "template-var-without-param",
+        "path-param-not-in-template",
+        "param-missing-in",
+        "path-item-ref",
+        "allOf-cycle",
+    ],
 )
 def test_malformed_specs_raise(paths: dict[str, Any]) -> None:
+    components = {
+        "A": {"allOf": [{"$ref": "#/components/B"}]},
+        "B": {"allOf": [{"$ref": "#/components/A"}]},
+    }
     with pytest.raises(SpecError):
-        build_index(_spec(paths))
+        build_index(_spec(paths, components))
