@@ -12,7 +12,7 @@ Results of the live checks for design §16 items V1, V9, V10, V11, V13, V15. Eac
 | AS audience | `http://127.0.0.1:8000/mcp` |
 | Test groups | `mcp-okta-spike-admin` (`00g…`), `mcp-okta-spike-helpdesk` (`00g…`); one test user in each |
 | Public client | `0oa…` (native), redirect URIs: `http://127.0.0.1:8765/callback` |
-| Service app | `0oa…`, "Require DPoP" default: `false` when created via the API; console default not yet checked |
+| Service app | `0oa…`, "Require DPoP" default: off when created via the API, on when created in the admin console |
 
 Resources were created with the Management API (SSWS token) rather than the admin console; the exact request bodies are under [Okta configuration](#okta-configuration) below.
 
@@ -68,12 +68,12 @@ Per-client discovery behavior goes in the compatibility matrix below.
 
 ## V15 — Service app DPoP default and nonce behavior
 
-- "Require DPoP" on by default for new API Services apps: **no when created via `POST /api/v1/apps`** (`settings.oauthClient.dpop_bound_access_tokens: false` when omitted). Console default not yet checked.
+- "Require DPoP" on by default for new API Services apps: **depends on how the app is created**. Via `POST /api/v1/apps`: off (`settings.oauthClient.dpop_bound_access_tokens: false` when omitted). In the admin console (Applications → Create App Integration → API Services, 2026-11-01): on ("Require Demonstrating Proof of Possession (DPoP) header in token requests" is ticked).
 - With DPoP off: the token endpoint ignores a DPoP header and issues `token_type: Bearer`. Presenting that token as `Authorization: DPoP …` fails with `401 invalid_token "The presented access_token is not DPoP bound."`; `Bearer` succeeds (200).
 - With DPoP on (`dpop_bound_access_tokens: true`): a token request without a proof fails with `400 invalid_dpop_proof "The DPoP proof JWT header is missing."`.
 - Token endpoint nonce: **yes**. The first proof, sent without a nonce, is rejected with a `DPoP-Nonce` header; the retry with that nonce returns `token_type: DPoP`.
 - Resource endpoint nonce (`GET /api/v1/users`): 200 on the first attempt with a proof carrying the token-endpoint nonce plus `ath`; no new `DPoP-Nonce` was sent. Whether a proof *without* a nonce is accepted at the resource is untested.
-- Design impact: the runbook must set "Require DPoP" explicitly (API/Terraform default is off). Keep the nonce retry at the token endpoint. At resource endpoints, reuse the last nonce and keep the one-shot retry on `use_dpop_nonce`.
+- Design impact: DPoP on by default in the server is right: an app made in the console requires it. The runbook, `scripts/okta-setup.py` and `terraform/okta/` must set "Require DPoP" explicitly, because the API (and so Terraform) default is off. Keep the nonce retry at the token endpoint. At resource endpoints, reuse the last nonce and keep the one-shot retry on `use_dpop_nonce`.
 
 ## Client compatibility matrix
 
