@@ -1,0 +1,259 @@
+import time
+from typing import Any
+
+import pytest
+
+from okta_mcp.registry.spec import SpecError, SpecIndex, build_index, load_spec
+
+
+@pytest.fixture(scope="module")
+def timed_load() -> tuple[SpecIndex, float]:
+    start = time.perf_counter()
+    index = load_spec()
+    return index, time.perf_counter() - start
+
+
+@pytest.fixture(scope="module")
+def pinned(timed_load: tuple[SpecIndex, float]) -> SpecIndex:
+    return timed_load[0]
+
+
+def test_load_time_under_two_seconds(timed_load: tuple[SpecIndex, float]) -> None:
+    assert timed_load[1] < 2
+
+
+def test_known_operations_resolve(pinned: SpecIndex) -> None:
+    get_user = pinned.operations["getUser"]
+    assert get_user.path == "/api/v1/users/{id}"
+    assert get_user.params["id"].location == "path"
+    assert get_user.params["id"].required
+    assert get_user.scope_sets == (frozenset({"okta.users.read"}),)
+    assert get_user.tags == ("User",)
+    assert get_user.response.kind == "object"
+
+    groups = pinned.operations["listUserGroups"]
+    assert groups.path == "/api/v1/users/{id}/groups"
+    assert {"id", "after", "limit"} <= groups.params.keys()
+    assert groups.params["after"].location == "query"
+    assert groups.response.kind == "list"
+
+    enrollments = pinned.operations["listAuthenticatorEnrollments"]
+    assert enrollments.params["userId"].location == "path"
+    assert enrollments.params["discloseIdentifiers"].location == "query"
+
+
+def test_non_get_operations_absent(pinned: SpecIndex) -> None:
+    assert "createUser" not in pinned.operations
+    assert pinned.non_get["createUser"] == "post"
+    assert pinned.non_get["deleteUser"] == "delete"
+    assert not pinned.operations.keys() & pinned.non_get.keys()
+
+
+def test_operations_without_oauth2_have_no_scope_sets(pinned: SpecIndex) -> None:
+    assert pinned.operations["listSupportedSecurityQuestions"].scope_sets == ()
+
+
+def test_oauth2_entries_are_alternatives(pinned: SpecIndex) -> None:
+    assert pinned.operations["getApplicationsCsvExport"].scope_sets == (
+        frozenset({"okta.apps.read"}),
+        frozenset({"okta.apps.read", "okta.governance.labels.read"}),
+    )
+
+
+def test_path_params_required_even_when_spec_omits_flag(pinned: SpecIndex) -> None:
+    assert pinned.operations["getHookKey"].params["id"].required
+
+
+def test_single_resource_with_scalar_arrays_has_no_list_keys(pinned: SpecIndex) -> None:
+    assert pinned.operations["getGroup"].response.list_keys == ()
+    assert pinned.operations["getSession"].response.list_keys == ()
+
+
+def test_query_param_schema_keeps_enum_and_type(pinned: SpecIndex) -> None:
+    zones = pinned.operations["listNetworkZones"]
+    assert zones.params["limit"].schema["type"] == "integer"
+    assert zones.response.kind == "list"
+
+
+def test_wrapped_response_reports_list_key_and_next_link(pinned: SpecIndex) -> None:
+    response = pinned.operations["listResourceSets"].response
+    assert response.kind == "object"
+    assert response.list_keys == ("resource-sets",)
+    assert response.links_next
+
+
+def _spec(paths: dict[str, Any], components: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "openapi": "3.0.3",
+        "info": {"version": "1"},
+        "paths": paths,
+        "components": components or {},
+    }
+
+
+def _ok(schema: dict[str, Any]) -> dict[str, Any]:
+    return {"200": {"content": {"application/json": {"schema": schema}}}}
+
+
+def test_operation_level_param_overrides_path_level() -> None:
+    spec = _spec(
+        {
+            "/x/{id}": {
+                "parameters": [{"name": "id", "in": "path", "schema": {"type": "string"}}],
+                "get": {
+                    "operationId": "getX",
+                    "parameters": [
+                        {
+                            "name": "id",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string", "pattern": "^x$"},
+                        },
+                        {"name": "If-None-Match", "in": "header", "schema": {"type": "string"}},
+                    ],
+                    "responses": _ok({"type": "object"}),
+                },
+            }
+        }
+    )
+    op = build_index(spec).operations["getX"]
+    assert op.params["id"].schema == {"type": "string", "pattern": "^x$"}
+    assert op.params["id"].required
+    assert "If-None-Match" not in op.params
+
+
+def test_param_and_schema_refs_are_inlined() -> None:
+    spec = _spec(
+        {
+            "/x": {
+                "get": {
+                    "operationId": "listX",
+                    "parameters": [{"$ref": "#/components/parameters/status"}],
+                    "responses": _ok(
+                        {"type": "array", "items": {"$ref": "#/components/schemas/X"}}
+                    ),
+                }
+            }
+        },
+        {
+            "parameters": {
+                "status": {
+                    "name": "status",
+                    "in": "query",
+                    "schema": {"$ref": "#/components/schemas/Status"},
+                }
+            },
+            "schemas": {"Status": {"type": "string", "enum": ["A", "B"]}, "X": {"type": "object"}},
+        },
+    )
+    op = build_index(spec).operations["listX"]
+    assert op.params["status"].schema == {"type": "string", "enum": ["A", "B"]}
+    assert op.response.kind == "list"
+
+
+def test_scope_sets_one_per_oauth2_entry_and_empty_entries_dropped() -> None:
+    security = [
+        {"apiToken": []},
+        {"oauth2": ["b.read", "a.read"]},
+        {"oauth2": ["a.read"]},
+        {"oauth2": []},
+        {"oauth2": ["a.read"]},
+    ]
+    spec = _spec({"/x": {"get": {"operationId": "getX", "security": security, "responses": {}}}})
+    assert build_index(spec).operations["getX"].scope_sets == (
+        frozenset({"a.read"}),
+        frozenset({"a.read", "b.read"}),
+    )
+
+
+def test_unflagged_path_param_is_required() -> None:
+    params = [{"name": "id", "in": "path", "schema": {"type": "string"}}]
+    spec = _spec({"/x/{id}": {"get": {"operationId": "getX", "parameters": params}}})
+    assert build_index(spec).operations["getX"].params["id"].required
+
+
+@pytest.mark.parametrize(
+    ("schema", "kind", "list_keys", "links_next"),
+    [
+        ({"type": "array"}, "list", (), False),
+        ({"type": "object", "properties": {"id": {"type": "string"}}}, "object", (), False),
+        (
+            {
+                "allOf": [
+                    {"properties": {"items": {"type": "array", "items": {"type": "object"}}}},
+                    {"properties": {"_links": {"properties": {"next": {"type": "object"}}}}},
+                ]
+            },
+            "object",
+            ("items",),
+            True,
+        ),
+        (
+            {
+                "type": "object",
+                "properties": {
+                    "amr": {"type": "array", "items": {"type": "string"}},
+                    "odd": True,
+                },
+            },
+            "object",
+            (),
+            False,
+        ),
+        ({"oneOf": [{"type": "object"}, {"type": "array"}]}, "other", (), False),
+    ],
+)
+def test_response_shapes(
+    schema: dict[str, Any], kind: str, list_keys: tuple[str, ...], links_next: bool
+) -> None:
+    spec = _spec({"/x": {"get": {"operationId": "getX", "responses": _ok(schema)}}})
+    response = build_index(spec).operations["getX"].response
+    assert (response.kind, response.list_keys, response.links_next) == (kind, list_keys, links_next)
+
+
+def test_non_json_response_is_other() -> None:
+    responses = {"200": {"content": {"text/csv": {"schema": {"type": "string"}}}}}
+    spec = _spec({"/x": {"get": {"operationId": "getX", "responses": responses}}})
+    assert build_index(spec).operations["getX"].response.kind == "other"
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        {"/x": {"get": {"responses": {}}}},
+        {
+            "/x": {"get": {"operationId": "dup", "responses": {}}},
+            "/y": {"get": {"operationId": "dup", "responses": {}}},
+        },
+        {"/x": {"get": {"operationId": "getX", "parameters": [{"$ref": "#/components/nope"}]}}},
+        {"/x/{id}": {"get": {"operationId": "getX"}}},
+        {
+            "/x": {
+                "get": {
+                    "operationId": "getX",
+                    "parameters": [{"name": "id", "in": "path", "schema": {}}],
+                }
+            }
+        },
+        {"/x": {"get": {"operationId": "getX", "parameters": [{"name": "q"}]}}},
+        {"/x": {"$ref": "#/components/pathItems/x"}},
+        {"/x": {"get": {"operationId": "getX", "responses": _ok({"$ref": "#/components/A"})}}},
+    ],
+    ids=[
+        "missing-operationId",
+        "duplicate-operationId",
+        "dangling-ref",
+        "template-var-without-param",
+        "path-param-not-in-template",
+        "param-missing-in",
+        "path-item-ref",
+        "allOf-cycle",
+    ],
+)
+def test_malformed_specs_raise(paths: dict[str, Any]) -> None:
+    components = {
+        "A": {"allOf": [{"$ref": "#/components/B"}]},
+        "B": {"allOf": [{"$ref": "#/components/A"}]},
+    }
+    with pytest.raises(SpecError):
+        build_index(_spec(paths, components))

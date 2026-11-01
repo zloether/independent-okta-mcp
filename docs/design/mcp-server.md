@@ -275,7 +275,7 @@ The okta-skills catalogue (minus ai-agents) is the v1 checklist. Commands fall i
 | **Resolved** — simple, but a user argument may be a login that must become an ID first | Registry entry + `resolve: user_id` | `users get-groups <login>` | v1 |
 | **Composite** — several operations, fan-out, aggregation, or reshaping | Python handler in `src/okta_mcp/handlers/` | `logs login-failures`, `logs timeline`, `logs list --member-of/--count-by`, `logs diagnose`, batch `get-factors`/`get-enrollments` over `ids[]`, `policies get-rules` over many policies | After v1, on demand |
 
-**Resolver rules.** Only `user_id` exists. A value matching `^00u[A-Za-z0-9]{17}$` is used as-is; anything else is looked up with `getUser` (Okta accepts an exact login on that endpoint) and must return exactly one user, else `not_found`. Group and app commands take IDs; Okta's `q=` name search is a prefix match and would make `groups get-members Sales` ambiguous. The resolver runs **after** the policy check (so it cannot serve as an existence oracle for commands the caller may not use), and `getUser`'s scopes are added to every resolved command's derived scopes.
+**Resolver rules.** Only `user_id` exists. A value matching `^00u[A-Za-z0-9]{17}$` is used as-is; anything else is looked up with `getUser` (Okta accepts an exact login on that endpoint) and must return exactly one user, else `not_found`. Group and app commands take IDs; Okta's `q=` name search is a prefix match and would make `groups get-members Sales` ambiguous. The resolver runs **after** the policy check (so it cannot serve as an existence oracle for commands the caller may not use), and `getUser`'s scopes are added to each of a resolved command's derived scope sets.
 
 Operations the server can never serve are listed in `docs/coverage/catalogue.yaml` with a reason and not registered: e.g. `getAerialConsent` (requires `okta.orgs.manage`), `listSupportedSecurityQuestions` (declares only `apiToken`).
 
@@ -289,7 +289,7 @@ The coverage report also lists spec GET operations not in the registry (beyond t
 
 - `specs/` holds the pinned Okta Management OpenAPI spec (`okta/okta-management-openapi-spec`, `dist/current/management-minimal.yaml`), downloaded at a fixed upstream commit, with commit, version and sha256 in `PINNED.json`. The Workload Principals spec is not vendored until ai-agents returns.
 - `scripts/update-spec.py` fetches, pins, and prints a diff of GET operations added/removed/changed. Spec updates are PRs; CI re-validates the registry against the new spec.
-- The spec is loaded at startup and in CI with PyYAML's C loader (`CSafeLoader`; ~0.5 s for the full file). The index keeps only GET operations.
+- The spec is loaded at startup and in CI with PyYAML's C loader (`CSafeLoader`; ~1 s for the full file). The index keeps only GET operations.
 
 ### 6.2 Registry format
 
@@ -355,13 +355,13 @@ Load-time and CI checks (startup fails on any error):
 
 1. Every `operation` exists in the pinned spec and is a **GET**. Non-GET operations are rejected outright (read-only invariant).
 2. Every `path_param` covers all path parameters of the operation; every `query` names a parameter the operation defines.
-3. Derived scopes = union of the `security.oauth2` scopes of the command's operation and, for `resolve: user_id`, of `getUser`. **An empty result is an error** unless the entry carries `okta_scopes_override` with a comment.
+3. Derived scope sets = the operation's `security.oauth2` entries, each an alternative (any one granted set suffices; scopes within an entry are all required), each combined with `getUser`'s scopes for `resolve: user_id`. Empty `oauth2` entries are dropped. **No scope set at all is an error** unless the entry carries `okta_scopes_override` with a comment.
 4. Every command has a non-empty `data_classes` list using known classes.
 5. Commands that use the same `operationId` have the same derived base sensitivity (differences must come from `arg_rule`s).
 6. Every argument that can widen results (`expand`, `discloseIdentifiers`, free-form `filter`/`search`/`q`) has an explicit `arg_rule` or `allowed_values`.
 7. Every resource guide's command references exist.
 8. A command without classification fails CI; there is no "default exposed".
-9. `items_key` is set when the operation's success response schema is an object wrapping the list; `paginate` is set when the operation defines `after` or returns `_links.next`.
+9. `items_key`, when set, names an array-of-objects property of the operation's success response (single resources have such properties too, e.g. `getDevice` → `registrationGrants`, so the spec alone can't say which object responses wrap a list; the registry declares it). `paginate` is set when the operation defines `after` or returns `_links.next`.
 
 ### 6.3 Argument schemas
 
@@ -585,7 +585,7 @@ Policy changes take effect on restart (stateless, seconds). Mount the file read-
 
 1. **`tools/list`** — `permitted(principal)` (memoized by frozenset of matched roles); only domains with ≥1 permitted command, enum and synopsis restricted; `cacheScope: "private"`.
 2. **`tools/call`** — re-evaluates against the policy and the call's args (`arg_rules`); never trusts the client's view. Runs before any resolver or Okta request.
-3. **Service-app capability gate** — command unavailable when its derived scopes ⊄ `OKTA_SCOPES`. `.manage ⇒ .read` implication modeled explicitly (V4).
+3. **Service-app capability gate** — command unavailable when none of its derived scope sets ⊆ `OKTA_SCOPES`. `.manage ⇒ .read` implication modeled explicitly (V4).
 
 ### 9.5 Group claim limits
 
