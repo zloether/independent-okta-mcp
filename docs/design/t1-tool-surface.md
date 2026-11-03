@@ -1,6 +1,6 @@
 # T1 — Tool surface and response shapes (proposal)
 
-Status: **draft for discussion**. Resolves open question T1; blocks 1.4, 2.7, 2.8, 3.3. Revisits design §5.1–5.3 and §7.1–7.3. Nothing here weakens a security control; the two items that touch trust boundaries (cursor format, null pruning near scrubbing) are marked 🔒.
+Status: **accepted 2026-11-02** (all of D1–D11; D5 and D6 refined below). Resolves open question T1; blocks 1.4, 2.7, 2.8, 3.3. Revisits design §5.1–5.3 and §7.1–7.3. Nothing here weakens a security control; the two items that touch trust boundaries (cursor format, null pruning near scrubbing) are marked 🔒.
 
 Goal: keep what lands in the model's context small, and do the work in code (projection, pruning, encoding, defaults) instead of asking the model to do it.
 
@@ -39,16 +39,16 @@ Tool list: the okta-skills catalogue has ~324 commands outside ai-agents. Droppi
 
 ## 1. Tool surface
 
-**D1 — Keep domain tools (A), with the trims below.** *Decision needed.* Recommended.
+**D1 — Keep domain tools (A), with the trims below.** *Accepted.*
 
 - Filtering per principal already bounds the cost for real roles. Only full-access admins pay ~8k tokens, and a client with deferred tool loading pays less.
 - Domain tools let clients allow or deny tools per domain and give better tool selection than a single `okta_call`. B saves tokens up front but costs a discovery round trip in most sessions and pushes argument shapes out of the schema.
 - Trims: one-sentence descriptions on the shared output parameters (they repeat on all 23 tools); synopsis lines ≤ 60 characters; no examples in tool descriptions (they go in `okta_help`).
 - **Guard with a budget test** (3.3): for a full-access principal on the real registries, assert `tools/list` stays under a fixed byte budget (start at 40 KB ≈ 10k tokens and ratchet down). If the full registry (Phase 5) exceeds it, switch to C rather than raising the budget.
 
-**D2 — Merge `okta_status` into `okta_help`.** *Decision needed.* `okta_help()` with no arguments returns the caller's roles, domains and unavailable commands (today's `okta_status`). `okta_help(tool, command)` returns command help. One fewer tool, same information, same rule that it reveals nothing about other users or roles.
+**D2 — Merge `okta_status` into `okta_help`.** *Accepted.* `okta_help()` with no arguments returns the caller's roles, domains and unavailable commands (today's `okta_status`). `okta_help(tool, command)` returns command help. One fewer tool, same information, same rule that it reveals nothing about other users or roles.
 
-**D3 — One command per operation; variants are arguments.** *Decision needed.* okta-skills has `users list` and `users search`, both `listUsers`. Every alias adds a synopsis and an enum line for every principal who can see it. A second command on the same `operationId` is allowed only when classification differs (design §6.2 check 5 already forces those to agree). The coverage inventory (1.5) maps catalogue aliases to the one command.
+**D3 — One command per operation; variants are arguments.** *Accepted.* okta-skills has `users list` and `users search`, both `listUsers`. Every alias adds a synopsis and an enum line for every principal who can see it. A second command on the same `operationId` is allowed only when classification differs (design §6.2 check 5 already forces those to agree). The coverage inventory (1.5) maps catalogue aliases to the one command.
 
 Which commands to expose stays as the design has it: the catalogue minus exclusions, decided per entry in 1.5. Filters, expression language and terraform are resources (`okta://reference/*`), not tools.
 
@@ -65,20 +65,21 @@ Which commands to expose stays as the design has it: the catalogue minus exclusi
 }
 ```
 
-**D4 — `links` (default `false`) replaces `strip_links`.** *Decision needed.* `_links` is dropped unless asked for. `_embedded` is kept, since it carries `expand` results.
+**D4 — `links` (default `false`) replaces `strip_links`.** *Accepted.* `_links` is dropped unless asked for. `_embedded` is kept, since it carries `expand` results.
 
-**D5 — Default views in the registry.** *Decision needed.* A new registry field, `view: [dotted paths]`, applies when `select` is omitted:
+**D5 — Default views in the registry.** *Accepted.* A new registry field, `view: [dotted paths]`, applies when `select` is omitted:
 
 - Required on every list command (new loader check). Optional on single-resource commands, which default to the whole object, without links and with nulls pruned.
-- Each path must exist in the operation's success-response schema (new loader check, so `registry/spec.py` must also keep response property paths).
+- Each path must exist in the operation's success-response schema (new loader check, so `registry/spec.py` must also keep response property paths). For polymorphic items (discriminator, `oneOf`/`anyOf`; 20 of the 133 list operations, e.g. `listApplications`, `listPolicies`, `listFactors`), the path must exist in the **base schema** shared by every variant, so a view never names a field that some items can't have.
+- An explicit `select` is **not** checked against the schema: custom profile attributes (`additionalProperties`) must stay selectable. Unknown paths yield `null` cells.
 - `select: "*"` returns the whole scrubbed object. `select` with explicit paths overrides the view.
 - Scrubbing still runs first on the full item (design §7.2 order: scrub → links → select/view), so a view never exposes a field that scrubbing would remove, and `select: "*"` is no wider than today's default.
 
 Example views from the measurements: users `id,status,profile.login,profile.firstName,profile.lastName,lastLogin`; logs `published,eventType,displayMessage,outcome.result,outcome.reason,actor.alternateId,client.ipAddress,severity`.
 
-**D6 — Prune nulls and empties from objects.** *Decision needed.* Applies to whole-object output (single resources, `select: "*"`). Table cells keep `null`, so a column never shifts. Tradeoff: a whole object no longer shows explicit `null` against an absent field (e.g. `lastLogin: null` = never logged in). The tool description says "absent = null". 🔒 Pruning runs after scrubbing and must not turn a scrubbed field's placeholder into something that looks absent. The scrubber sets `"[redacted]"` (design §9.2), which is not empty, so it survives pruning. A test pins this.
+**D6 — Prune nulls and empties from objects.** *Accepted.* "Empty" means `null`, `{}` and `[]`; empty strings are kept. Applies to whole-object output (single resources, `select: "*"`). Table cells keep `null`, so a column never shifts. Tradeoff: a whole object no longer shows explicit `null` against an absent field (e.g. `lastLogin: null` = never logged in). The tool description says "absent = null". 🔒 Pruning runs after scrubbing and must not turn a scrubbed field's placeholder into something that looks absent. The scrubber sets `"[redacted]"` (design §9.2), which is not empty, so it survives pruning. A test pins this.
 
-**D7 — Smaller default budgets.** *Decision needed.* `MCP_DEFAULT_LIMIT` 100 → **50**. `MCP_MAX_BYTES` 256 KB → **64 KB** (≈ 16k tokens; measured on the serialized response, so after view and table encoding). `MCP_MAX_ITEMS` stays 1000. With views, 50 items fit in ~1–2k tokens, and paging is cheap once the cursor is small (§4).
+**D7 — Smaller default budgets.** *Accepted.* `MCP_DEFAULT_LIMIT` 100 → **50**. `MCP_MAX_BYTES` 256 KB → **64 KB** (≈ 16k tokens; measured on the serialized response, so after view and table encoding). `MCP_MAX_ITEMS` stays 1000. With views, 50 items fit in ~1–2k tokens, and paging is cheap once the cursor is small (§4). Logs with `select: "*"` (~1.9 KB per event) will stop on `max_bytes` at ~33 events and resume through the in-page `skip` (design §7.2); that is expected, not a failure.
 
 ## 3. Response shapes
 
@@ -98,7 +99,7 @@ All responses are **one text block of compact JSON**. Envelope fields appear onl
 - `count` is kept: 3 tokens, and models miscount long row lists.
 - `truncated` holds the reason (`max_items | max_bytes | deadline | non_resumable`) and is absent when the list is complete. `resumable` is gone: the presence of `next_cursor` means resumable. `warnings` appears only when non-empty.
 
-**D8 — Table encoding for lists.** *Decision needed.* Recommended. Tradeoff: one more shape for clients and tests, in exchange for 30–40 % on every list. Models read column/row JSON reliably. The alternative is objects-with-view only (still the 4–15× win from D5).
+**D8 — Table encoding for lists.** *Accepted.* Tradeoff: one more shape for clients and tests, in exchange for 30–40 % on every list. Models read column/row JSON reliably. The alternative is objects-with-view only (still the 4–15× win from D5).
 
 ### 3.2 Single resource
 
@@ -110,7 +111,7 @@ Same as design §7.1, plus D4 and D6.
 
 ### 3.3 No `structuredContent`
 
-**D9 — Return one text block. No `outputSchema` and no `structuredContent`.** *Decision needed.* Design §5.2 returns both: the envelope as `structuredContent` and a JSON text block as fallback. A client that passes both to the model pays twice. Clients differ in which one they forward, so the only shape that guarantees a single copy is text-only. The envelope is small and self-describing, so nothing depends on a declared output schema. Verify in 4.x with Claude Code, Claude Desktop and one other client. If some client forwards *only* `structuredContent`, revisit.
+**D9 — Return one text block. No `outputSchema` and no `structuredContent`.** *Accepted.* Design §5.2 returns both: the envelope as `structuredContent` and a JSON text block as fallback. A client that passes both to the model pays twice. Clients differ in which one they forward, so the only shape that guarantees a single copy is text-only. The envelope is small and self-describing, so nothing depends on a declared output schema. Verify in 4.x with Claude Code, Claude Desktop and one other client. If some client forwards *only* `structuredContent`, revisit.
 
 ### 3.4 Errors
 
@@ -127,7 +128,7 @@ Same as design §7.1, plus D4 and D6.
 
 A cursor is emitted and then **echoed by the model as output tokens**, which are slower and dearer than input tokens. The design §7.3 payload for the `get-groups` example encodes to **516 characters** (≈ 150–200 tokens, as base64 tokenizes poorly).
 
-**D10 — Compact cursor format** (same bindings, same checks). *Decision needed.*
+**D10 — Compact cursor format** (same bindings, same checks). *Accepted.*
 
 - short keys (`v,u,t,c,a,p,q,s,e`); `iat` dropped (only `exp` is checked);
 - `args_sha256` → first 128 bits, base64url;
@@ -138,7 +139,7 @@ Measured: 516 → ~290 characters. Needs `/security-review` in 2.9 as already pl
 
 ## 5. `okta_help` output
 
-**D11 — Help as compact text, not raw JSON Schema.** *Decision needed.*
+**D11 — Help as compact text, not raw JSON Schema.** *Accepted.*
 
 ```
 okta_users get-groups <user>
@@ -164,7 +165,7 @@ Token cost regresses silently, so guard it the same way as behavior:
 - Per-command `default_limit` (e.g. logs 25): only if D7's global defaults prove wrong for one domain.
 - Gateway mode (B) as a config switch: only if the D1 budget test fails and C isn't enough.
 
-## 8. Changes if accepted
+## 8. Changes (each lands with the step that implements it)
 
 | Where | Change |
 |---|---|
@@ -176,7 +177,7 @@ Token cost regresses silently, so guard it the same way as behavior:
 | Design §7.2 | Null pruning step after links (D6) |
 | Design §7.3 | Compact cursor, query-only `page` (D10) |
 | Design §11.3 | `MCP_DEFAULT_LIMIT=50`, `MCP_MAX_BYTES=65536` (D7) |
-| Plan 1.2/1.3 | Spec index keeps response property paths; registry model and loader get `view` |
+| Plan 1.2/1.3 | Spec index keeps response property paths (base schema for polymorphic items); registry model and loader get `view` |
 | Plan 1.4 | Synopsis cap; text help renderer |
 | Plan 2.7 | `links`, view, pruning |
 | Plan 2.8 | Table encoding, sparse envelope |
@@ -184,18 +185,18 @@ Token cost regresses silently, so guard it the same way as behavior:
 | Plan 3.3 | Merged `okta_help`; budget tests |
 | Plan 4.x | Verify single-copy results across clients (D9) |
 
-## Decisions to make
+## Decisions
 
-| ID | Proposal | Recommendation | Status |
-|---|---|---|---|
-| D1 | Domain tools + `tools/list` budget test; C as fallback | Yes | Decision needed |
-| D2 | Merge `okta_status` into `okta_help()` | Yes | Decision needed |
-| D3 | One command per operation | Yes | Decision needed |
-| D4 | `links` default false | Yes | Decision needed |
-| D5 | Registry default views; `select: "*"` | Yes | Decision needed |
-| D6 | Prune nulls in whole-object output | Yes, with "absent = null" in descriptions | Decision needed |
-| D7 | Default limit 50, max bytes 64 KB | Yes | Decision needed |
-| D8 | Table encoding for lists | Yes; the main judgment call | Decision needed |
-| D9 | Text-only results, no `structuredContent` | Yes, pending client check in 4.x | Decision needed |
-| D10 | Compact cursor, query-only page | Yes, via `/security-review` in 2.9 | Decision needed |
-| D11 | Help as text | Yes | Decision needed |
+| ID | Proposal | Status |
+|---|---|---|
+| D1 | Domain tools + `tools/list` budget test; C as fallback | Accepted 2026-11-02 |
+| D2 | Merge `okta_status` into `okta_help()` | Accepted 2026-11-02 |
+| D3 | One command per operation | Accepted 2026-11-02 |
+| D4 | `links` default false | Accepted 2026-11-02 |
+| D5 | Registry default views; `select: "*"` | Accepted 2026-11-02; view paths checked against the base schema of polymorphic items; explicit `select` unchecked |
+| D6 | Prune nulls in whole-object output, "absent = null" in descriptions | Accepted 2026-11-02; prunes `null`, `{}`, `[]`, keeps `""` |
+| D7 | Default limit 50, max bytes 64 KB | Accepted 2026-11-02 |
+| D8 | Table encoding for lists | Accepted 2026-11-02 |
+| D9 | Text-only results, no `structuredContent` | Accepted 2026-11-02, pending client check in 4.x |
+| D10 | Compact cursor, query-only page | Accepted 2026-11-02, via `/security-review` in 2.9 |
+| D11 | Help as text | Accepted 2026-11-02 |
