@@ -115,6 +115,8 @@ class CommandEntry(_Model):
     operation: str
     summary: str = Field(min_length=1)
     args: Mapping[str, Arg] = Field(default_factory=lambda: MappingProxyType({}))
+    one_of_required: tuple[str, ...] | None = Field(default=None, min_length=2)
+    """Exactly one of these args must be passed."""
     paginate: Literal["link", "body_links", "link_or_body", "none"] = "none"
     page_size: int | None = Field(default=None, ge=1)
     items_key: str | None = None

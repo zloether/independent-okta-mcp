@@ -13,9 +13,11 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import yaml
+from jsonschema.protocols import Validator
 from pydantic import ValidationError
 
 from okta_mcp.registry.model import CommandEntry, DomainFile, Sensitivity
+from okta_mcp.registry.schema import build_schema, make_validator, synopsis
 from okta_mcp.registry.spec import Operation, SpecIndex
 
 REGISTRY = files("okta_mcp") / "data" / "registry"
@@ -41,6 +43,10 @@ class Command:
     sensitivity: Sensitivity
     """Base sensitivity; `arg_rule`s may raise it per call."""
     is_list: bool
+    schema: Mapping[str, Any]
+    """JSON Schema for `args` (design §6.3). Nested values are plain dicts: don't change them."""
+    synopsis: str
+    validator: Validator
 
 
 @dataclass(frozen=True)
@@ -152,7 +158,20 @@ def _command(
     _check_args(entry, op, errors)
     scope_sets = _scope_sets(entry, op, spec, errors)
     is_list = _check_shape(entry, op, errors)
-    return Command(domain, name, entry, op, scope_sets, entry.sensitivity, is_list)
+    schema = build_schema(entry, op, errors)
+    line = synopsis(name, entry.summary, schema, errors)
+    return Command(
+        domain,
+        name,
+        entry,
+        op,
+        scope_sets,
+        entry.sensitivity,
+        is_list,
+        MappingProxyType(schema),
+        line,
+        make_validator(schema),
+    )
 
 
 def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
