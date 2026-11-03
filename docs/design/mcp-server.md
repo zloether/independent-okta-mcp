@@ -312,7 +312,8 @@ commands:
     args:
       user: {path_param: id, resolve: user_id}
     paginate: link                     # link | body_links | link_or_body | none
-    page_size: 200                     # sent as `limit` only if the operation defines it
+    page_size: 200                     # sent as `limit`; the operation must define it
+    view: [id, type, profile.name]     # default columns when `select` is omitted
     data_classes: [pii]
 
   get-factors:
@@ -330,6 +331,8 @@ commands:
       disclose_identifiers:
         query: discloseIdentifiers
         arg_rule: {raises_sensitivity_to: sensitive}
+    response_override: {kind: list, reason: "spec declares one AuthenticatorEnrollment (V8)"}
+    view: [id, type, status, name]
     data_classes: [mfa-state, pii]
 ```
 
@@ -354,14 +357,15 @@ commands:
 Load-time and CI checks (startup fails on any error):
 
 1. Every `operation` exists in the pinned spec and is a **GET**. Non-GET operations are rejected outright (read-only invariant).
-2. Every `path_param` covers all path parameters of the operation; every `query` names a parameter the operation defines.
-3. Derived scope sets = the operation's `security.oauth2` entries, each an alternative (any one granted set suffices; scopes within an entry are all required), each combined with `getUser`'s scopes for `resolve: user_id`. Empty `oauth2` entries are dropped. **No scope set at all is an error** unless the entry carries `okta_scopes_override` with a comment.
+2. Every `path_param` covers all path parameters of the operation; every `query` names a parameter the operation defines. Each spec parameter maps to at most one argument, and every required query parameter has one. `after` and `limit` are never arguments: the server owns pagination and page size (`page_size`, which requires the operation to define `limit`).
+3. Derived scope sets = the operation's `security.oauth2` entries, each an alternative (any one granted set suffices; scopes within an entry are all required), each combined with `getUser`'s scopes for `resolve: user_id`. Empty `oauth2` entries are dropped. **No scope set at all is an error** unless the entry carries `okta_scopes_override: {scopes: […], reason: "…"}`. The override is rejected on operations that do declare scopes, so it can never replace a spec requirement.
 4. Every command has a non-empty `data_classes` list using known classes.
-5. Commands that use the same `operationId` have the same derived base sensitivity (differences must come from `arg_rule`s).
+5. Commands that use the same `operationId` have the same derived base sensitivity (differences must come from `arg_rule`s). There is one command per operation; a second is allowed only when its classification (data classes or `arg_rule`s) differs. Variants such as list vs search are arguments of one command.
 6. Every argument that can widen results (`expand`, `discloseIdentifiers`, free-form `filter`/`search`/`q`) has an explicit `arg_rule` or `allowed_values`.
 7. Every resource guide's command references exist.
-8. A command without classification fails CI; there is no "default exposed".
-9. `items_key`, when set, names an array-of-objects property of the operation's success response (single resources have such properties too, e.g. `getDevice` → `registrationGrants`, so the spec alone can't say which object responses wrap a list; the registry declares it). `paginate` is set when the operation defines `after` or returns `_links.next`.
+8. A command without classification fails CI; there is no "default exposed". Unknown fields are errors, so a misspelled field (e.g. `arg_rules`) cannot silently drop a rule.
+9. `items_key`, when set, names an array-of-objects property of the operation's success response (single resources have such properties too, e.g. `getDevice` → `registrationGrants`, so the spec alone can't say which object responses wrap a list; the registry declares it). Where the spec declares one object but Okta returns a list of it (V8), `response_override: {kind: list, reason: "…"}` says so. `paginate` is set when the operation defines `after` or returns `_links.next`, and only on list commands.
+10. A list command (array response, `items_key` or `response_override`) has a `view`: the dotted paths shown when the caller omits `select`. Single-resource commands may have one. Every view path exists in the response item's schema, never under `_links`; for polymorphic items (discriminator, `oneOf`/`anyOf`) it must exist in the base schema every variant shares, so a view never names a field some items can't have. An explicit `select` is not checked against the schema, so custom profile attributes stay selectable.
 
 ### 6.3 Argument schemas
 
