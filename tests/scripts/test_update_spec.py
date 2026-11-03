@@ -7,7 +7,7 @@ from typing import Any
 import httpx2
 import pytest
 import yaml
-from conftest import load_script
+from _load import load_script
 
 update = load_script("update-spec")
 

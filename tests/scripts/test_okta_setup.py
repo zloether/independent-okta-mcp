@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx2
 import pytest
-from conftest import SCRIPTS, load_script
+from _load import SCRIPTS, load_script
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.utils import base64url_decode

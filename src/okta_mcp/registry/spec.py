@@ -98,7 +98,7 @@ class _Resolver:
             if ref in seen:
                 raise SpecError(f"$ref cycle: {ref}")
             seen.add(ref)
-            node = self._target(ref)
+            node = ref_target(self._spec, ref)
         return cast(Any, node)
 
     def inline(self, node: Any, stack: tuple[str, ...] = ()) -> Any:
@@ -110,14 +110,11 @@ class _Resolver:
             if isinstance(ref, str):
                 if ref in stack:
                     raise SpecError(f"$ref cycle: {ref}")
-                return self.inline(self._target(ref), (*stack, ref))
+                return self.inline(ref_target(self._spec, ref), (*stack, ref))
             return {k: self.inline(v, stack) for k, v in obj.items()}
         if isinstance(node, list):
             return [self.inline(v, stack) for v in cast(list[Any], node)]
         return node
-
-    def _target(self, ref: str) -> Any:
-        return ref_target(self._spec, ref)
 
     def schema(self, node: Any) -> dict[str, Any] | None:
         """`node` dereferenced, or None when it isn't a schema object (e.g. a boolean schema)."""

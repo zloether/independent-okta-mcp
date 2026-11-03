@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 import yaml
-from conftest import load_script
+from _load import load_script
 
 from okta_mcp.registry.loader import Registry, build_registry
 from okta_mcp.registry.spec import SpecIndex, load_spec
@@ -115,6 +115,31 @@ def test_checked_in_catalogue_is_valid(spec: SpecIndex) -> None:
             {"operations": ["getUser"], "kind": "simple", "colour": 1},
             "users get: unknown keys: colour",
         ),
+        (
+            {"operations": ["getAerialConsnet"], "kind": "excluded", "reason": "r"},
+            "users get: getAerialConsnet is not a GET operation",
+        ),
+        (
+            {"operations": ["getUser"], "kind": "simple", "paginate": "link"},
+            "users get: paginate link but getUser does not page",
+        ),
+        (
+            {"operations": ["listUserGroups"], "kind": "resolved", "paginate": "none"},
+            "users get: paginate none but listUserGroups pages",
+        ),
+        (
+            {"operations": ["listUserGroups"], "kind": "resolved", "paginate": "link_or_body"},
+            "users get: link_or_body goes with items_key",
+        ),
+        (
+            {
+                "operations": ["listRoles"],
+                "kind": "simple",
+                "paginate": "link_or_body",
+                "items_key": "x",
+            },
+            "users get: items_key x is not a list property of listRoles",
+        ),
     ],
 )
 def test_bad_entry_is_rejected(spec: SpecIndex, entry: dict[str, Any], message: str) -> None:
@@ -123,13 +148,10 @@ def test_bad_entry_is_rejected(spec: SpecIndex, entry: dict[str, Any], message: 
     assert errors[0].startswith(message)
 
 
-def test_excluded_entry_may_name_any_operation(spec: SpecIndex) -> None:
-    doc = {
-        "domains": {
-            "x": {"y": {"operations": ["getAerialConsent"], "kind": "excluded", "reason": "r"}}
-        }
-    }
-    assert report.parse_catalogue(doc, spec)["x"]["y"]["kind"] == "excluded"
+def test_wrapped_list_entry_is_valid(spec: SpecIndex) -> None:
+    entry = {"operations": ["listRoles"], "kind": "simple", "paginate": "link_or_body"}
+    doc = {"domains": {"iam": {"list-roles": {**entry, "items_key": "roles"}}}}
+    assert report.parse_catalogue(doc, spec)["iam"]["list-roles"]["items_key"] == "roles"
 
 
 @pytest.mark.parametrize(
@@ -197,10 +219,26 @@ def test_run_writes_report(tmp_path: Path) -> None:
     assert out.read_text().startswith("# Coverage report")
 
 
-def test_run_reports_invalid_catalogue(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("domains: {users: {get: {operations: [getUser]}}}\n", "users get: kind must be one of"),
+        ("domains: {users: {get: {kind: simple\n", "error: while parsing"),
+        (
+            "domains:\n  users:\n    get: {operations: [getUser], kind: simple}\n"
+            "    get: {operations: [getUser], kind: simple}\n",
+            "duplicate key",
+        ),
+        (None, "No such file"),
+    ],
+)
+def test_run_reports_invalid_catalogue(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], text: str | None, message: str
+) -> None:
     bad = tmp_path / "catalogue.yaml"
-    bad.write_text("domains: {users: {get: {operations: [getUser]}}}\n")
+    if text is not None:
+        bad.write_text(text)
     out = tmp_path / "report.md"
     assert report.run(["--catalogue", str(bad), "--out", str(out)]) == 2
-    assert "users get: kind must be one of" in capsys.readouterr().err
+    assert message in capsys.readouterr().err
     assert not out.exists()

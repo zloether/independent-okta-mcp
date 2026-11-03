@@ -61,7 +61,7 @@ class Registry:
     domains: Mapping[str, Domain]
 
 
-class _UniqueKeyLoader(yaml.CSafeLoader):
+class UniqueKeyLoader(yaml.CSafeLoader):
     """PyYAML keeps the last of duplicate keys; a second `data_classes` or `arg_rule` would
     silently replace the first, so duplicates are errors."""
 
@@ -94,7 +94,7 @@ def load_registry(spec: SpecIndex, directory: Traversable = REGISTRY) -> Registr
                 errors.append(f"{f.name}: registry files end in .yaml")
             elif f.name.endswith(".yaml"):
                 try:
-                    docs[f.name] = yaml.load(f.read_bytes(), Loader=_UniqueKeyLoader)  # noqa: S506
+                    docs[f.name] = yaml.load(f.read_bytes(), Loader=UniqueKeyLoader)  # noqa: S506
                 except yaml.YAMLError as e:
                     errors.append(f"{f.name}: {e}")
     try:

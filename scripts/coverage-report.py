@@ -18,8 +18,8 @@ from typing import Any
 
 import yaml
 
-from okta_mcp.registry.loader import Registry, RegistryError, load_registry
-from okta_mcp.registry.spec import SpecIndex, load_spec
+from okta_mcp.registry.loader import Registry, RegistryError, UniqueKeyLoader, load_registry
+from okta_mcp.registry.spec import Operation, SpecError, SpecIndex, load_spec
 
 DOCS = Path(__file__).parents[1] / "docs" / "coverage"
 CATALOGUE = DOCS / "catalogue.yaml"
@@ -63,8 +63,7 @@ def _entry_errors(e: Any, spec: SpecIndex) -> list[str]:
     ops = e.get("operations")
     if not (isinstance(ops, list) and ops and all(isinstance(o, str) for o in ops)):
         errors.append("operations must be a non-empty list of operationIds")
-    elif kind != "excluded":
-        # An excluded operation may be one the index drops, e.g. a non-GET or scope-less one.
+    else:
         errors += [
             f"{o} is not a GET operation in the pinned spec"
             for o in ops
@@ -76,6 +75,30 @@ def _entry_errors(e: Any, spec: SpecIndex) -> list[str]:
         errors.append("only excluded entries take a reason")
     if "paginate" in e and e["paginate"] not in PAGINATE:
         errors.append(f"paginate must be one of {', '.join(PAGINATE)}")
+    elif kind in ("simple", "resolved") and not errors:
+        errors += _shape_errors(e, spec.operations[ops[0]])
+    return errors
+
+
+def _shape_errors(e: dict[str, Any], op: Operation) -> list[str]:
+    """`paginate` and `items_key` must still match the spec, which they were derived from."""
+    errors: list[str] = []
+    items_key = e.get("items_key")
+    if items_key is not None and items_key not in (
+        *op.response.item_fields,
+        *op.response.scalar_lists,
+    ):
+        errors.append(f"items_key {items_key} is not a list property of {op.operation_id}")
+    # As in the registry loader: `after` pages; `_links.next` pages only on a list command.
+    is_list = op.response.kind == "list" or items_key is not None
+    pages = "after" in op.params or (is_list and op.response.links_next)
+    paginate = e.get("paginate", "none")
+    if (paginate != "none") != pages:
+        errors.append(
+            f"paginate {paginate} but {op.operation_id} {'pages' if pages else 'does not page'}"
+        )
+    elif (paginate == "link_or_body") != (pages and items_key is not None):
+        errors.append("link_or_body goes with items_key on a paginated operation")
     return errors
 
 
@@ -187,11 +210,12 @@ def run(argv: list[str]) -> int:
     parser.add_argument("--catalogue", type=Path, default=CATALOGUE)
     parser.add_argument("--out", type=Path, default=REPORT)
     args = parser.parse_args(argv)
-    spec = load_spec()
     try:
-        catalogue = parse_catalogue(yaml.safe_load(args.catalogue.read_text()), spec)
+        spec = load_spec()
+        doc = yaml.load(args.catalogue.read_bytes(), Loader=UniqueKeyLoader)  # noqa: S506
+        catalogue = parse_catalogue(doc, spec)
         registry = load_registry(spec)
-    except (CatalogueError, RegistryError) as e:
+    except (CatalogueError, RegistryError, SpecError, yaml.YAMLError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     args.out.write_text(render(catalogue, registry, spec))
