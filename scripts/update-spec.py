@@ -23,15 +23,13 @@ from typing import Any
 import httpx2
 import yaml
 
+from okta_mcp.registry.spec import SpecError, ref_target
+
 REPO = "okta/okta-management-openapi-spec"
 SPEC_PATH = "dist/current/management-minimal.yaml"
 SPEC_FILE = "management-minimal.yaml"
 PIN_FILE = "PINNED.json"
 SPEC_DIR = Path(__file__).parents[1] / "src" / "okta_mcp" / "data" / "specs"
-
-
-class SpecError(Exception):
-    pass
 
 
 def parse(body: bytes) -> dict[str, Any]:
@@ -62,16 +60,6 @@ def _refs(node: Any) -> set[str]:
     return set()
 
 
-def _target(spec: dict[str, Any], ref: str) -> Any:
-    node: Any = spec
-    for part in ref[2:].split("/"):
-        part = part.replace("~1", "/").replace("~0", "~")
-        if not isinstance(node, dict) or part not in node:
-            raise SpecError(f"dangling $ref: {ref}")
-        node = node[part]
-    return node
-
-
 def get_operations(spec: dict[str, Any]) -> dict[str, str]:
     """operationId → canonical JSON of what defines the call: path, parameters, operation, and
     every component reachable from them through $ref (cycles end at a component already seen)."""
@@ -89,7 +77,7 @@ def get_operations(spec: dict[str, Any]) -> dict[str, str]:
         todo = _refs(shape)
         while todo:
             ref = todo.pop()
-            components[ref] = _target(spec, ref)
+            components[ref] = ref_target(spec, ref)
             todo |= _refs(components[ref]) - components.keys()
         shape["components"] = components
         ops[op["operationId"]] = json.dumps(shape, sort_keys=True, default=str)

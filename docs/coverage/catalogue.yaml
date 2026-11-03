@@ -1,0 +1,895 @@
+# Coverage catalogue (design §5.6, plan step 1.5).
+#
+# The okta-skills command set, minus ai-agents (out of v1) and terraform (not an API domain),
+# at okta-skills commit d6c8725945a51843d7ccff43b526b98594410c3e. Command names and the gotcha
+# notes are derived from okta-skills (Apache-2.0 + Commons Clause); the data was extracted once
+# by a script run outside this repo, then kinds, items_key, gotchas and exclusions were set by
+# hand and checked against the pinned spec. Nothing here is loaded by the server;
+# scripts/coverage-report.py reads it.
+#
+# kind:      simple | resolved | composite | excluded (design §5.6)
+# paginate:  link | body_links | link_or_body | none, from the pinned spec (`after`, `_links.next`)
+# items_key: the list inside a wrapped response
+# gotcha:    spec and live API differ, or the endpoint is otherwise tricky; record a fixture
+# reason:    why an excluded command can never be served
+
+domains:
+  api-tokens:
+    list:
+      operations: [listApiTokens]
+      kind: simple
+      paginate: none
+    get:
+      operations: [getApiToken]
+      kind: simple
+      paginate: none
+  apps:
+    list:
+      operations: [listApplications]
+      kind: simple
+      paginate: link
+    get:
+      operations: [getApplication]
+      kind: simple
+      paginate: none
+    get-users:
+      operations: [listApplicationUsers]
+      kind: simple
+      paginate: link
+    get-groups:
+      operations: [listApplicationGroupAssignments]
+      kind: simple
+      paginate: link
+    get-group:
+      operations: [getApplicationGroupAssignment]
+      kind: simple
+      paginate: none
+    get-connection:
+      operations: [getDefaultProvisioningConnectionForApplication]
+      kind: simple
+      paginate: none
+    get-connection-jwks:
+      operations: [getUserProvisioningConnectionJWKS]
+      kind: simple
+      paginate: none
+    list-csrs:
+      operations: [listCsrsForApplication]
+      kind: simple
+      paginate: none
+    get-csr:
+      operations: [getCsrForApplication]
+      kind: simple
+      paginate: none
+    list-jwks:
+      operations: [listJwk]
+      kind: simple
+      paginate: none
+      gotcha: 'V8: live API returns {"keys": [...]} (keys may be null); spec declares a bare array'
+    get-jwk:
+      operations: [getJwk]
+      kind: simple
+      paginate: none
+    list-keys:
+      operations: [listApplicationKeys]
+      kind: simple
+      paginate: none
+    get-key:
+      operations: [getApplicationKey]
+      kind: simple
+      paginate: none
+    list-secrets:
+      operations: [listOAuth2ClientSecrets]
+      kind: simple
+      paginate: none
+    get-secret:
+      operations: [getOAuth2ClientSecret]
+      kind: simple
+      paginate: none
+    list-cwo-connections:
+      operations: [getAllCrossAppAccessConnections]
+      kind: simple
+      paginate: link
+    get-cwo-connection:
+      operations: [getCrossAppAccessConnection]
+      kind: simple
+      paginate: none
+    list-features:
+      operations: [listFeaturesForApplication]
+      kind: simple
+      paginate: none
+    get-feature:
+      operations: [getFeatureForApplication]
+      kind: simple
+      paginate: none
+    list-federated-claims:
+      operations: [listFederatedClaims]
+      kind: simple
+      paginate: none
+    get-federated-claim:
+      operations: [getFederatedClaim]
+      kind: simple
+      paginate: none
+    list-grants:
+      operations: [listScopeConsentGrants]
+      kind: simple
+      paginate: none
+    get-grant:
+      operations: [getScopeConsentGrant]
+      kind: simple
+      paginate: none
+    list-group-push-mappings:
+      operations: [listGroupPushMappings]
+      kind: simple
+      paginate: link
+    get-group-push-mapping:
+      operations: [getGroupPushMapping]
+      kind: simple
+      paginate: none
+    list-interclient-allowed-apps:
+      operations: [listInterclientAllowedApplications]
+      kind: simple
+      paginate: link
+    list-interclient-target-apps:
+      operations: [listInterclientTargetApplications]
+      kind: simple
+      paginate: link
+    get-saml-metadata:
+      operations: [previewSAMLmetadataForApplication]
+      kind: composite
+      notes: 'Returns XML (Accept: text/xml), not JSON; needs a text-wrapping handler'
+    list-tokens:
+      operations: [listOAuth2TokensForApplication]
+      kind: simple
+      paginate: link
+    get-token:
+      operations: [getOAuth2TokenForApplication]
+      kind: simple
+      paginate: none
+    get-user:
+      operations: [getApplicationUser]
+      kind: simple
+      paginate: none
+  attack-protection:
+    get-authenticator-settings:
+      operations: [getAuthenticatorSettings]
+      kind: simple
+      paginate: none
+    get-user-lockout-settings:
+      operations: [getUserLockoutSettings]
+      kind: simple
+      paginate: none
+  authenticators:
+    list:
+      operations: [listAuthenticators]
+      kind: simple
+      paginate: none
+    get:
+      operations: [getAuthenticator]
+      kind: simple
+      paginate: none
+    list-methods:
+      operations: [listAuthenticatorMethods]
+      kind: simple
+      paginate: none
+    get-method:
+      operations: [getAuthenticatorMethod]
+      kind: simple
+      paginate: none
+    list-aaguids:
+      operations: [listAllCustomAAGUIDs]
+      kind: simple
+      paginate: none
+    get-aaguid:
+      operations: [getCustomAAGUID]
+      kind: simple
+      paginate: none
+  authorization-servers:
+    list:
+      operations: [listAuthorizationServers]
+      kind: simple
+      paginate: link
+    get:
+      operations: [getAuthorizationServer]
+      kind: simple
+      paginate: none
+    list-associated-servers:
+      operations: [listAssociatedServersByTrustedType]
+      kind: simple
+      paginate: link
+    list-claims:
+      operations: [listOAuth2Claims]
+      kind: simple
+      paginate: none
+    get-claim:
+      operations: [getOAuth2Claim]
+      kind: simple
+      paginate: none
+    list-clients:
+      operations: [listOAuth2ClientsForAuthorizationServer]
+      kind: simple
+      paginate: none
+    list-tokens:
+      operations: [listRefreshTokensForAuthorizationServerAndClient]
+      kind: simple
+      paginate: link
+      gotcha: 'Empty [] is ambiguous: no tokens, or missing permission'
+    get-token:
+      operations: [getRefreshTokenForAuthorizationServerAndClient]
+      kind: simple
+      paginate: none
+    list-keys:
+      operations: [listAuthorizationServerKeys]
+      kind: simple
+      paginate: none
+    get-key:
+      operations: [getAuthorizationServerKey]
+      kind: simple
+      paginate: none
+    list-policies:
+      operations: [listAuthorizationServerPolicies]
+      kind: simple
+      paginate: none
+    get-policy:
+      operations: [getAuthorizationServerPolicy]
+      kind: simple
+      paginate: none
+    list-policy-rules:
+      operations: [listAuthorizationServerPolicyRules]
+      kind: simple
+      paginate: none
+    get-policy-rule:
+      operations: [getAuthorizationServerPolicyRule]
+      kind: simple
+      paginate: none
+    list-resource-server-keys:
+      operations: [listOAuth2ResourceServerJsonWebKeys]
+      kind: simple
+      paginate: none
+      gotcha: 'V8: live API returns {"keys": [...]}; spec declares a bare array'
+    get-resource-server-key:
+      operations: [getOAuth2ResourceServerJsonWebKey]
+      kind: simple
+      paginate: none
+    list-scopes:
+      operations: [listOAuth2Scopes]
+      kind: simple
+      paginate: link
+    get-scope:
+      operations: [getOAuth2Scope]
+      kind: simple
+      paginate: none
+  behaviors:
+    list:
+      operations: [listBehaviorDetectionRules]
+      kind: simple
+      paginate: none
+    get:
+      operations: [getBehaviorDetectionRule]
+      kind: simple
+      paginate: none
+  device-assurance:
+    list:
+      operations: [listDeviceAssurancePolicies]
+      kind: simple
+      paginate: none
+    get:
+      operations: [getDeviceAssurancePolicy]
+      kind: simple
+      paginate: none
+  device-integrations:
+    list:
+      operations: [listDeviceIntegrations]
+      kind: simple
+      paginate: none
+      notes: 401 can mean the feature is off for the org
+    get:
+      operations: [getDeviceIntegration]
+      kind: simple
+      paginate: none
+  device-posture:
+    list:
+      operations: [listDevicePostureChecks]
+      kind: simple
+      paginate: none
+    get:
+      operations: [getDevicePostureCheck]
+      kind: simple
+      paginate: none
+    list-defaults:
+      operations: [listDefaultDevicePostureChecks]
+      kind: simple
+      paginate: none
+      notes: 'Not GA (isGenerallyAvailable: false); may 403/404'
+  devices:
+    list:
+      operations: [listDevices]
+      kind: simple
+      paginate: link
+    get:
+      operations: [getDevice]
+      kind: simple
+      paginate: none
+    get-users:
+      operations: [listDeviceUsers]
+      kind: simple
+      paginate: none
+    get-os-accounts:
+      operations: [listDeviceOSAccounts]
+      kind: simple
+      paginate: none
+    get-os-account:
+      operations: [getDeviceOSAccount]
+      kind: simple
+      paginate: none
+  groups:
+    list:
+      operations: [listGroups]
+      kind: simple
+      paginate: link
+      notes: '`q` disables paging; page size max 10000'
+    get:
+      operations: [getGroup]
+      kind: simple
+      paginate: none
+    get-members:
+      operations: [listGroupUsers]
+      kind: simple
+      paginate: link
+    search:
+      operations: [listGroups]
+      kind: simple
+      paginate: link
+      notes: Variant of `list` (same operation, `q` arg); `q` is unpaged, default 300 results
+    get-apps:
+      operations: [listAssignedApplicationsForGroup]
+      kind: simple
+      paginate: link
+    get-owners:
+      operations: [listGroupOwners]
+      kind: simple
+      paginate: link
+    list-rules:
+      operations: [listGroupRules]
+      kind: simple
+      paginate: link
+    get-rule:
+      operations: [getGroupRule]
+      kind: simple
+      paginate: none
+    list-roles:
+      operations: [listGroupAssignedRoles]
+      kind: simple
+      paginate: none
+    get-role:
+      operations: [getGroupAssignedRole]
+      kind: simple
+      paginate: none
+    list-role-app-targets:
+      operations: [listApplicationTargetsForApplicationAdministratorRoleForGroup]
+      kind: simple
+      paginate: link
+    list-role-group-targets:
+      operations: [listGroupTargetsForGroupRole]
+      kind: simple
+      paginate: link
+  iam:
+    list:
+      operations: [listRoles]
+      kind: simple
+      paginate: link_or_body
+      items_key: roles
+    get:
+      operations: [getRole]
+      kind: simple
+      paginate: none
+    list-permissions:
+      operations: [listRolePermissions]
+      kind: simple
+      paginate: none
+      items_key: permissions
+    get-permission:
+      operations: [getRolePermission]
+      kind: simple
+      paginate: none
+    list-assignees:
+      operations: [listUsersWithRoleAssignments]
+      kind: simple
+      paginate: link_or_body
+      items_key: value
+    list-resource-sets:
+      operations: [listResourceSets]
+      kind: simple
+      paginate: link_or_body
+      items_key: resource-sets
+    get-resource-set:
+      operations: [getResourceSet]
+      kind: simple
+      paginate: none
+    list-bindings:
+      operations: [listBindings]
+      kind: simple
+      paginate: link_or_body
+      items_key: roles
+    get-binding:
+      operations: [getBinding]
+      kind: simple
+      paginate: none
+    list-binding-members:
+      operations: [listMembersOfBinding]
+      kind: simple
+      paginate: link_or_body
+      items_key: members
+    get-binding-member:
+      operations: [getMemberOfBinding]
+      kind: simple
+      paginate: none
+      notes: Member `id` may be a user or a group
+    list-resources:
+      operations: [listResourceSetResources]
+      kind: simple
+      paginate: link_or_body
+      items_key: resources
+    get-resource:
+      operations: [getResourceSetResource]
+      kind: simple
+      paginate: none
+    list-bundles:
+      operations: [listGovernanceBundles]
+      kind: simple
+      paginate: link_or_body
+      items_key: bundles
+    get-bundle:
+      operations: [getGovernanceBundle]
+      kind: simple
+      paginate: none
+    list-bundle-entitlements:
+      operations: [listBundleEntitlements]
+      kind: simple
+      paginate: link_or_body
+      items_key: entitlements
+    list-bundle-entitlement-values:
+      operations: [listBundleEntitlementValues]
+      kind: simple
+      paginate: link_or_body
+      items_key: entitlementValues
+    get-opt-in-status:
+      operations: [getOptInStatus]
+      kind: simple
+      paginate: none
+    list-role-subscriptions:
+      operations: [listSubscriptionsRole]
+      kind: simple
+      paginate: none
+    get-role-subscription:
+      operations: [getSubscriptionsNotificationTypeRole]
+      kind: simple
+      paginate: none
+  identity-providers:
+    list:
+      operations: [listIdentityProviders]
+      kind: simple
+      paginate: link
+    get:
+      operations: [getIdentityProvider]
+      kind: simple
+      paginate: none
+    list-keys:
+      operations: [listIdentityProviderKeys]
+      kind: simple
+      paginate: link
+    get-key:
+      operations: [getIdentityProviderKey]
+      kind: simple
+      paginate: none
+    list-csrs:
+      operations: [listCsrsForIdentityProvider]
+      kind: simple
+      paginate: none
+    get-csr:
+      operations: [getCsrForIdentityProvider]
+      kind: simple
+      paginate: none
+    list-signing-keys:
+      operations: [listIdentityProviderSigningKeys]
+      kind: simple
+      paginate: none
+    get-active-signing-key:
+      operations: [listActiveIdentityProviderSigningKey]
+      kind: simple
+      paginate: none
+      gotcha: List operation that returns at most one key (empty array if none)
+    get-signing-key:
+      operations: [getIdentityProviderSigningKey]
+      kind: simple
+      paginate: none
+    list-users:
+      operations: [listIdentityProviderApplicationUsers]
+      kind: simple
+      paginate: link
+    get-user:
+      operations: [getIdentityProviderApplicationUser]
+      kind: simple
+      paginate: none
+      notes: Response has _links.next but is a single resource
+    list-tokens:
+      operations: [listSocialAuthTokens]
+      kind: simple
+      paginate: none
+  logs:
+    diagnose:
+      operations: [listLogEvents]
+      kind: composite
+      notes: Walks policies, rules, authenticators and zones to explain one login failure
+    list:
+      operations: [listLogEvents]
+      kind: simple
+      paginate: link
+      notes: --member-of and --count-by are post-v1 composite; page size max 1000
+    timeline:
+      operations: [listGroupUsers, listLogEvents]
+      kind: composite
+      notes: Reshapes events into a per-user timeline; resolves --member-of with listGroupUsers
+    login-failures:
+      operations: [listLogEvents]
+      kind: composite
+      notes: Filters and summarises failure events, with actor/target rules for OAuth events
+  network-zones:
+    list:
+      operations: [listNetworkZones]
+      kind: simple
+      paginate: link
+      notes: --cidrs reshaping (IP zones normalised to CIDR) is not carried over
+    get:
+      operations: [getNetworkZone]
+      kind: simple
+      paginate: none
+  oauth-client-roles:
+    list:
+      operations: [listRolesForClient]
+      kind: simple
+      paginate: none
+    get:
+      operations: [retrieveClientRole]
+      kind: simple
+      paginate: none
+    list-app-targets:
+      operations: [listAppTargetRoleToClient]
+      kind: simple
+      paginate: link
+    list-group-targets:
+      operations: [listGroupTargetRoleForClient]
+      kind: simple
+      paginate: link
+  org-settings:
+    get:
+      operations: [getOrgSettings]
+      kind: simple
+      paginate: none
+    list-contact-types:
+      operations: [listOrgContactTypes]
+      kind: simple
+      paginate: none
+    get-contact:
+      operations: [getOrgContactUser]
+      kind: simple
+      paginate: none
+    get-captcha-settings:
+      operations: [getOrgCaptchaSettings]
+      kind: simple
+      paginate: none
+    get-third-party-admin-setting:
+      operations: [getThirdPartyAdminSetting]
+      kind: simple
+      paginate: none
+    get-preferences:
+      operations: [getOrgPreferences]
+      kind: simple
+      paginate: none
+    get-aerial-consent:
+      operations: [getAerialConsent]
+      kind: excluded
+      reason: Requires okta.orgs.manage; the service app holds read scopes only
+    get-communication-settings:
+      operations: [getOktaCommunicationSettings]
+      kind: simple
+      paginate: none
+    get-support-settings:
+      operations: [getOrgOktaSupportSettings]
+      kind: simple
+      paginate: none
+    list-support-cases:
+      operations: [listOktaSupportCases]
+      kind: simple
+      paginate: none
+      items_key: supportCases
+    get-auto-assign-admin-app-setting:
+      operations: [getAutoAssignAdminAppSetting]
+      kind: simple
+      paginate: none
+    get-client-privileges-setting:
+      operations: [getClientPrivilegesSetting]
+      kind: simple
+      paginate: none
+    list-yubikey-tokens:
+      operations: [listYubikeyOtpTokens]
+      kind: simple
+      paginate: link
+    get-yubikey-token:
+      operations: [getYubikeyOtpTokenById]
+      kind: simple
+      paginate: none
+  policies:
+    list:
+      operations: [listPolicies]
+      kind: simple
+      paginate: link
+    get:
+      operations: [getPolicy]
+      kind: simple
+      paginate: none
+    get-rules:
+      operations: [listPolicyRules]
+      kind: simple
+      paginate: none
+      notes: Multi-policy fan-out is post-v1 composite; one policy is simple
+    get-rule:
+      operations: [getPolicyRule]
+      kind: simple
+      paginate: none
+    list-mappings:
+      operations: [listPolicyMappings]
+      kind: simple
+      paginate: none
+    get-mapping:
+      operations: [getPolicyMapping]
+      kind: simple
+      paginate: none
+  realms:
+    list-realms:
+      operations: [listRealms]
+      kind: simple
+      paginate: link
+    get-realm:
+      operations: [getRealm]
+      kind: simple
+      paginate: none
+    list-realm-assignments:
+      operations: [listRealmAssignments]
+      kind: simple
+      paginate: link
+    get-realm-assignment:
+      operations: [getRealmAssignment]
+      kind: simple
+      paginate: none
+    list-realm-assignment-operations:
+      operations: [listRealmAssignmentOperations]
+      kind: simple
+      paginate: link
+  schemas:
+    list:
+      operations: [listProfileMappings]
+      kind: simple
+      paginate: link
+      notes: List omits `properties`; `get` shows the mappings
+    get:
+      operations: [getProfileMapping]
+      kind: simple
+      paginate: none
+    get-app-user-schema:
+      operations: [getApplicationUserSchema]
+      kind: simple
+      paginate: none
+    get-group-schema:
+      operations: [getGroupSchema]
+      kind: simple
+      paginate: none
+    list-log-stream-schemas:
+      operations: [listLogStreamSchemas]
+      kind: simple
+      paginate: none
+    get-log-stream-schema:
+      operations: [getLogStreamSchema]
+      kind: simple
+      paginate: none
+    list-linked-objects:
+      operations: [listLinkedObjectDefinitions]
+      kind: simple
+      paginate: none
+    get-linked-object:
+      operations: [getLinkedObjectDefinition]
+      kind: simple
+      paginate: none
+    get-user-schema:
+      operations: [getUserSchema]
+      kind: simple
+      paginate: none
+    list-user-types:
+      operations: [listUserTypes]
+      kind: simple
+      paginate: none
+    get-user-type:
+      operations: [getUserType]
+      kind: simple
+      paginate: none
+    list-ui-schemas:
+      operations: [listUISchemas]
+      kind: simple
+      paginate: none
+    get-ui-schema:
+      operations: [getUISchema]
+      kind: simple
+      paginate: none
+  security:
+    get-threat-insight-config:
+      operations: [getCurrentConfiguration]
+      kind: simple
+      paginate: none
+    list-security-events-providers:
+      operations: [listSecurityEventsProviderInstances]
+      kind: simple
+      paginate: none
+    get-security-events-provider:
+      operations: [getSecurityEventsProviderInstance]
+      kind: simple
+      paginate: none
+    get-ssf-streams:
+      operations: [getSsfStreams]
+      kind: simple
+      paginate: none
+    get-ssf-stream-status:
+      operations: [getSsfStreamStatus]
+      kind: simple
+      paginate: none
+    get-bot-protection-config:
+      operations: [getBotProtectionConfiguration]
+      kind: simple
+      paginate: none
+  sessions:
+    get:
+      operations: [getSession]
+      kind: simple
+      paginate: none
+      notes: No list operation; session IDs come from logs
+  users:
+    list:
+      operations: [listUsers]
+      kind: simple
+      paginate: link
+    get:
+      operations: [getUser]
+      kind: simple
+      paginate: none
+    search:
+      operations: [listUsers]
+      kind: simple
+      paginate: link
+      notes: Variant of `list` (same operation, `q` arg); `q` is unpaged, default 10 results
+    get-apps:
+      operations: [listAppLinks]
+      kind: resolved
+      paginate: none
+    get-blocks:
+      operations: [listUserBlocks]
+      kind: resolved
+      paginate: none
+    get-groups:
+      operations: [listUserGroups]
+      kind: resolved
+      paginate: link
+    get-idps:
+      operations: [listUserIdentityProviders]
+      kind: resolved
+      paginate: none
+    get-linked-objects:
+      operations: [listLinkedObjectsForUser]
+      kind: resolved
+      paginate: none
+    get-enrollments:
+      operations: [listAuthenticatorEnrollments]
+      kind: resolved
+      paginate: none
+      gotcha: 'V8: spec declares one AuthenticatorEnrollment; Okta returns a list'
+      notes: Batch over ids[] is post-v1 composite
+    get-classification:
+      operations: [getUserClassification]
+      kind: resolved
+      paginate: none
+    get-clients:
+      operations: [listUserClients]
+      kind: resolved
+      paginate: none
+    get-client-grants:
+      operations: [listGrantsForUserAndClient]
+      kind: resolved
+      paginate: link
+    get-client-tokens:
+      operations: [listRefreshTokensForUserAndClient]
+      kind: resolved
+      paginate: link
+    get-client-token:
+      operations: [getRefreshTokenForUserAndClient]
+      kind: resolved
+      paginate: none
+    get-devices:
+      operations: [listUserDevices]
+      kind: resolved
+      paginate: none
+    get-factors:
+      operations: [listFactors]
+      kind: resolved
+      paginate: none
+      notes: Batch over ids[] is post-v1 composite
+    get-grants:
+      operations: [listUserGrants]
+      kind: resolved
+      paginate: link
+    get-grant:
+      operations: [getUserGrant]
+      kind: resolved
+      paginate: none
+    get-risk:
+      operations: [getUserRisk]
+      kind: resolved
+      paginate: none
+    get-roles:
+      operations: [listAssignedRolesForUser]
+      kind: resolved
+      paginate: none
+    get-role:
+      operations: [getUserAssignedRole]
+      kind: resolved
+      paginate: none
+    get-subscriptions:
+      operations: [listSubscriptionsUser]
+      kind: resolved
+      paginate: none
+    get-subscription:
+      operations: [getSubscriptionsNotificationTypeUser]
+      kind: resolved
+      paginate: none
+    get-factors-catalog:
+      operations: [listSupportedFactors]
+      kind: resolved
+      paginate: none
+    get-factors-questions:
+      operations: [listSupportedSecurityQuestions]
+      kind: excluded
+      reason: Declares only apiToken (SSWS) security, no oauth2 scope
+    get-factor:
+      operations: [getFactor]
+      kind: resolved
+      paginate: none
+    get-factor-transaction:
+      operations: [getFactorTransactionStatus]
+      kind: resolved
+      paginate: none
+    get-enrollment:
+      operations: [getAuthenticatorEnrollment]
+      kind: resolved
+      paginate: none
+    get-role-governance:
+      operations: [getUserAssignedRoleGovernance]
+      kind: resolved
+      paginate: none
+      notes: Object with a `grants` array; single resource
+    get-role-governance-grant:
+      operations: [getRoleAssignmentGovernanceGrant]
+      kind: resolved
+      paginate: none
+    get-role-governance-grant-resources:
+      operations: [getRoleAssignmentGovernanceGrantResources]
+      kind: resolved
+      paginate: link_or_body
+      items_key: resources
+    get-role-app-targets:
+      operations: [listApplicationTargetsForApplicationAdministratorRoleForUser]
+      kind: resolved
+      paginate: link
+    get-role-group-targets:
+      operations: [listGroupTargetsForRole]
+      kind: resolved
+      paginate: link
+    get-role-targets:
+      operations: [getRoleTargetsByUserIdAndRoleId]
+      kind: resolved
+      paginate: link

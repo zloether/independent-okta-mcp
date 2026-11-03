@@ -64,7 +64,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 | Authorization | Access-token `groups` claim (group IDs) → **roles** in a version-controlled YAML policy → allow/deny of domains/commands. Enforced at `tools/list` and again at `tools/call`. Default deny. |
 | Okta API access | **Shared service app** (OAuth client credentials, `private_key_jwt`, DPoP, read scopes, Read-only Admin role). The user's token is never forwarded to Okta. |
 | Deployment | Single org, single container (Dockerfile + compose example), no external state. |
-| Estimated effort | **~33–36 working days** for one engineer (≈7 calendar weeks), excluding composite handlers. Re-estimated after the coverage inventory (plan step 1.5). See §15. |
+| Estimated effort | **~32–35 working days** for one engineer (≈7 calendar weeks), excluding composite handlers. Re-estimated from the coverage inventory (plan step 1.5). See §15. |
 
 ---
 
@@ -819,15 +819,15 @@ Results include PII. Roles should be scoped accordingly; `select` is a convenien
 | M0 | Repo bootstrap: `pyproject.toml`, `uv.lock`, `AGENTS.md` (+ `CLAUDE.md` → `@AGENTS.md`), CI workflow. Spikes: SDK v2 stateless Streamable HTTP with per-request principal, per-principal `tools/list` with `cacheScope`, both protocol revisions, `httpx` vs `httpx2` (V5); Okta dev org: groups claim (IDs), `uid`/`sub`, `resource` handling, discovery, loopback redirects, DPoP requirement (V1, V9–V11, V13, V15) | CI green on an empty package; demo with two users seeing different tool lists; written V-item findings | 5 d |
 | M1 | Spec pinning + `update-spec.py`; registry model/loader/spec resolution; JSON Schema generation; coverage inventory classifying every okta-skills catalogue entry (minus ai-agents) | Registry tests green on 2 domains; coverage report checked in; effort re-estimated | 4 d |
 | M2 | Okta client: token providers, DPoP, pagination (all modes), 429 retry, in-flight cap, deadlines; params/URL builder with injection controls; resolver; executor, output options, scrub, envelope, cursors | Client, pagination, budget, cursor, injection suites green | 6 d |
-| M3 | Registry authoring for all simple/resolved commands across 23 domains, with classification, `arg_rules`, generated fixtures (recorded only for gotcha endpoints) | Registry CI checks green; fixture test per command; coverage report shows simple+resolved complete | 8–10 d |
+| M3 | Registry authoring for all simple/resolved commands across 23 domains, with classification, `arg_rules`, generated fixtures (recorded only for gotcha endpoints) | Registry CI checks green; fixture test per command; coverage report shows simple+resolved complete | 7–9 d |
 | M4 | stdio dev mode; HTTP app, PRM (both URLs), JWT verifier, 401/403, health; policy engine/loader, per-principal tool lists, call-time enforcement, `okta_help`/`okta_status`; resources | Auth, policy and integration suites green; Inspector smoke | 4 d |
 | M5 | Audit log, per-principal limiter, error mapping | Audit/limit tests | 1 d |
 | M6 | Dockerfile, compose, config validation, runbook (exposure decision, kill switch, Okta setup) | Container tests; fresh-machine bring-up from the runbook | 2 d |
 | M7 | Hardening, `/security-review` on §12.2 paths, client compatibility matrix, E2E | Findings resolved; matrix and E2E checklist signed off | 3–4 d |
-| | **Total (v1)** | | **≈33–36 d** |
+| | **Total (v1)** | | **≈32–35 d** |
 | Post-v1 | Composite handlers on demand (batch `get-factors`/`get-enrollments`, `policies get-rules` multi, `logs list --member-of/--count-by`, `logs timeline`, `logs login-failures`, `logs diagnose`); Path B; metrics | Per item | 4–6 d for the handler set; others TBD |
 
-M3 is the least certain line: ~230 commands at 8–10 days only works with generated fixtures. It is re-estimated from the step 1.5 inventory.
+M3 is the least certain line. The step 1.5 inventory (`docs/coverage/report.md`) counts 206 catalogue commands: 170 simple, 30 resolved, 4 composite (post-v1), 2 excluded. That leaves 200 registry entries, about 25 a day, plus a domain guide per domain. Only 5 entries (2.5%) are gotcha endpoints that need a recorded fixture; the rest use generated ones. 53 entries paginate (10 of them `link_or_body` over a wrapped list), and 13 need an `items_key`. Two of the gotchas (`listJwk`, `listOAuth2ResourceServerJsonWebKeys`) return `{"keys": [...]}` where the spec says a list, so `response_override` must also accept a wrapped object, a small loader change in Phase 5.
 
 ---
 

@@ -74,6 +74,19 @@ class SpecIndex:
     """operationId → method of every non-GET operation, so the loader can say why it rejects one."""
 
 
+def ref_target(spec: Mapping[str, Any], ref: str) -> Any:
+    """The node a local `$ref` (`#/a/b`, JSON Pointer escapes) points to."""
+    node: Any = spec
+    if not ref.startswith("#/"):
+        raise SpecError(f"unsupported $ref: {ref}")
+    for part in ref[2:].split("/"):
+        part = part.replace("~1", "/").replace("~0", "~")
+        if not isinstance(node, Mapping) or part not in node:
+            raise SpecError(f"dangling $ref: {ref}")
+        node = cast(Mapping[str, Any], node)[part]
+    return node
+
+
 class _Resolver:
     def __init__(self, spec: Mapping[str, Any]) -> None:
         self._spec = spec
@@ -104,15 +117,7 @@ class _Resolver:
         return node
 
     def _target(self, ref: str) -> Any:
-        node: Any = self._spec
-        if not ref.startswith("#/"):
-            raise SpecError(f"unsupported $ref: {ref}")
-        for part in ref[2:].split("/"):
-            part = part.replace("~1", "/").replace("~0", "~")
-            if not isinstance(node, dict) or part not in node:
-                raise SpecError(f"dangling $ref: {ref}")
-            node = cast(dict[str, Any], node)[part]
-        return node
+        return ref_target(self._spec, ref)
 
     def schema(self, node: Any) -> dict[str, Any] | None:
         """`node` dereferenced, or None when it isn't a schema object (e.g. a boolean schema)."""

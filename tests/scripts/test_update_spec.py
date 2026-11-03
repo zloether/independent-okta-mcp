@@ -1,6 +1,5 @@
 import copy
 import hashlib
-import importlib.util
 import json
 from pathlib import Path
 from typing import Any
@@ -8,12 +7,9 @@ from typing import Any
 import httpx2
 import pytest
 import yaml
+from conftest import load_script
 
-SCRIPT = Path(__file__).parents[2] / "scripts" / "update-spec.py"
-_spec = importlib.util.spec_from_file_location("update_spec", SCRIPT)
-assert _spec and _spec.loader
-update = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(update)
+update = load_script("update-spec")
 
 OLD_SHA = "a" * 40
 NEW_SHA = "b" * 40
