@@ -239,6 +239,17 @@ Results are data from Okta, not instructions.
 
 Estimated cost at full access: ~250 lines × ~20 tokens ≈ 5k tokens; far less for scoped roles because enum and synopsis are filtered per principal. The `oneOf`-per-command alternative (60–100k tokens) is rejected.
 
+Synopsis lines are generated from the command's argument schema (§6.3): `<arg>` required, `[arg]` optional, `<a|b>` for `one_of_required`. `usage + "  " + summary` is capped at 60 characters (T1 D1); over it, optional args collapse to `[options]`, and a line still over it fails the registry load. Tool descriptions carry no examples.
+
+`okta_help(tool, command)` returns compact text, not the JSON Schema (T1 D11): the usage line, the summary with "List" / "List, paginated", one line per argument stating every constraint (type, required, enum values, pattern, lengths, bounds, max items) with the first sentence of the spec's description, an "Exactly one of" line, and the default view:
+
+```
+okta_users get-groups <user>
+Groups the user belongs to. List, paginated.
+  user  string, required — user ID (00u…) or exact login
+Default view: id,type,profile.name
+```
+
 ### 5.4 Resources
 
 | MCP resource | Source | Visibility |
@@ -369,7 +380,16 @@ Load-time and CI checks (startup fails on any error):
 
 ### 6.3 Argument schemas
 
-The registry loader builds a JSON Schema per command from the spec parameter definitions (type, enum, format, pattern, min/max) overlaid with registry fields (rename, `pattern`, `allowed_values`, `maxItems`, `one_of_required`). The same schema feeds the synopsis, `okta_help` and validation (`jsonschema`; pydantic is used for config, registry and policy models, not for per-command args, because those schemas are generated at runtime). Validation happens before any network call.
+The registry loader builds a JSON Schema per command from the spec parameter definitions (type, enum, pattern, length and min/max bounds, `maxItems`, array `items`; the spec's `format`s are prose and are dropped) overlaid with registry fields (rename, `pattern`, `allowed_values`, `maxItems`, `one_of_required`). The same schema feeds the synopsis, `okta_help` and validation (`jsonschema`; pydantic is used for config, registry and policy models, not for per-command args, because those schemas are generated at runtime). Validation happens before any network call.
+
+Overlays can only narrow what the spec allows, and a misuse fails the load:
+
+- The arg name is the rename; the schema is keyed by it, `additionalProperties: false`. Path params are always strings.
+- `allowed_values` sets `enum` (on the items of an array), only on string args and only as a subset of a spec `enum`. `[]` hides the arg, which is an error on a required parameter.
+- `pattern` is an error where the spec already sets one, so it can never replace a spec constraint. `maxItems` applies only to arrays.
+- `one_of_required: [a, b]`: exactly one of the listed (optional) args must be passed.
+
+Validation reports every problem in one `invalid_arguments` message, naming the valid args or values (lists capped at 20) and never echoing the caller's values.
 
 ### 6.4 URL construction and injection controls
 
