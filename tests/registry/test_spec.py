@@ -82,6 +82,23 @@ def test_wrapped_response_reports_list_key_and_next_link(pinned: SpecIndex) -> N
     assert response.links_next
 
 
+def test_response_fields_cover_nested_paths(pinned: SpecIndex) -> None:
+    users = pinned.operations["listUsers"].response
+    assert {"id", "status", "profile.login", "lastLogin"} <= users.fields
+    assert pinned.operations["listResourceSets"].response.item_fields["resource-sets"] >= {
+        "id",
+        "label",
+    }
+
+
+def test_polymorphic_fields_are_the_base_schema(pinned: SpecIndex) -> None:
+    apps = pinned.operations["listApplications"].response.fields
+    assert {"id", "label", "signOnMode"} <= apps
+    assert "settings" not in apps  # subtype-only (discriminator mapping)
+    roles = pinned.operations["listAssignedRolesForUser"].response.fields
+    assert {"id", "type", "label", "status"} <= roles  # StandardRole ∩ CustomRole
+
+
 def _spec(paths: dict[str, Any], components: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "openapi": "3.0.3",
@@ -209,6 +226,52 @@ def test_response_shapes(
     spec = _spec({"/x": {"get": {"operationId": "getX", "responses": _ok(schema)}}})
     response = build_index(spec).operations["getX"].response
     assert (response.kind, response.list_keys, response.links_next) == (kind, list_keys, links_next)
+
+
+def test_response_fields() -> None:
+    components = {
+        "schemas": {
+            "Node": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "parent": {"$ref": "#/components/schemas/Node"},
+                    "tags": {"type": "array", "items": {"type": "object", "properties": {"k": {}}}},
+                },
+            },
+            "Base": {
+                "type": "object",
+                "properties": {"id": {}, "kind": {}},
+                "discriminator": {
+                    "propertyName": "kind",
+                    "mapping": {"a": "#/components/schemas/A"},
+                },
+            },
+            "A": {"allOf": [{"$ref": "#/components/schemas/Base"}, {"properties": {"a": {}}}]},
+            "B": {"properties": {"id": {}, "b": {}, "meta": {"properties": {"x": {}, "y": {}}}}},
+            "C": {"properties": {"id": {}, "c": {}, "meta": {"properties": {"x": {}}}}},
+        }
+    }
+
+    def fields(schema: dict[str, Any]) -> frozenset[str]:
+        paths = {"/x": {"get": {"operationId": "getX", "responses": _ok(schema)}}}
+        return build_index(_spec(paths, components)).operations["getX"].response.fields
+
+    ref = {"$ref": "#/components/schemas/Node"}
+    # A schema repeated on its own path is a leaf; so are arrays.
+    assert fields(ref) == {"name", "parent", "tags"}
+    assert fields({"type": "array", "items": {"$ref": "#/components/schemas/Base"}}) == {
+        "id",
+        "kind",
+    }
+    one_of = {"oneOf": [{"$ref": "#/components/schemas/B"}, {"$ref": "#/components/schemas/C"}]}
+    assert fields({"type": "array", "items": one_of}) == {"id", "meta", "meta.x"}
+
+    wrapped = {"properties": {"items": {"type": "array", "items": ref}}}
+    paths = {"/x": {"get": {"operationId": "getX", "responses": _ok(wrapped)}}}
+    response = build_index(_spec(paths, components)).operations["getX"].response
+    assert response.item_fields["items"] == fields(ref)
+    assert response.list_keys == ("items",)
 
 
 def test_non_json_response_is_other() -> None:

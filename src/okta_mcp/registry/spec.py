@@ -10,7 +10,7 @@ lists: copy a schema before changing it.
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -36,13 +36,23 @@ class Param:
 
 @dataclass(frozen=True)
 class Response:
-    """`list`: top-level array. `object`: an object; `list_keys` are its array-of-object
-    properties, the candidates for a wrapped list (an `items_key`). `other`: non-JSON,
-    `oneOf`/`anyOf`, or no usable schema."""
+    """`list`: top-level array. `object`: an object; `item_fields` has its array-of-object
+    properties, the candidates for a wrapped list (an `items_key`), and `scalar_lists` its other
+    array properties. `other`: non-JSON, `oneOf`/`anyOf`, or no usable schema.
+
+    `fields` are the dotted property paths of the object, or of each item of a top-level list.
+    Arrays are leaves. Polymorphic schemas contribute only the paths every variant has: a
+    discriminated base schema its own properties, `oneOf`/`anyOf` the intersection."""
 
     kind: Literal["list", "object", "other"]
-    list_keys: tuple[str, ...] = ()
+    fields: frozenset[str] = frozenset()
+    item_fields: Mapping[str, frozenset[str]] = field(default_factory=lambda: MappingProxyType({}))
+    scalar_lists: frozenset[str] = frozenset()
     links_next: bool = False
+
+    @property
+    def list_keys(self) -> tuple[str, ...]:
+        return tuple(self.item_fields)
 
 
 @dataclass(frozen=True)
@@ -135,6 +145,23 @@ class _Resolver:
             and self.is_object(schema.get("items"))
         )
 
+    def fields(self, node: Any, stack: tuple[int, ...] = ()) -> frozenset[str]:
+        """Dotted property paths of an object schema (see `Response`). A schema met again on
+        its own path is a leaf, so recursive schemas terminate."""
+        schema = self.schema(node)
+        if schema is None or id(schema) in stack:
+            return frozenset()
+        stack = (*stack, id(schema))
+        paths: set[str] = set()
+        for name, sub in self.properties(schema).items():
+            paths.add(name)
+            paths.update(f"{name}.{p}" for p in self.fields(sub, stack))
+        alternatives = cast(list[Any], schema.get("oneOf") or schema.get("anyOf") or [])
+        variants = [self.fields(v, stack) for v in alternatives]
+        if variants:
+            paths.update(variants[0].intersection(*variants[1:]))
+        return frozenset(paths)
+
 
 def _params(
     r: _Resolver, path: str, path_item: dict[str, Any], op: dict[str, Any]
@@ -184,15 +211,26 @@ def _response(r: _Resolver, op: dict[str, Any]) -> Response:
         return Response("other")
     schema = cast(dict[str, Any], schema)
     if schema.get("type") == "array":
-        return Response("list")
+        return Response("list", r.fields(schema.get("items")))
     if "oneOf" in schema or "anyOf" in schema:
         return Response("other")
     if not r.is_object(schema):
         return Response("other")
     props = r.properties(schema)
-    list_keys = tuple(k for k, v in props.items() if r.is_object_list(v))
+    item_fields = {
+        k: r.fields(cast(dict[str, Any], r.schema(v))["items"])
+        for k, v in props.items()
+        if r.is_object_list(v)
+    }
+    scalar_lists = frozenset(
+        k
+        for k, v in props.items()
+        if k not in item_fields and (r.schema(v) or {}).get("type") == "array"
+    )
     links_next = "next" in r.properties(props["_links"]) if "_links" in props else False
-    return Response("object", list_keys, links_next)
+    return Response(
+        "object", r.fields(schema), MappingProxyType(item_fields), scalar_lists, links_next
+    )
 
 
 def build_index(spec: Mapping[str, Any]) -> SpecIndex:
