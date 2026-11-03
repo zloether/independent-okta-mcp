@@ -74,6 +74,19 @@ class SpecIndex:
     """operationId → method of every non-GET operation, so the loader can say why it rejects one."""
 
 
+def ref_target(spec: Mapping[str, Any], ref: str) -> Any:
+    """The node a local `$ref` (`#/a/b`, JSON Pointer escapes) points to."""
+    node: Any = spec
+    if not ref.startswith("#/"):
+        raise SpecError(f"unsupported $ref: {ref}")
+    for part in ref[2:].split("/"):
+        part = part.replace("~1", "/").replace("~0", "~")
+        if not isinstance(node, Mapping) or part not in node:
+            raise SpecError(f"dangling $ref: {ref}")
+        node = cast(Mapping[str, Any], node)[part]
+    return node
+
+
 class _Resolver:
     def __init__(self, spec: Mapping[str, Any]) -> None:
         self._spec = spec
@@ -85,7 +98,7 @@ class _Resolver:
             if ref in seen:
                 raise SpecError(f"$ref cycle: {ref}")
             seen.add(ref)
-            node = self._target(ref)
+            node = ref_target(self._spec, ref)
         return cast(Any, node)
 
     def inline(self, node: Any, stack: tuple[str, ...] = ()) -> Any:
@@ -97,21 +110,10 @@ class _Resolver:
             if isinstance(ref, str):
                 if ref in stack:
                     raise SpecError(f"$ref cycle: {ref}")
-                return self.inline(self._target(ref), (*stack, ref))
+                return self.inline(ref_target(self._spec, ref), (*stack, ref))
             return {k: self.inline(v, stack) for k, v in obj.items()}
         if isinstance(node, list):
             return [self.inline(v, stack) for v in cast(list[Any], node)]
-        return node
-
-    def _target(self, ref: str) -> Any:
-        node: Any = self._spec
-        if not ref.startswith("#/"):
-            raise SpecError(f"unsupported $ref: {ref}")
-        for part in ref[2:].split("/"):
-            part = part.replace("~1", "/").replace("~0", "~")
-            if not isinstance(node, dict) or part not in node:
-                raise SpecError(f"dangling $ref: {ref}")
-            node = cast(dict[str, Any], node)[part]
         return node
 
     def schema(self, node: Any) -> dict[str, Any] | None:

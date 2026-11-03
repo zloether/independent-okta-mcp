@@ -1,20 +1,16 @@
 import copy
-import importlib.util
 import json
 from pathlib import Path
 from typing import Any
 
 import httpx2
 import pytest
+from _load import SCRIPTS, load_script
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.utils import base64url_decode
 
-SCRIPT = Path(__file__).parents[2] / "scripts" / "okta-setup.py"
-_spec = importlib.util.spec_from_file_location("okta_setup", SCRIPT)
-assert _spec and _spec.loader
-setup = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(setup)
+setup = load_script("okta-setup")
 
 ORG = "https://example.okta.com"
 MCP_URL = "https://mcp.example.com/mcp"
@@ -167,7 +163,7 @@ def test_config_fails_closed(config: Path, old: str, new: str) -> None:
 
 
 def test_example_config_is_valid() -> None:
-    cfg = setup.load_config(SCRIPT.with_name("okta-setup.example.yaml"))
+    cfg = setup.load_config(SCRIPTS / "okta-setup.example.yaml")
     assert cfg.service_app.scopes == ["okta.users.read", "okta.groups.read"]
 
 
