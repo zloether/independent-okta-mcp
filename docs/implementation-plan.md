@@ -133,7 +133,7 @@ Design: §6.2 · Depends: 1.2
 Verify: `uv run pytest tests/registry/`; every check has a failing fixture.
 
 ### 1.4 Argument schemas & synopsis ☐
-Design: §5.3, §6.3 · Depends: 1.3 · **Discuss T1 first** (Open questions)
+Design: §5.3, §6.3, [T1](design/t1-tool-surface.md) D1, D11 · Depends: 1.3
 - [ ] Build JSON Schema per command from spec param schemas + registry overlays (`one_of_required`, `maxItems`, `pattern`, renames, `allowed_values`); validate with `jsonschema`
 - [ ] Synopsis line generator (`get-groups <user>`, `list [filter] [search]`)
 - [ ] Validation function returning `invalid_arguments` details naming valid keys/values
