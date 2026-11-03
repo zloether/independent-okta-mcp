@@ -37,8 +37,8 @@ class Param:
 @dataclass(frozen=True)
 class Response:
     """`list`: top-level array. `object`: an object; `item_fields` has its array-of-object
-    properties, the candidates for a wrapped list (an `items_key`). `other`: non-JSON,
-    `oneOf`/`anyOf`, or no usable schema.
+    properties, the candidates for a wrapped list (an `items_key`), and `scalar_lists` its other
+    array properties. `other`: non-JSON, `oneOf`/`anyOf`, or no usable schema.
 
     `fields` are the dotted property paths of the object, or of each item of a top-level list.
     Arrays are leaves. Polymorphic schemas contribute only the paths every variant has: a
@@ -47,6 +47,7 @@ class Response:
     kind: Literal["list", "object", "other"]
     fields: frozenset[str] = frozenset()
     item_fields: Mapping[str, frozenset[str]] = field(default_factory=lambda: MappingProxyType({}))
+    scalar_lists: frozenset[str] = frozenset()
     links_next: bool = False
 
     @property
@@ -221,8 +222,15 @@ def _response(r: _Resolver, op: dict[str, Any]) -> Response:
         for k, v in props.items()
         if r.is_object_list(v)
     }
+    scalar_lists = frozenset(
+        k
+        for k, v in props.items()
+        if k not in item_fields and (r.schema(v) or {}).get("type") == "array"
+    )
     links_next = "next" in r.properties(props["_links"]) if "_links" in props else False
-    return Response("object", r.fields(schema), MappingProxyType(item_fields), links_next)
+    return Response(
+        "object", r.fields(schema), MappingProxyType(item_fields), scalar_lists, links_next
+    )
 
 
 def build_index(spec: Mapping[str, Any]) -> SpecIndex:

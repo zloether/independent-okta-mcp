@@ -147,6 +147,58 @@ def test_items_key_selects_wrapped_list(spec: SpecIndex) -> None:
     assert registry.domains["iam"].commands["list"].is_list
 
 
+def test_items_key_on_paged_value_list(spec: SpecIndex) -> None:
+    cmd = {
+        "operation": "getIdentitySourceGroupMemberships",
+        "summary": "External IDs of a group's members",
+        "args": {
+            "source": {"path_param": "identitySourceId"},
+            "group": {"path_param": "groupOrExternalId"},
+        },
+        "paginate": "link",
+        "items_key": "memberExternalIds",
+        "data_classes": ["pii"],
+    }
+    assert _build(spec, members=cmd).domains["users"].commands["members"].is_list
+    with pytest.raises(RegistryError, match="pages with after; set items_key"):
+        _build(spec, members=_with(cmd, items_key=None, paginate=None))
+
+
+def test_links_next_on_single_resource_needs_no_paginate(spec: SpecIndex) -> None:
+    cmd = {
+        "operation": "getIdentityProviderApplicationUser",
+        "summary": "An IdP-linked user",
+        "args": {"idp": {"path_param": "idpId"}, "user": {"path_param": "userId"}},
+        "data_classes": ["pii"],
+    }
+    assert not _build(spec, linked=cmd).domains["users"].commands["linked"].is_list
+
+
+def test_list_without_item_fields_needs_no_view(spec: SpecIndex) -> None:
+    cmd = {
+        "operation": "listInterclientAllowedApplications",
+        "summary": "Allowed interclient apps",
+        "args": {"app": {"path_param": "appId"}},
+        "paginate": "link",
+        "data_classes": ["org-config"],
+    }
+    assert _build(spec, allowed=cmd).domains["users"].commands["allowed"].is_list
+
+
+def test_required_limit_needs_page_size() -> None:
+    op = {
+        "operationId": "listX",
+        "parameters": [{"name": "limit", "in": "query", "required": True}],
+        "security": [{"oauth2": ["x.read"]}],
+        "responses": {},
+    }
+    index = build_index({"info": {"version": "1"}, "paths": {"/x": {"get": op}}})
+    cmd = {"operation": "listX", "summary": "X", "data_classes": ["pii"]}
+    with pytest.raises(RegistryError, match="required query param limit has no arg"):
+        _build(index, x=cmd)
+    _build(index, x=_with(cmd, page_size=20))
+
+
 def test_polymorphic_view_uses_base_schema(spec: SpecIndex) -> None:
     cmd = {
         "operation": "listApplications",
@@ -220,6 +272,34 @@ def test_duplicate_yaml_keys_are_errors(
     (tmp_path / "users.yaml").write_text(text)
     with pytest.raises(RegistryError, match=f"users.yaml: .*duplicate key {key}"):
         load_registry(spec, tmp_path)
+
+
+def test_yaml_merge_keys_may_be_overridden(spec: SpecIndex, tmp_path: Path) -> None:
+    (tmp_path / "users.yaml").write_text(
+        _GET_YAML.replace("  get:\n", "  get: &get\n")
+        + "  get-again:\n    <<: *get\n    data_classes: [mfa-state, pii]\n"
+    )
+    commands = load_registry(spec, tmp_path).domains["users"].commands
+    assert commands["get-again"].entry.data_classes == ("mfa-state", "pii")
+
+
+def test_unhashable_yaml_key_is_a_registry_error(spec: SpecIndex, tmp_path: Path) -> None:
+    (tmp_path / "users.yaml").write_text(_GET_YAML + "? [1]\n: x\n")
+    with pytest.raises(RegistryError, match=r"(?s)users\.yaml: .*unhashable key"):
+        load_registry(spec, tmp_path)
+
+
+def test_errors_from_every_file_are_reported(spec: SpecIndex, tmp_path: Path) -> None:
+    (tmp_path / "apps.yml").write_text("")
+    (tmp_path / "groups.yaml").write_text("a: 1\na: 2\n")
+    (tmp_path / "users.yaml").write_text(_GET_YAML.replace("getUser", "getNope"))
+    with pytest.raises(RegistryError) as e:
+        load_registry(spec, tmp_path)
+    assert [err.split(":")[0] for err in e.value.errors] == [
+        "apps.yml",
+        "groups.yaml",
+        "users.yaml",
+    ]
 
 
 def test_packaged_registry_loads(spec: SpecIndex) -> None:
@@ -348,6 +428,7 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
         ),
         "resolve applies only to a path_param",
     ),
+    "empty-path-param": (_with(GET, args={"user": {"path_param": ""}}), "path_param"),
     "bad-pattern": (_with(GET, args={"user": {"path_param": "id", "pattern": "("}}), "pattern"),
     "empty-arg-rule": (
         _with(GET, args={"user": {"path_param": "id", "arg_rule": {}}}),

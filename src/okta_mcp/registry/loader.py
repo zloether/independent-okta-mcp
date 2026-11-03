@@ -60,10 +60,18 @@ class _UniqueKeyLoader(yaml.CSafeLoader):
     silently replace the first, so duplicates are errors."""
 
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        # Only the keys written here: a merge (`<<: *anchor`) may be overridden, and the base
+        # constructor expands it and reports unhashable keys.
         seen: set[Any] = set()
         for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
             key = cast(Any, self.construct_object(key_node, deep=deep))  # pyright: ignore[reportUnknownMemberType]
-            if key in seen:
+            try:
+                duplicate = key in seen
+            except TypeError:
+                continue
+            if duplicate:
                 raise yaml.constructor.ConstructorError(
                     None, None, f"duplicate key {key!r}", key_node.start_mark
                 )
@@ -72,15 +80,24 @@ class _UniqueKeyLoader(yaml.CSafeLoader):
 
 
 def load_registry(spec: SpecIndex, directory: Traversable = REGISTRY) -> Registry:
+    errors: list[str] = []
     docs: dict[str, Any] = {}
     if directory.is_dir():
         for f in sorted(directory.iterdir(), key=lambda f: f.name):
-            if f.name.endswith(".yaml"):
+            if f.name.endswith(".yml"):
+                errors.append(f"{f.name}: registry files end in .yaml")
+            elif f.name.endswith(".yaml"):
                 try:
                     docs[f.name] = yaml.load(f.read_bytes(), Loader=_UniqueKeyLoader)  # noqa: S506
                 except yaml.YAMLError as e:
-                    raise RegistryError([f"{f.name}: {e}"]) from e
-    return build_registry(docs, spec)
+                    errors.append(f"{f.name}: {e}")
+    try:
+        registry = build_registry(docs, spec)
+    except RegistryError as e:
+        raise RegistryError(errors + e.errors) from e
+    if errors:
+        raise RegistryError(errors)
+    return registry
 
 
 def build_registry(docs: Mapping[str, Any], spec: SpecIndex) -> Registry:
@@ -156,7 +173,7 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
         if arg.param in _WIDENING and arg.arg_rule is None and arg.allowed_values is None:
             errors.append(f"arg {arg_name}: {arg.param} needs an arg_rule or allowed_values")
     for p in op.params.values():
-        if p.required and p.name not in used and p.name not in _RESERVED_QUERY:
+        if p.required and p.name not in used and not (p.name == "limit" and entry.page_size):
             errors.append(f"required {p.location} param {p.name} has no arg")
     if entry.page_size is not None and "limit" not in op.params:
         errors.append(f"page_size set but {op.operation_id} has no limit param")
@@ -202,14 +219,19 @@ def _check_shape(entry: CommandEntry, op: Operation, errors: list[str]) -> bool:
             errors.append("items_key and response_override are exclusive")
         item_fields = response.fields
     elif entry.items_key is not None:
-        if entry.items_key not in response.item_fields:
+        if entry.items_key in response.item_fields:
+            item_fields = response.item_fields[entry.items_key]
+        elif entry.items_key in response.scalar_lists and "after" in op.params:
+            # A paged list of plain values (getIdentitySourceGroupMemberships).
+            item_fields = frozenset[str]()
+        else:
             keys = ", ".join(response.list_keys) or "none"
             errors.append(
                 f"items_key {entry.items_key} is not an array-of-objects property of the "
-                f"{op.operation_id} response (candidates: {keys})"
+                f"{op.operation_id} response (candidates: {keys}); arrays of values only "
+                "on operations paged with after"
             )
             return True
-        item_fields = response.item_fields[entry.items_key]
     else:
         item_fields = response.fields
     is_list = (
@@ -218,13 +240,17 @@ def _check_shape(entry: CommandEntry, op: Operation, errors: list[str]) -> bool:
         or entry.response_override is not None
     )
 
-    pageable = "after" in op.params or response.links_next
-    if pageable and entry.paginate == "none":
+    # `_links.next` on a single resource is spec noise (getIdentityProviderApplicationUser);
+    # `after` is not.
+    if not is_list and "after" in op.params:
+        errors.append(f"{op.operation_id} pages with after; set items_key")
+    elif is_list and ("after" in op.params or response.links_next) and entry.paginate == "none":
         errors.append(f"{op.operation_id} paginates (after or _links.next); set paginate")
     if not is_list and entry.paginate != "none":
         errors.append("paginate set on a single-resource command")
 
-    if is_list and entry.view is None:
+    # Items with no declared properties have nothing to view.
+    if is_list and entry.view is None and item_fields:
         errors.append("list commands need a view")
     for path in entry.view or ():
         if path.split(".")[0] == "_links":

@@ -60,8 +60,8 @@ class ArgRule(_Model):
 
 
 class Arg(_Model):
-    path_param: str | None = None
-    query: str | None = None
+    path_param: str | None = Field(default=None, min_length=1)
+    query: str | None = Field(default=None, min_length=1)
     resolve: Literal["user_id"] | None = None
     pattern: str | None = None
     allowed_values: tuple[str, ...] | None = None
