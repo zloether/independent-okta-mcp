@@ -9,13 +9,28 @@ import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-from jsonschema import Draft202012Validator, SchemaError, ValidationError
+from jsonschema import Draft202012Validator, SchemaError, ValidationError, validators
+from jsonschema.protocols import Validator
 
 from okta_mcp.registry.model import CommandEntry
 from okta_mcp.registry.spec import Operation
 
 if TYPE_CHECKING:
     from okta_mcp.registry.loader import Command
+
+
+# JSON Schema counts 5.0 as an integer; Okta should only ever get "5".
+def _is_int(_: object, v: object) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+_Validator = cast(
+    type[Validator],
+    validators.extend(  # pyright: ignore[reportUnknownMemberType]
+        Draft202012Validator,
+        type_checker=Draft202012Validator.TYPE_CHECKER.redefine("integer", _is_int),
+    ),
+)
 
 SYNOPSIS_MAX = 60
 """Cap on `usage + "  " + summary` (T1 D1); column padding in the tool description is extra."""
@@ -43,6 +58,9 @@ def build_schema(entry: CommandEntry, op: Operation, errors: list[str]) -> dict[
             continue
         s = _spec_schema(param.schema)
         if arg.type is not None:
+            # Only fills a type the spec leaves out: replacing one could widen the argument.
+            if s.get("type", arg.type) != arg.type:
+                errors.append(f"arg {name}: spec type is {s['type']}, not {arg.type}")
             s["type"] = arg.type
             if arg.type == "array":
                 s.setdefault("items", {"type": "string"})
@@ -50,12 +68,13 @@ def build_schema(entry: CommandEntry, op: Operation, errors: list[str]) -> dict[
             if s.get("type", "string") != "string":
                 errors.append(f"arg {name}: path params are strings")
             s["type"] = "string"
+        # Value constraints of an array argument apply to its items.
+        target = s["items"] if s.get("type") == "array" else s
         if arg.pattern is not None:
-            if "pattern" in s:
-                errors.append(f"arg {name}: spec already sets pattern {s['pattern']}")
-            s["pattern"] = arg.pattern
+            if "pattern" in target:
+                errors.append(f"arg {name}: spec already sets pattern {target['pattern']}")
+            target["pattern"] = arg.pattern
         if arg.allowed_values:
-            target = s["items"] if s.get("type") == "array" else s
             extra = sorted(set(arg.allowed_values) - set(target.get("enum", arg.allowed_values)))
             if target.get("type") != "string":
                 errors.append(f"arg {name}: allowed_values need a string or array of strings")
@@ -74,6 +93,8 @@ def build_schema(entry: CommandEntry, op: Operation, errors: list[str]) -> dict[
     if required:
         schema["required"] = required
     if entry.one_of_required is not None:
+        if len(set(entry.one_of_required)) != len(entry.one_of_required):
+            errors.append("one_of_required has duplicate args")
         for name in entry.one_of_required:
             if name not in props:
                 errors.append(f"one_of_required: unknown or hidden arg {name}")
@@ -81,10 +102,14 @@ def build_schema(entry: CommandEntry, op: Operation, errors: list[str]) -> dict[
                 errors.append(f"one_of_required: {name} is always required")
         schema["oneOf"] = [{"required": [name]} for name in entry.one_of_required]
     try:
-        Draft202012Validator.check_schema(schema)
+        _Validator.check_schema(schema)
     except SchemaError as e:
         errors.append(f"invalid argument schema: {e.message}")
     return schema
+
+
+def make_validator(schema: Mapping[str, Any]) -> Validator:
+    return _Validator(schema)
 
 
 def _spec_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
@@ -147,14 +172,8 @@ def help_text(command: "Command") -> str:
         enum = s.get("enum") or s.get("items", {}).get("enum")
         if enum:
             facts.append(f"one of: {_options(enum)}")
-        for key, label in (("minLength", "min length"), ("maxLength", "max length")):
-            if key in s:
-                facts.append(f"{label} {s[key]}")
-        for key, label in (("minimum", "min"), ("maximum", "max")):
-            if key in s:
-                facts.append(f"{label} {s[key]}")
-        if "pattern" in s:
-            facts.append(f"pattern {s['pattern']}")
+        facts += _bounds(s)
+        facts += [f"each {f}" for f in _bounds(s.get("items", {}))]
         if "maxItems" in s:
             facts.append(f"at most {_count(s['maxItems'], 'item')}")
         param = command.operation.params[arg.param]
@@ -170,6 +189,17 @@ def help_text(command: "Command") -> str:
     if entry.view is not None:
         lines.append(f"Default view: {','.join(entry.view)}")
     return "\n".join(lines)
+
+
+def _bounds(schema: Mapping[str, Any]) -> list[str]:
+    labels = {
+        "minLength": "min length",
+        "maxLength": "max length",
+        "minimum": "min",
+        "maximum": "max",
+        "pattern": "pattern",
+    }
+    return [f"{label} {schema[key]}" for key, label in labels.items() if key in schema]
 
 
 def _type(schema: Mapping[str, Any]) -> str:
@@ -188,10 +218,9 @@ def _describe(text: str) -> str:
 
 def validate_args(command: "Command", args: object) -> None:
     """Raise `InvalidArguments` naming every problem and the valid options. Values the caller
-    sent are never echoed back."""
-    schema = command.schema
-    props = cast(Mapping[str, Any], schema["properties"])
-    errors = Draft202012Validator(schema).iter_errors(cast(Any, args))  # pyright: ignore[reportUnknownMemberType]
+    sent are never echoed back; unknown key names only shortened and capped."""
+    props = cast(Mapping[str, Any], command.schema["properties"])
+    errors = command.validator.iter_errors(cast(Any, args))
     messages = sorted({_message(e, args, props) for e in errors})
     if messages:
         raise InvalidArguments("; ".join(messages))
@@ -204,7 +233,8 @@ def _message(e: ValidationError, args: object, props: Mapping[str, Any]) -> str:
         case "additionalProperties":
             extra = sorted(set(cast(Mapping[str, Any], args)) - set(props))
             noun = "arg" if len(extra) == 1 else "args"
-            return f"unknown {noun} {', '.join(map(repr, extra))}; valid: {_options(props)}"
+            names = _options(repr(k if len(k) <= 40 else k[:39] + "…") for k in extra)
+            return f"unknown {noun} {names}; valid: {_options(props)}"
         case "required":
             present = cast(Mapping[str, Any], args)
             missing = [r for r in cast(list[str], value) if r not in present]

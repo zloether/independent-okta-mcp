@@ -392,3 +392,90 @@ def test_valid_option_lists_are_capped() -> None:
     cmd = {"operation": "getX", "summary": "X", "args": args, "data_classes": ["pii"]}
     msg = _invalid(_one(index, cmd), {"nope": "x"})
     assert msg.endswith("p18, p19, … (+5; see okta_help)")
+
+
+# Review fixes
+
+SEARCH_APPS = {
+    "operation": "listApplicationsBySearch",
+    "summary": "Search apps",
+    "args": {"labels": {"query": "labels"}},
+    "paginate": "link",
+    "page_size": 100,
+    "view": ["id", "label"],
+    "data_classes": ["org-config"],
+}
+LABEL = "^lbc[A-Za-z0-9]{17}$"
+
+
+def test_pattern_on_array_applies_to_items(spec: SpecIndex) -> None:
+    cmd = _one(spec, _with(SEARCH_APPS, args={"labels": {"query": "labels", "pattern": LABEL}}))
+    assert cmd.schema["properties"]["labels"]["items"]["pattern"] == LABEL
+    assert "pattern" not in cmd.schema["properties"]["labels"]
+    assert _invalid(cmd, {"labels": ["x" * 20]}) == f"arg 'labels' must match {LABEL}"
+    validate_args(cmd, {"labels": ["lbco3v6xlwdtEX2il1d6"]})
+
+
+def test_pattern_on_array_cannot_replace_item_pattern() -> None:
+    schema = {"type": "array", "items": {"type": "string", "pattern": "^a$"}}
+    op = {
+        "operationId": "getX",
+        "parameters": [{"name": "ids", "in": "query", "schema": schema}],
+        "security": [{"oauth2": ["x.read"]}],
+        "responses": {},
+    }
+    index = build_index({"info": {"version": "1"}, "paths": {"/x": {"get": op}}})
+    args = {"ids": {"query": "ids", "pattern": "^.*$"}}
+    cmd = {"operation": "getX", "summary": "X", "args": args, "data_classes": ["pii"]}
+    with pytest.raises(RegistryError, match=r"spec already sets pattern \^a\$"):
+        _one(index, cmd)
+
+
+def test_type_overlay_cannot_replace_spec_type(spec: SpecIndex) -> None:
+    for t in ("string", "integer"):
+        args = {"labels": {"query": "labels", "type": t}}
+        with pytest.raises(RegistryError, match=f"spec type is array, not {t}"):
+            _one(spec, _with(SEARCH_APPS, args=args))
+
+
+def test_one_of_required_rejects_duplicates(spec: SpecIndex) -> None:
+    with pytest.raises(RegistryError, match="one_of_required has duplicate args"):
+        _one(spec, _with(LIST_GROUPS, one_of_required=["filter", "filter"]))
+
+
+def test_unknown_arg_names_are_shortened_and_capped(spec: SpecIndex) -> None:
+    args = {f"k{i:02}": 1 for i in range(25)} | {"z" * 1000: 1}
+    msg = _invalid(_one(spec, GET_GROUP), {"group": "00g1emaKYZTWRYYRRTSK", **args})
+    assert "z" * 40 not in msg and "'k19', … (+6; see okta_help)" in msg
+    assert len(msg) < 400
+
+
+def test_help_text_states_item_constraints(spec: SpecIndex) -> None:
+    args = {"labels": {"query": "labels", "pattern": LABEL}}
+    text = help_text(_one(spec, _with(SEARCH_APPS, args=args)))
+    assert (
+        f"  labels  array of string, each min length 20, each max length 20, each pattern {LABEL}"
+        in text
+    )
+
+
+def test_integer_args_reject_floats_and_booleans() -> None:
+    op = {
+        "operationId": "getX",
+        "parameters": [{"name": "n", "in": "query", "schema": {"type": "integer"}}],
+        "security": [{"oauth2": ["x.read"]}],
+        "responses": {},
+    }
+    index = build_index({"info": {"version": "1"}, "paths": {"/x": {"get": op}}})
+    cmd = _one(
+        index,
+        {
+            "operation": "getX",
+            "summary": "X",
+            "args": {"n": {"query": "n"}},
+            "data_classes": ["pii"],
+        },
+    )
+    validate_args(cmd, {"n": 5})
+    for bad in (5.0, True):
+        assert _invalid(cmd, {"n": bad}) == "arg 'n' must be an integer"

@@ -198,7 +198,7 @@ The paths below `src/okta_mcp/data/` are abbreviated as `specs/`, `registry/`, `
 
 Tool name = `okta_<domain>`: `okta_users`, `okta_groups`, `okta_apps`, `okta_policies`, `okta_devices`, `okta_network_zones`, `okta_device_assurance`, `okta_device_posture`, `okta_logs`, `okta_api_tokens`, `okta_sessions`, `okta_iam`, `okta_authenticators`, `okta_behaviors`, `okta_authorization_servers`, `okta_identity_providers`, `okta_schemas`, `okta_security`, `okta_attack_protection`, `okta_device_integrations`, `okta_org_settings`, `okta_realms`, `okta_oauth_client_roles` (**23**), plus:
 
-- `okta_help` — the full JSON Schema, description and examples for one command the caller may use.
+- `okta_help` — compact text help (every argument and constraint, the default view) for one command the caller may use (§5.3).
 - `okta_status` — the caller's effective roles/domains and, for commands their role permits but the server cannot execute, why (e.g. service app lacks a scope). No data about other users.
 
 ### 5.2 Input/output contract
@@ -222,7 +222,7 @@ Tool name = `okta_<domain>`: `okta_users`, `okta_groups`, `okta_apps`, `okta_pol
 
 ### 5.3 Discoverability
 
-A compact **synopsis line per allowed command** in each tool's description, strict server-side validation, and `okta_help` for full schemas.
+A compact **synopsis line per allowed command** in each tool's description, strict server-side validation, and `okta_help` for every argument and constraint.
 
 ```
 okta_users — Read Okta users, status and relationships (read-only).
@@ -385,11 +385,12 @@ The registry loader builds a JSON Schema per command from the spec parameter def
 Overlays can only narrow what the spec allows, and a misuse fails the load:
 
 - The arg name is the rename; the schema is keyed by it, `additionalProperties: false`. Path params are always strings.
-- `allowed_values` sets `enum` (on the items of an array), only on string args and only as a subset of a spec `enum`. `[]` hides the arg, which is an error on a required parameter.
-- `pattern` is an error where the spec already sets one, so it can never replace a spec constraint. `maxItems` applies only to arrays.
-- `one_of_required: [a, b]`: exactly one of the listed (optional) args must be passed.
+- `type` only fills in a type the spec leaves out; it can't replace one.
+- `allowed_values` and `pattern` constrain the value, or each item of an array. `allowed_values` sets `enum`, only on string args and only as a subset of a spec `enum`; `[]` hides the arg, which is an error on a required parameter. `pattern` is an error where the spec already sets one, so it can never replace a spec constraint. `maxItems` applies only to arrays.
+- `one_of_required: [a, b]`: exactly one of the listed (optional, distinct) args must be passed.
+- `integer` accepts only whole JSON numbers without a fraction part (not `5.0`, not `true`), so Okta always receives `5`.
 
-Validation reports every problem in one `invalid_arguments` message, naming the valid args or values (lists capped at 20) and never echoing the caller's values.
+Validation reports every problem in one `invalid_arguments` message, naming the valid args or values (lists capped at 20). It never echoes the caller's values; unknown key names are shown cut to 40 characters, at most 20 of them.
 
 ### 6.4 URL construction and injection controls
 

@@ -13,10 +13,11 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import yaml
+from jsonschema.protocols import Validator
 from pydantic import ValidationError
 
 from okta_mcp.registry.model import CommandEntry, DomainFile, Sensitivity
-from okta_mcp.registry.schema import build_schema, synopsis
+from okta_mcp.registry.schema import build_schema, make_validator, synopsis
 from okta_mcp.registry.spec import Operation, SpecIndex
 
 REGISTRY = files("okta_mcp") / "data" / "registry"
@@ -45,6 +46,7 @@ class Command:
     schema: Mapping[str, Any]
     """JSON Schema for `args` (design §6.3). Nested values are plain dicts: don't change them."""
     synopsis: str
+    validator: Validator
 
 
 @dataclass(frozen=True)
@@ -168,6 +170,7 @@ def _command(
         is_list,
         MappingProxyType(schema),
         line,
+        make_validator(schema),
     )
 
 
