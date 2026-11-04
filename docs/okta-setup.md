@@ -46,11 +46,13 @@ The server works the same either way. It never sees a refresh token and checks e
 | Users sign in | Every `access_token_minutes` | When the session has been idle for `idle_minutes`, or `lifetime_minutes` after the first sign-in |
 | A stolen token works for | One access-token lifetime | Until the refresh token goes idle or expires. Rotation narrows this: each refresh token works once (plus the leeway), so the thief and the user can't both keep using the same one. How Okta handles the reuse wasn't tested here |
 | Group removed or changed | Takes effect within one access-token lifetime | The same: Okta rebuilds the `groups` claim on every refresh, and refuses the refresh once the user is in no MCP group |
-| Cutting someone off for good | Remove them from the `mcp-okta-*` groups | Also clear their sessions and revoke their tokens (or deactivate the user). Okta keeps a refused refresh token, so it works again if any MCP group is restored before it expires |
+| Cutting someone off for good | Remove them from the `mcp-okta-*` groups | Also revoke their tokens: Clear User Sessions in the admin console, or `DELETE /api/v1/users/{id}/sessions?oauthTokens=true` (or deactivate the user). Clearing sessions without `oauthTokens=true` leaves refresh tokens working. Okta keeps a refused refresh token, so it works again if any MCP group is restored before it expires |
 
 Pick A when sign-in every 30 minutes is acceptable, or when the clients run on shared or unmanaged machines. Pick B for day-long interactive use on managed devices. Either way, the rule must allow `offline_access`: Claude Code always requests it, and a rule without it fails sign-in with `no_matching_policy`. Under A, Okta grants the scope but issues no refresh token. As a backstop, the rule's refresh-token lifetime and idle window are set to the access-token lifetime under A, so a client app that gets the refresh token grant by mistake gains nothing beyond one access-token lifetime.
 
 Under B, keep `access_token_minutes` well above 5: Claude Code refreshes tokens that are close to expiry, and with 5-minute tokens it refreshed on almost every call in testing. `idle_minutes` must be at least `access_token_minutes`, or the refresh token goes idle before the access token expires. Both bounds are checked before anything is sent to Okta (and at `terraform plan`).
+
+Under B, `lifetime_minutes` is how often users must sign in again, whatever the Global Session Policy says. Refreshes don't need an Okta session and don't re-run the session or authentication policies, so an MFA requirement every 2 hours doesn't shorten an 8-hour refresh chain. If you want MFA at a set interval, set `lifetime_minutes` no longer than that interval.
 
 `apply` doesn't switch an existing deployment between A and B: it never changes a client's grant types or the rule's token lifetimes. After changing the config, `check` reports what differs as `manual`. Change it in the admin console (Applications > the client > General: Refresh Token grant and rotation; Security > API > the authorization server > Access Policies > the rule), then run `check` again.
 
@@ -97,7 +99,7 @@ The rule must allow the authorization code grant only, so a rule that also lists
 ## After setup
 
 - Add users to the `mcp-okta-*` groups. The tool creates the groups but never manages membership.
-- To remove a user, take them out of the groups. Under option B, also clear their sessions and revoke their tokens (see [the table above](#refresh-tokens-option-a-or-b)).
+- To remove a user, take them out of the groups. Under option B, also clear their sessions with token revocation (see [the table above](#refresh-tokens-option-a-or-b)).
 - Restrict who can create or rename `mcp-okta-*` groups, and alert on it: anyone who can create such a group can get it into the `groups` claim.
 - Re-run `check` after any change in the admin console.
 
