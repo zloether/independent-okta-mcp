@@ -30,7 +30,14 @@ import yaml
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 GROUP_PREFIX = "mcp-okta-"
 # Emits IDs of Okta-mastered groups whose name starts with GROUP_PREFIX (design §8.2, V13).
@@ -44,6 +51,10 @@ RULE_NAME = "okta-mcp groups"
 SERVICE_ROLE = "READ_ONLY_ADMIN"
 CUSTOM_ROLE = "CUSTOM"
 DESCRIPTION = "Managed by okta-mcp scripts/okta-setup.py"
+# Claude Code requests offline_access; a rule without it fails sign-in with no_matching_policy.
+# Okta issues a refresh token only when the client app also has the refresh_token grant.
+RULE_SCOPES = ["openid", "profile", "email", "offline_access"]
+ROTATION = {"rotation_type": "ROTATE", "leeway": 30}
 
 T = TypeVar("T")
 
@@ -75,14 +86,38 @@ class ServiceApp(_Model):
         return scopes
 
 
+class RefreshTokens(_Model):
+    """Option B (docs/okta-setup.md): rotating refresh tokens for the MCP clients."""
+
+    idle_minutes: int = Field(ge=5, le=1440)
+    lifetime_minutes: int = Field(ge=5, le=1440)
+
+    @model_validator(mode="after")
+    def _idle_within_lifetime(self) -> "RefreshTokens":
+        if self.idle_minutes > self.lifetime_minutes:
+            raise ValueError("idle_minutes must not exceed lifetime_minutes")
+        return self
+
+
 class Config(_Model):
     mcp_public_url: str
     authorization_server: str = "okta-mcp"
     scope: str = "okta-mcp"
     access_token_minutes: int = Field(default=30, ge=5, le=30)
+    refresh_tokens: RefreshTokens | None = None
     groups: list[str] = Field(min_length=1)
     clients: list[Client] = Field(min_length=1)
     service_app: ServiceApp
+
+    @model_validator(mode="after")
+    def _refresh_outlives_access(self) -> "Config":
+        if self.refresh_tokens and self.refresh_tokens.idle_minutes < self.access_token_minutes:
+            raise ValueError("refresh_tokens.idle_minutes must be at least access_token_minutes")
+        return self
+
+    @property
+    def client_grants(self) -> list[str]:
+        return ["authorization_code"] + (["refresh_token"] if self.refresh_tokens else [])
 
     @field_validator("mcp_public_url")
     @classmethod
@@ -275,6 +310,15 @@ class Setup:
         return client_ids
 
     def _create_client(self, client: Client) -> Any:
+        oauth: dict[str, Any] = {
+            "application_type": "native",
+            "grant_types": self.cfg.client_grants,
+            "response_types": ["code"],
+            "redirect_uris": client.redirect_uris,
+            "consent_method": "TRUSTED",
+        }
+        if self.cfg.refresh_tokens:
+            oauth["refresh_token"] = ROTATION
         return self.okta.request(
             "POST",
             "/api/v1/apps",
@@ -283,15 +327,7 @@ class Setup:
                 "label": client.name,
                 "signOnMode": "OPENID_CONNECT",
                 "credentials": {"oauthClient": {"token_endpoint_auth_method": "none"}},
-                "settings": {
-                    "oauthClient": {
-                        "application_type": "native",
-                        "grant_types": ["authorization_code"],
-                        "response_types": ["code"],
-                        "redirect_uris": client.redirect_uris,
-                        "consent_method": "TRUSTED",
-                    }
-                },
+                "settings": {"oauthClient": oauth},
             },
         )
 
@@ -305,10 +341,12 @@ class Setup:
             issues.append("must be a public client (token_endpoint_auth_method none)")
         if not creds.get("pkce_required"):
             issues.append("PKCE is not required")
-        if settings.get("grant_types") != ["authorization_code"]:
-            issues.append(
-                f"grant types are {settings.get('grant_types')}, expected authorization_code only"
-            )
+        grants = self.cfg.client_grants
+        if sorted(settings.get("grant_types") or []) != grants:
+            issues.append(f"grant types are {settings.get('grant_types')}, expected {grants}")
+        rotation = (settings.get("refresh_token") or {}).get("rotation_type")
+        if self.cfg.refresh_tokens and rotation != "ROTATE":
+            issues.append(f"refresh token rotation is {rotation}, expected ROTATE")
         registered = set(settings.get("redirect_uris", []))
         if missing := sorted(set(client.redirect_uris) - registered):
             issues.append(f"redirect URIs missing: {missing}")
@@ -455,6 +493,7 @@ class Setup:
 
     def _rule(self, path: str) -> None:
         cfg = self.cfg
+        refresh = cfg.refresh_tokens
         what = f"policy rule {RULE_NAME!r}"
         group_ids = list(self.group_ids.values())
         rule = next((r for r in self.okta.get(path) if r["name"] == RULE_NAME), None)
@@ -473,13 +512,14 @@ class Setup:
                 "conditions": {
                     "grantTypes": {"include": ["authorization_code"]},
                     "people": {"groups": {"include": group_ids}},
-                    "scopes": {"include": ["openid", "profile", "email", cfg.scope]},
+                    "scopes": {"include": [*RULE_SCOPES, cfg.scope]},
                 },
                 "actions": {
                     "token": {
                         "accessTokenLifetimeMinutes": cfg.access_token_minutes,
-                        "refreshTokenLifetimeMinutes": 0,
-                        "refreshTokenWindowMinutes": 10080,
+                        # Used only by clients with the refresh_token grant (option B).
+                        "refreshTokenLifetimeMinutes": refresh.lifetime_minutes if refresh else 0,
+                        "refreshTokenWindowMinutes": refresh.idle_minutes if refresh else 10080,
                     }
                 },
             }
@@ -494,16 +534,33 @@ class Setup:
         grants = conditions["grantTypes"]["include"]
         if grants != ["authorization_code"]:
             issues.append(
-                f"grant types are {grants}, expected authorization_code only (no refresh tokens)"
+                f"grant types are {grants}, expected authorization_code only "
+                "(refresh tokens are turned on per client app)"
             )
         scopes = conditions["scopes"]["include"]
         if cfg.scope not in scopes and "*" not in scopes:
             issues.append(f"scope {cfg.scope} is not included")
-        lifetime = rule["actions"]["token"]["accessTokenLifetimeMinutes"]
+        token = rule["actions"]["token"]
+        lifetime = token["accessTokenLifetimeMinutes"]
         if lifetime > cfg.access_token_minutes:
             issues.append(
                 f"access tokens last {lifetime} min, expected ≤{cfg.access_token_minutes}"
             )
+        if refresh:
+            rt_lifetime = token.get("refreshTokenLifetimeMinutes", 0)
+            if not rt_lifetime or rt_lifetime > refresh.lifetime_minutes:
+                issues.append(
+                    f"refresh tokens last {rt_lifetime or 'unlimited'} min, "
+                    f"expected ≤{refresh.lifetime_minutes}"
+                )
+            window = token.get("refreshTokenWindowMinutes", 0)
+            if window > refresh.idle_minutes:
+                issues.append(
+                    f"refresh token idle window is {window} min, expected ≤{refresh.idle_minutes}"
+                )
+        if "offline_access" not in scopes and "*" not in scopes:
+            # Narrower, not wider: reported, but the rule is still trusted.
+            self.problem(what, "scope offline_access is not included; Claude Code can't sign in")
         people = conditions.get("people") or {}
         if (people.get("users") or {}).get("include"):
             issues.append("includes individual users; grant access through groups only")
@@ -522,7 +579,7 @@ class Setup:
                 f"add groups {missing}",
                 lambda: self.okta.request("PUT", f"{path}/{rule['id']}", rule),
             )
-        else:
+        elif "offline_access" in scopes or "*" in scopes:
             self.ok(what)
 
     def service_app(self) -> None:

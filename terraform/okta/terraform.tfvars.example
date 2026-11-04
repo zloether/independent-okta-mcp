@@ -9,6 +9,10 @@ mcp_public_url = "https://mcp.example.com/mcp"
 # access_token_minutes = 30
 # service_app_name     = "okta-mcp service"
 
+# Option B: rotating refresh tokens. Omit for option A (no refresh tokens).
+# See "Refresh tokens: option A or B" in docs/okta-setup.md.
+# refresh_tokens = { idle_minutes = 60, lifetime_minutes = 480 }
+
 groups = ["mcp-okta-helpdesk", "mcp-okta-readers"]
 
 clients = {

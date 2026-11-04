@@ -10,6 +10,13 @@ authorization_server: okta-mcp
 scope: okta-mcp
 access_token_minutes: 30 # 5–30
 
+# Option B: rotating refresh tokens, so users stay signed in until the session goes idle or
+# ends. Omit for option A (the default): no refresh tokens; users sign in again when the access
+# token expires. See "Refresh tokens: option A or B" in docs/okta-setup.md.
+# refresh_tokens:
+#   idle_minutes: 60 # ≥ access_token_minutes, ≤ lifetime_minutes
+#   lifetime_minutes: 480 # ≤ 1440
+
 # Role groups. Names must start with "mcp-okta-"; their IDs go into policy.yaml.
 groups:
   - mcp-okta-helpdesk

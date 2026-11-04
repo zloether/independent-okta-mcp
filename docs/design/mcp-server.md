@@ -501,6 +501,8 @@ Client registration options, in order: pre-registered public clients (PKCE, exac
 
 Spike 0.5 results (V9–V11, [findings](spike-findings.md)): Okta serves OIDC discovery and both RFC 8414 URLs, so path-insertion-only clients work. Redirect URIs match exactly, port and host included (no RFC 8252 any-port loopback; `localhost` ≠ `127.0.0.1`), so a client needs a fixed, registered redirect URI and a configurable `client_id`. A **client compatibility matrix** is started in spike step 0.6 (a check server that answers with 401 + PRM) and completed against the real server in step 4.6.
 
+**Refresh tokens are an admin choice** (spike 0.6, [findings](spike-findings.md)). The server never sees a refresh token and runs §8.5 on every access token, so it is built the same either way. The setup tools default to **A**, no refresh tokens: users sign in again each access-token lifetime. **B** turns on the refresh-token grant with rotation on the client apps and bounds the refresh lifetimes on the rule (`refresh_tokens` in `scripts/okta-setup.py` and `terraform/okta/`). Both allow `offline_access` on the rule, because Claude Code requests it and Okta otherwise fails sign-in with `no_matching_policy`. The trade-offs and the removal runbook are in [docs/okta-setup.md](../okta-setup.md#refresh-tokens-option-a-or-b).
+
 ### 8.4 Cross App Access / ID-JAG (Path B) — future
 
 Okta Cross App Access (IETF *Identity Assertion JWT Authorization Grant*; MCP "enterprise-managed authorization") would let an enterprise-managed agent exchange an SSO ID token for an ID-JAG and then for an access token at the custom AS, with no browser step. The server-side impact is nil (same access token, same §8.5 checks), so adding it later is an Okta configuration and client-compatibility exercise (V2, V12). Deferred from v1 to keep the first release to one verified path.
@@ -618,7 +620,7 @@ Okta caps matched groups in the claim (documented 100; verify, V1); the prefix f
 
 ### 9.6 Revocation
 
-Group removal takes effect at next token issuance. Short access-token lifetimes (≤15–30 min) on the custom AS; documented in the runbook.
+Group removal takes effect at next token issuance. Short access-token lifetimes (≤15–30 min) on the custom AS; documented in the runbook. With refresh tokens (§8.3, option B) this still holds: Okta rebuilds the `groups` claim on every refresh and refuses the refresh once the user is in no MCP group (spike 0.6). But the refused refresh token is not revoked and works again if a group is restored, so permanent removal also revokes the user's tokens or deactivates the user.
 
 ---
 
@@ -907,7 +909,7 @@ The `groups` claim carries IDs of Okta-mastered `mcp-okta-*` groups (§8.2).
 
 Steps 1–4 are automated by `scripts/okta-setup.py` or the `terraform/okta/` module ([guide](../okta-setup.md)).
 
-1. **Dedicated custom AS:** audience `MCP_PUBLIC_URL`; scope `okta-mcp`; `groups` claim on the access token emitting **IDs** of Okta-mastered `mcp-okta-*` groups (V13); access-token lifetime ≤30 min; access policy limiting clients/users.
+1. **Dedicated custom AS:** audience `MCP_PUBLIC_URL`; scope `okta-mcp`; `groups` claim on the access token emitting **IDs** of Okta-mastered `mcp-okta-*` groups (V13); access-token lifetime ≤30 min; rule scopes include `offline_access`; refresh tokens off (A) or rotating with bounded lifetimes (B, §8.3); access policy limiting clients/users.
 2. **Groups:** create role groups; copy their IDs into the policy (names as comments); restrict and alert on `mcp-okta-*` creation/rename.
 3. **Service app:** API Services app, `private_key_jwt` (upload public JWK, note `kid`), "Require DPoP" on (the console default; turn it on explicitly if the app was created through the API, V15); grant only intended `okta.*.read` scopes; assign Read-only Administrator or a custom role (never Super Admin); store the private key as a container secret.
 4. **Clients:** register approved MCP clients as public OIDC apps (PKCE, exact redirect URIs); allow them in the AS access policy.

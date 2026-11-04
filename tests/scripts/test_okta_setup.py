@@ -108,6 +108,16 @@ service_app:
     return path
 
 
+def refresh_tokens(idle: int, lifetime: int) -> str:
+    return f"refresh_tokens:\n  idle_minutes: {idle}\n  lifetime_minutes: {lifetime}\n"
+
+
+def use_refresh_tokens(config: Path) -> None:
+    config.write_text(
+        config.read_text().replace("service_app:", f"{refresh_tokens(60, 480)}service_app:")
+    )
+
+
 def run(okta: FakeOkta, command: str, config: Path, *extra: str, confirm: bool = True) -> int:
     return setup.run(
         [command, "--config", str(config), *extra], http=okta.client(), confirm=lambda: confirm
@@ -154,6 +164,9 @@ def test_public_jwk_rejects_private_key() -> None:
         (MCP_URL, "http://mcp.example.com/mcp"),
         ("service_app:", "access_token_minutes: 120\nservice_app:"),
         ("service_app:", "unknown_key: 1\nservice_app:"),
+        ("service_app:", f"{refresh_tokens(60, 30)}service_app:"),
+        ("service_app:", f"{refresh_tokens(10, 480)}service_app:"),
+        ("service_app:", f"{refresh_tokens(60, 10080)}service_app:"),
     ],
 )
 def test_config_fails_closed(config: Path, old: str, new: str) -> None:
@@ -207,7 +220,10 @@ def test_apply_creates_everything_then_check_is_clean(config: Path, capsys) -> N
     rule = okta.find(*base, "policies", policy["id"], "rules", name=setup.RULE_NAME)
     assert rule["conditions"]["people"]["groups"]["include"] == list(groups.values())
     assert rule["conditions"]["grantTypes"]["include"] == ["authorization_code"]
+    assert "offline_access" in rule["conditions"]["scopes"]["include"]
     assert rule["actions"]["token"]["accessTokenLifetimeMinutes"] == 30
+    assert client["settings"]["oauthClient"]["grant_types"] == ["authorization_code"]
+    assert "refresh_token" not in client["settings"]["oauthClient"]
 
     service = okta.find("api", "v1", "apps", label="okta-mcp service")
     oauth = service["settings"]["oauthClient"]
@@ -476,7 +492,7 @@ def add_group(config: Path) -> None:
             lambda policy, rule: rule["conditions"]["grantTypes"]["include"].append(
                 "refresh_token"
             ),
-            "no refresh tokens",
+            "refresh tokens are turned on per client app",
         ),
         (
             lambda policy, rule: rule["actions"]["token"].update(accessTokenLifetimeMinutes=1440),
@@ -496,6 +512,89 @@ def test_rule_with_problems_gets_no_new_groups(config: Path, tamper, message: st
     path = rules_path(okta)
     policy = okta.find(*path[:-2], name=setup.POLICY_NAME)
     tamper(policy, okta.find(*path, name=setup.RULE_NAME))
+    add_group(config)
+    capsys.readouterr()
+    okta.writes.clear()
+
+    assert run(okta, "apply", config, "--yes") == 1
+    assert not [p for _, p in okta.writes if "/rules" in p]
+    assert message in capsys.readouterr().out
+
+
+def test_rule_without_offline_access_is_reported_but_trusted(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    rule = okta.find(*rules_path(okta), name=setup.RULE_NAME)
+    rule["conditions"]["scopes"]["include"].remove("offline_access")
+    add_group(config)
+    capsys.readouterr()
+
+    assert run(okta, "apply", config, "--yes") == 1
+    assert "scope offline_access is not included" in capsys.readouterr().out
+    rule = okta.find(*rules_path(okta), name=setup.RULE_NAME)
+    assert len(rule["conditions"]["people"]["groups"]["include"]) == 3
+
+
+def test_refresh_tokens_apply_then_check_is_clean(config: Path) -> None:
+    use_refresh_tokens(config)
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    writes = len(okta.writes)
+    assert run(okta, "check", config) == 0
+    assert len(okta.writes) == writes
+
+    oauth = okta.find("api", "v1", "apps", label="Example Client")["settings"]["oauthClient"]
+    assert oauth["grant_types"] == ["authorization_code", "refresh_token"]
+    assert oauth["refresh_token"]["rotation_type"] == "ROTATE"
+    rule = okta.find(*rules_path(okta), name=setup.RULE_NAME)
+    assert rule["conditions"]["grantTypes"]["include"] == ["authorization_code"]
+    assert rule["actions"]["token"] | {"accessTokenLifetimeMinutes": 0} == {
+        "accessTokenLifetimeMinutes": 0,
+        "refreshTokenLifetimeMinutes": 480,
+        "refreshTokenWindowMinutes": 60,
+    }
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        lambda oauth: oauth.update(grant_types=["authorization_code"]),
+        lambda oauth: oauth.update(refresh_token={"rotation_type": "STATIC", "leeway": 0}),
+        lambda oauth: oauth.pop("refresh_token"),
+    ],
+)
+def test_refresh_client_without_rotation_is_not_trusted(config: Path, tamper, capsys) -> None:
+    use_refresh_tokens(config)
+    okta = FakeOkta()
+    oauth = {
+        "application_type": "native",
+        "grant_types": ["refresh_token", "authorization_code"],
+        "redirect_uris": ["http://127.0.0.1:8765/callback"],
+        "refresh_token": dict(setup.ROTATION),
+    }
+    app = plant_app(okta, "Example Client", "none", oauth)
+    tamper(app["settings"]["oauthClient"])
+
+    assert run(okta, "apply", config, "--yes") == 1
+    assert [p for _, p in okta.writes if app["id"] in p] == []
+    assert "[manual] client 'Example Client'" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("token", "message"),
+    [
+        ({"refreshTokenLifetimeMinutes": 0}, "refresh tokens last unlimited min"),
+        ({"refreshTokenLifetimeMinutes": 1440}, "refresh tokens last 1440 min"),
+        ({"refreshTokenWindowMinutes": 10080}, "idle window is 10080 min"),
+    ],
+)
+def test_refresh_rule_with_long_lifetimes_gets_no_new_groups(
+    config: Path, token: dict[str, int], message: str, capsys
+) -> None:
+    use_refresh_tokens(config)
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    okta.find(*rules_path(okta), name=setup.RULE_NAME)["actions"]["token"].update(token)
     add_group(config)
     capsys.readouterr()
     okta.writes.clear()
