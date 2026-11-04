@@ -221,7 +221,11 @@ def test_apply_creates_everything_then_check_is_clean(config: Path, capsys) -> N
     assert rule["conditions"]["people"]["groups"]["include"] == list(groups.values())
     assert rule["conditions"]["grantTypes"]["include"] == ["authorization_code"]
     assert "offline_access" in rule["conditions"]["scopes"]["include"]
-    assert rule["actions"]["token"]["accessTokenLifetimeMinutes"] == 30
+    assert rule["actions"]["token"] == {
+        "accessTokenLifetimeMinutes": 30,
+        "refreshTokenLifetimeMinutes": 30,
+        "refreshTokenWindowMinutes": 30,
+    }
     assert client["settings"]["oauthClient"]["grant_types"] == ["authorization_code"]
     assert "refresh_token" not in client["settings"]["oauthClient"]
 
@@ -561,9 +565,11 @@ def test_refresh_tokens_apply_then_check_is_clean(config: Path) -> None:
         lambda oauth: oauth.update(grant_types=["authorization_code"]),
         lambda oauth: oauth.update(refresh_token={"rotation_type": "STATIC", "leeway": 0}),
         lambda oauth: oauth.pop("refresh_token"),
+        lambda oauth: oauth.update(refresh_token={"rotation_type": "ROTATE", "leeway": 60}),
+        lambda oauth: oauth.update(refresh_token={"rotation_type": "ROTATE"}),
     ],
 )
-def test_refresh_client_without_rotation_is_not_trusted(config: Path, tamper, capsys) -> None:
+def test_refresh_client_with_wrong_rotation_is_not_trusted(config: Path, tamper, capsys) -> None:
     use_refresh_tokens(config)
     okta = FakeOkta()
     oauth = {
@@ -580,21 +586,24 @@ def test_refresh_client_without_rotation_is_not_trusted(config: Path, tamper, ca
     assert "[manual] client 'Example Client'" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("option_b", [False, True], ids=["A", "B"])
 @pytest.mark.parametrize(
-    ("token", "message"),
+    ("tamper", "message"),
     [
-        ({"refreshTokenLifetimeMinutes": 0}, "refresh tokens last unlimited min"),
-        ({"refreshTokenLifetimeMinutes": 1440}, "refresh tokens last 1440 min"),
-        ({"refreshTokenWindowMinutes": 10080}, "idle window is 10080 min"),
+        (lambda t: t.update(refreshTokenLifetimeMinutes=0), "refresh tokens last unlimited min"),
+        (lambda t: t.update(refreshTokenLifetimeMinutes=1440), "refresh tokens last 1440 min"),
+        (lambda t: t.update(refreshTokenWindowMinutes=10080), "idle window is 10080 min"),
+        (lambda t: t.pop("refreshTokenWindowMinutes"), "idle window is unlimited min"),
     ],
 )
-def test_refresh_rule_with_long_lifetimes_gets_no_new_groups(
-    config: Path, token: dict[str, int], message: str, capsys
+def test_rule_with_long_refresh_lifetimes_gets_no_new_groups(
+    config: Path, option_b: bool, tamper, message: str, capsys
 ) -> None:
-    use_refresh_tokens(config)
+    if option_b:
+        use_refresh_tokens(config)
     okta = FakeOkta()
     assert run(okta, "apply", config) == 0
-    okta.find(*rules_path(okta), name=setup.RULE_NAME)["actions"]["token"].update(token)
+    tamper(okta.find(*rules_path(okta), name=setup.RULE_NAME)["actions"]["token"])
     add_group(config)
     capsys.readouterr()
     okta.writes.clear()

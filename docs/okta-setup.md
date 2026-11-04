@@ -14,7 +14,7 @@ If you manage Okta with Terraform, use [`terraform/okta/`](../terraform/okta/) i
 | Scope | `okta-mcp`, implicit consent, published in metadata |
 | `groups` claim | On the access token, always included; emits the **IDs** of Okta groups named `mcp-okta-*` |
 | Access policy `okta-mcp clients` | Applies only to the configured clients |
-| Policy rule `okta-mcp groups` | Authorization code only, role groups only, scopes `openid profile email offline_access okta-mcp`, access token ≤30 min; refresh-token lifetimes from `refresh_tokens` (option B) |
+| Policy rule `okta-mcp groups` | Authorization code only, role groups only, scopes `openid profile email offline_access okta-mcp`, access token ≤30 min; refresh tokens no longer than an access token under option A, or as set in `refresh_tokens` under option B |
 | Service app | API Services app, `private_key_jwt` with your public key, **Require DPoP on**, the configured `okta.*.read` grants, Read-only Administrator role |
 
 ## Before you start
@@ -48,7 +48,7 @@ The server works the same either way. It never sees a refresh token and checks e
 | Group removed or changed | Takes effect within one access-token lifetime | The same: Okta rebuilds the `groups` claim on every refresh, and refuses the refresh once the user is in no MCP group |
 | Cutting someone off for good | Remove them from the `mcp-okta-*` groups | Also clear their sessions and revoke their tokens (or deactivate the user). Okta keeps a refused refresh token, so it works again if any MCP group is restored before it expires |
 
-Pick A when sign-in every 30 minutes is acceptable, or when the clients run on shared or unmanaged machines. Pick B for day-long interactive use on managed devices. Either way, the rule must allow `offline_access`: Claude Code always requests it, and a rule without it fails sign-in with `no_matching_policy`. Under A, Okta grants the scope but issues no refresh token.
+Pick A when sign-in every 30 minutes is acceptable, or when the clients run on shared or unmanaged machines. Pick B for day-long interactive use on managed devices. Either way, the rule must allow `offline_access`: Claude Code always requests it, and a rule without it fails sign-in with `no_matching_policy`. Under A, Okta grants the scope but issues no refresh token. As a backstop, the rule's refresh-token lifetime and idle window are set to the access-token lifetime under A, so a client app that gets the refresh token grant by mistake gains nothing beyond one access-token lifetime.
 
 Under B, keep `access_token_minutes` well above 5: Claude Code refreshes tokens that are close to expiry, and with 5-minute tokens it refreshed on almost every call in testing. `idle_minutes` must be at least `access_token_minutes`, or the refresh token goes idle before the access token expires. Both bounds are checked before anything is sent to Okta (and at `terraform plan`).
 
@@ -92,7 +92,7 @@ An existing object that fails any check is not trusted, and nothing that depends
 
 An existing service app that passes every check still gets no new grants or admin role. Its public key is public, so anyone who can create apps could have set one up in advance for a Super Admin to empower. Missing grants or a missing role are reported as `manual`, with the app's ID and creation date. Confirm the app is yours, then grant them in the admin console.
 
-The rule must allow the authorization code grant only, so a rule that also lists the refresh token grant is reported; refresh tokens are turned on per client app. A client app's grants must match the config exactly: a refresh token grant under option A, or one without rotation under option B, makes the app untrusted. Under option B, a rule whose refresh tokens last longer, or stay valid while idle longer, than `refresh_tokens` allows is reported and gets no new groups. A rule without `offline_access` is reported, but still trusted, since it only blocks sign-in. The service app must hold exactly the configured public key, so during a key rotation `check` reports the second key as `manual` until the old one is removed. If two groups, apps or authorization servers share a configured name, the tool stops with an error instead of picking one.
+The rule must allow the authorization code grant only, so a rule that also lists the refresh token grant is reported; refresh tokens are turned on per client app. A client app's grants must match the config exactly: a refresh token grant under option A, or one without rotation (leeway ≤30 s) under option B, makes the app untrusted. Untrusted only means the tool adds nothing more to it; an app already in the access policy stays there, so remove it from the policy by hand if it shouldn't get tokens. A rule whose refresh tokens last longer, or stay valid while idle longer, than allowed (the access-token lifetime under A, `refresh_tokens` under B) is reported and gets no new groups. A rule without `offline_access` is reported, but still trusted, since it only blocks sign-in. The service app must hold exactly the configured public key, so during a key rotation `check` reports the second key as `manual` until the old one is removed. If two groups, apps or authorization servers share a configured name, the tool stops with an error instead of picking one.
 
 ## After setup
 

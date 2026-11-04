@@ -344,9 +344,12 @@ class Setup:
         grants = self.cfg.client_grants
         if sorted(settings.get("grant_types") or []) != grants:
             issues.append(f"grant types are {settings.get('grant_types')}, expected {grants}")
-        rotation = (settings.get("refresh_token") or {}).get("rotation_type")
-        if self.cfg.refresh_tokens and rotation != "ROTATE":
-            issues.append(f"refresh token rotation is {rotation}, expected ROTATE")
+        rotation = settings.get("refresh_token") or {}
+        if self.cfg.refresh_tokens and (
+            rotation.get("rotation_type") != "ROTATE"
+            or rotation.get("leeway", ROTATION["leeway"] + 1) > ROTATION["leeway"]
+        ):
+            issues.append(f"refresh token rotation is {rotation}, expected {ROTATION}")
         registered = set(settings.get("redirect_uris", []))
         if missing := sorted(set(client.redirect_uris) - registered):
             issues.append(f"redirect URIs missing: {missing}")
@@ -494,6 +497,13 @@ class Setup:
     def _rule(self, path: str) -> None:
         cfg = self.cfg
         refresh = cfg.refresh_tokens
+        # Under option A no client should hold the refresh_token grant; if one does anyway, its
+        # refresh tokens last no longer than an access token.
+        rt_max, idle_max = (
+            (refresh.lifetime_minutes, refresh.idle_minutes)
+            if refresh
+            else (cfg.access_token_minutes, cfg.access_token_minutes)
+        )
         what = f"policy rule {RULE_NAME!r}"
         group_ids = list(self.group_ids.values())
         rule = next((r for r in self.okta.get(path) if r["name"] == RULE_NAME), None)
@@ -517,9 +527,8 @@ class Setup:
                 "actions": {
                     "token": {
                         "accessTokenLifetimeMinutes": cfg.access_token_minutes,
-                        # Used only by clients with the refresh_token grant (option B).
-                        "refreshTokenLifetimeMinutes": refresh.lifetime_minutes if refresh else 0,
-                        "refreshTokenWindowMinutes": refresh.idle_minutes if refresh else 10080,
+                        "refreshTokenLifetimeMinutes": rt_max,
+                        "refreshTokenWindowMinutes": idle_max,
                     }
                 },
             }
@@ -546,19 +555,19 @@ class Setup:
             issues.append(
                 f"access tokens last {lifetime} min, expected ≤{cfg.access_token_minutes}"
             )
-        if refresh:
-            rt_lifetime = token.get("refreshTokenLifetimeMinutes", 0)
-            if not rt_lifetime or rt_lifetime > refresh.lifetime_minutes:
-                issues.append(
-                    f"refresh tokens last {rt_lifetime or 'unlimited'} min, "
-                    f"expected ≤{refresh.lifetime_minutes}"
-                )
-            window = token.get("refreshTokenWindowMinutes", 0)
-            if window > refresh.idle_minutes:
-                issues.append(
-                    f"refresh token idle window is {window} min, expected ≤{refresh.idle_minutes}"
-                )
-        if "offline_access" not in scopes and "*" not in scopes:
+        # Missing or 0 means unlimited.
+        rt_lifetime = token.get("refreshTokenLifetimeMinutes") or 0
+        if not rt_lifetime or rt_lifetime > rt_max:
+            issues.append(
+                f"refresh tokens last {rt_lifetime or 'unlimited'} min, expected ≤{rt_max}"
+            )
+        window = token.get("refreshTokenWindowMinutes") or 0
+        if not window or window > idle_max:
+            issues.append(
+                f"refresh token idle window is {window or 'unlimited'} min, expected ≤{idle_max}"
+            )
+        offline = "offline_access" in scopes or "*" in scopes
+        if not offline:
             # Narrower, not wider: reported, but the rule is still trusted.
             self.problem(what, "scope offline_access is not included; Claude Code can't sign in")
         people = conditions.get("people") or {}
@@ -579,7 +588,7 @@ class Setup:
                 f"add groups {missing}",
                 lambda: self.okta.request("PUT", f"{path}/{rule['id']}", rule),
             )
-        elif "offline_access" in scopes or "*" in scopes:
+        elif offline:
             self.ok(what)
 
     def service_app(self) -> None:

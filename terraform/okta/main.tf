@@ -82,9 +82,10 @@ resource "okta_auth_server_policy" "clients" {
   client_whitelist = [for app in okta_app_oauth.client : app.client_id]
 }
 
-# Refresh grants match an authorization_code rule; refresh is turned on per client app, and
-# the refresh lifetimes apply only to clients with that grant (option B). Claude Code requests
-# offline_access; without it, sign-in fails with no_matching_policy.
+# Refresh grants match an authorization_code rule; refresh is turned on per client app (option B).
+# Under option A, a client given the refresh_token grant anyway gets refresh tokens that last no
+# longer than an access token. Claude Code requests offline_access; without it, sign-in fails
+# with no_matching_policy.
 resource "okta_auth_server_policy_rule" "groups" {
   auth_server_id                 = okta_auth_server.mcp.id
   policy_id                      = okta_auth_server_policy.clients.id
@@ -94,8 +95,8 @@ resource "okta_auth_server_policy_rule" "groups" {
   scope_whitelist                = ["openid", "profile", "email", "offline_access", okta_auth_server_scope.mcp.name]
   group_whitelist                = [for g in okta_group.role : g.id]
   access_token_lifetime_minutes  = var.access_token_minutes
-  refresh_token_lifetime_minutes = var.refresh_tokens == null ? 0 : var.refresh_tokens.lifetime_minutes
-  refresh_token_window_minutes   = var.refresh_tokens == null ? 10080 : var.refresh_tokens.idle_minutes
+  refresh_token_lifetime_minutes = var.refresh_tokens == null ? var.access_token_minutes : var.refresh_tokens.lifetime_minutes
+  refresh_token_window_minutes   = var.refresh_tokens == null ? var.access_token_minutes : var.refresh_tokens.idle_minutes
 
   lifecycle {
     precondition {
