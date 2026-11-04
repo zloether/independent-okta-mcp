@@ -499,7 +499,7 @@ The SDK v2 ships resource-server helpers (`token_verifier`/`auth` settings, `get
 
 Client registration options, in order: pre-registered public clients (PKCE, exact redirect URIs); Okta DCR is admin-gated (anonymous registration gets `403`; V11), so not usable by MCP clients; Client ID Metadata Documents if/when supported **[unverified]**.
 
-Spike 0.5 results (V9–V11, [findings](spike-findings.md)): Okta serves OIDC discovery and both RFC 8414 URLs, so path-insertion-only clients work. Redirect URIs match exactly, port and host included (no RFC 8252 any-port loopback; `localhost` ≠ `127.0.0.1`), so a client needs a fixed, registered redirect URI and a configurable `client_id`. A **client compatibility matrix** is a required deliverable of step 4.6, once the server can start a real client's sign-in.
+Spike 0.5 results (V9–V11, [findings](spike-findings.md)): Okta serves OIDC discovery and both RFC 8414 URLs, so path-insertion-only clients work. Redirect URIs match exactly, port and host included (no RFC 8252 any-port loopback; `localhost` ≠ `127.0.0.1`), so a client needs a fixed, registered redirect URI and a configurable `client_id`. A **client compatibility matrix** is started in spike step 0.6 (a check server that answers with 401 + PRM) and completed against the real server in step 4.6.
 
 ### 8.4 Cross App Access / ID-JAG (Path B) — future
 
@@ -837,14 +837,14 @@ M3 is the least certain line. The step 1.5 inventory (`docs/coverage/report.md`)
 |---|---|---|---|
 | V1 | `groups` claim (IDs) present on access tokens; behavior past 100 groups | Core authz | **Verified 0.5:** IDs of the user's `mcp-okta-*` Okta groups only. Past 100 untested; fallback (service-app group lookup) designed only if needed |
 | V2 | Okta configuration for a self-hosted resource server as ID-JAG audience | Path B (future) | Deferred with Path B |
-| V3 | Client registration: pre-registered vs DCR vs CIMD | Onboarding | Start with pre-registered public clients; record in the compatibility matrix |
+| V3 | Client registration: pre-registered vs DCR vs CIMD | Onboarding | Start with pre-registered public clients; check each target client in spike 0.6 and record in the compatibility matrix |
 | V4 | `.manage ⇒ .read` scope implication | Capability gate | Verify; encode explicitly |
 | V5 | MCP SDK v2 and revision 2026-07-28: stateless per-request principal in low-level `on_*` handlers, `cacheScope`/`ttlMs` on list results, back-compat with 2025-11-25 clients, built-in resource-server auth helpers, `httpx` vs `httpx2` and the matching test mock. Facts from the r3 review post-date the author's knowledge and are unconfirmed | Implementation shape | Spike 0.4; pin SDK exact |
 | V6 | Endpoints that succeed under Read-only Administrator | Service-app role | Per-domain smoke in dev org |
 | V8 | Spec accuracy: wrong/missing `security` scopes (empty scopes are now a load error), operationIds that change between spec releases, parameters undocumented in the spec | Registry correctness | `okta_scopes_override` with comments; spec-update diff review; dev-org smoke |
 | V9 | Okta custom AS handling of RFC 8707 `resource` | Path A | **Verified 0.5:** ignored; `aud` is always the AS audience. Dedicated AS required |
 | V10 | Target clients that only try RFC 8414 path-insertion discovery | Which clients connect | **Verified 0.5:** Okta serves the path-insertion URL; no incompatibility |
-| V11 | Static `client_id` support; loopback redirects; DCR availability | Which clients connect | **Verified 0.5:** exact redirect match (port and host); DCR admin-gated. Per-client results in the 4.6 compatibility matrix |
+| V11 | Static `client_id` support; loopback redirects; DCR availability | Which clients connect | **Verified 0.5:** exact redirect match (port and host); DCR admin-gated. Per-client results in the compatibility matrix (0.6, 4.6) |
 | V12 | Path B confidential-client prerequisites; product naming/availability | Path B (future) | Deferred with Path B |
 | V13 | `uid` vs `sub` semantics; claim expression emitting IDs of Okta-mastered `mcp-okta-*` groups | Identity; authz | **Verified 0.5:** `uid` = user ID, `sub` = login; expression emits IDs |
 | V14 | Which "normal" endpoints return secrets | Data exposure | Dev-org review of every `get`/`list`; extend `scrub.yaml` |

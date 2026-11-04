@@ -77,7 +77,14 @@ Per-client discovery behavior goes in the compatibility matrix below.
 
 ## Client compatibility matrix
 
-Moved to step 4.6: a real MCP client only starts sign-in after the server answers `401` with Protected Resource Metadata, which needs the server from Phase 4. V9 and V11 above already fix two columns: `resource` handling doesn't matter, and the redirect URI must be fixed and registered exactly.
+Step 0.6. A real MCP client only starts sign-in after the server answers `401` with Protected Resource Metadata, so this uses the check server `spikes/oauth/client_check.py` instead of waiting for Phase 4. V9 and V11 above already fix two columns: `resource` handling doesn't matter, and the redirect URI must be fixed and registered exactly.
+
+Procedure, per client:
+
+1. Find how the client takes a fixed `client_id` and redirect port. Register that exact redirect URI on the spike public client (Okta admin console → the app → Sign-in redirect URIs).
+2. `uv run python spikes/oauth/client_check.py --issuer <issuer> --client-id <public client_id>` (port 8000, which matches the AS audience).
+3. Add `http://127.0.0.1:8000/mcp` to the client as an HTTP MCP server and start sign-in. Sign in as each test user.
+4. Call `whoami`: `uid` and `groups` should be that user's. Copy the server's request log lines (they show which discovery URLs the client tried; no tokens) into the row's evidence.
 
 | Client | Version | Discovery used | Static client ID | Redirect URI | `resource` sent | Result |
 |---|---|---|---|---|---|---|
