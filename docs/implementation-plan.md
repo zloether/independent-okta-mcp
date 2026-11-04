@@ -21,7 +21,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 
 | Phase | Steps | Status |
 |---|---|---|
-| 0. Bootstrap & spikes | 0.1–0.5 | ◐ |
+| 0. Bootstrap & spikes | 0.1–0.6 | ◐ |
 | 1. Spec & registry core | 1.1–1.6 | ☑ |
 | 2. Okta client & executor | 2.1–2.10 | ☐ |
 | 3. Policy & tool surface | 3.1–3.4 | ☐ |
@@ -34,6 +34,12 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 **Ordering note vs design §15:** the MCP server (Phase 4) comes *before* bulk registry authoring (Phase 5), so two pilot domains run end to end early and every later registry entry can be smoke-tested through the real server.
 
 **Critical path:** 0.1 → 1.x → 2.x → 3.x → 4.x. The Okta dev-org spike (0.5) runs in parallel; only live checks (2.2 live item, 4.1 manual, 4.6) wait on it.
+
+**Thin slice first (2026-11-03).** The pilot domains run in a real client over stdio before the rest of Phase 2 is built, so the T1 tool surface is tried on a model early. Slice order:
+
+> 2.1 → 2.2 → 2.3 → 2.6 → 2.5 (`link` only) → 2.7 → 2.8 (no cursor) → 3.1 → 3.2 → 2.10 (no resolver) → 3.3 → **4.1**
+
+Then: 2.4, the rest of 2.5 (`body_links`, `link_or_body`), 2.9, cursor resume in 2.8, the resolver in 2.10, 3.4, 4.2 onward. Slice parts of a step are marked **(slice)**; the step is ☑ only when all of it is done. 🔒 reviews run on each slice part as it merges, not deferred.
 
 ---
 
@@ -103,6 +109,16 @@ Helpers under `spikes/okta/` (deleted with `spikes/sdk/` at end of 4.2). Run: `u
 - [x] Write `docs/design/spike-findings.md` (one section per V-item: result, evidence, design impact)
 
 Verify: findings doc complete for V1, V9, V10, V11, V13, V15; design doc updated where results differ.
+
+### 0.6 Client OAuth check (V3) ◐
+Design: §8.3, §16 V3 · Depends: 0.4, 0.5 · **Needs: real MCP clients and dev-org admin access (user-driven)**
+Pulled forward from 4.6: if a target client can't sign in with a pre-registered `client_id` and a fixed redirect URI (V11), Path A doesn't work for it, and that is cheaper to learn before Phases 2–4. `spikes/oauth/client_check.py` (deleted with `spikes/sdk/` at end of 4.2) serves 401 + PRM at both URLs, validates real tokens from the spike AS, and exposes one `whoami` tool. Run: `uv run pytest spikes/oauth`.
+- [x] Check server and tests (mock JWKS: valid token, wrong `aud`/`iss`, expired, missing `uid`, disallowed `cid`, missing scope → 403, `HS256`/`none`)
+- [ ] For each target client: register its redirect URI on the spike public client, connect to `http://127.0.0.1:8000/mcp`, sign in as each test user, call `whoami` (Claude Code done)
+- [x] Refresh tokens tested both ways (A: none; B: rotating); both supported by `scripts/okta-setup.py` and `terraform/okta/` via `refresh_tokens`, A the default; `offline_access` added to the rule in both
+- [ ] Fill the compatibility matrix in [`design/spike-findings.md`](design/spike-findings.md) (discovery URLs from the server log, client-ID and redirect configuration, scopes requested, result)
+
+Verify: at least Claude Code completes sign-in and `whoami` shows the user's `uid` and group ID; every target client has a matrix row. A client that can't connect is a design decision (drop it, or revisit §8.3), recorded in the Decisions log.
 
 ---
 
@@ -195,7 +211,8 @@ Verify: `uv run pytest tests/okta/test_ratelimit.py`
 
 ### 2.5 Pagination 🔒 ☐
 Design: §6.5, §7.2 · Depends: 2.3
-- [ ] `okta/paginate.py`: async generator yielding `(item, page_state, index_in_page)`; modes `link`, `body_links`, `link_or_body`; `items_key`; next link must match origin **and** expanded path after RFC 3986 normalisation
+- [ ] **(slice)** `okta/paginate.py`: async generator yielding `(item, page_state, index_in_page)`; mode `link`; next link must match origin **and** expanded path after RFC 3986 normalisation
+- [ ] Modes `body_links`, `link_or_body`; `items_key`
 - [ ] Tests: multi-page fixtures for each mode and a wrapped response; cross-origin / cross-path / encoding-variant next link raises; empty page stops; each hop goes through `client.get` (fresh DPoP proof)
 
 Verify: `uv run pytest tests/okta/test_paginate.py`; `/security-review`.
@@ -218,7 +235,7 @@ Verify: `uv run pytest tests/exec/test_output.py`
 
 ### 2.8 Envelope & budgets ☐
 Design: §7.1, §7.2 · Depends: 2.5, 2.7
-- [ ] `exec/envelope.py`: consume paginator item-by-item; stop on items / post-select bytes / deadline; `truncated`, `truncation_reason`, `untrusted: true`; single-resource shape; `result_too_large`
+- [ ] **(slice)** `exec/envelope.py`: consume paginator item-by-item; stop on items / post-select bytes / deadline; `truncated`, `truncation_reason`, `untrusted: true`; single-resource shape; `result_too_large`. No `next_cursor` until 2.9
 - [ ] Tests: cap mid-page, byte cap, deadline, non-list oversize
 
 Verify: `uv run pytest tests/exec/test_envelope.py`
@@ -232,7 +249,7 @@ Verify: `uv run pytest tests/exec/test_cursor.py`; `/security-review`.
 
 ### 2.10 Executor & resolver 🔒 ☐
 Design: §5.5, §5.6 · Depends: 2.4, 2.6, 2.9
-- [ ] `exec/executor.py`: (principal, tool, command, args, select, strip_links, limit, cursor) → envelope or structured error; policy check (incl. `arg_rules`) before any resolver or Okta request; deadline wrapper; maps exceptions to §5.5 codes
+- [ ] **(slice)** `exec/executor.py`: (principal, tool, command, args, select, strip_links, limit, cursor) → envelope or structured error; policy check (incl. `arg_rules`) before any resolver or Okta request; deadline wrapper; maps exceptions to §5.5 codes. Cursor argument rejected until 2.9
 - [ ] `exec/resolve.py`: `user_id` only — `00u…` ID short-circuit, else exact `getUser` lookup, `not_found` otherwise; cached per call
 - [ ] `groups list` with `q`: Okta doesn't page `q`, so the forced `limit=200` (`page_size`) cuts results with no next link and no sign of truncation (1.6 review). Don't send `limit` when `q` is passed (or mark the result truncated); needs a registry field or executor rule, test with a mocked 250-item response
 - [ ] Tests: pilot commands end to end against mocked Okta; each error code reachable; forbidden call records no Okta request (no resolver oracle)
@@ -282,13 +299,14 @@ Design: §8.6 · Depends: 2.10, 3.3, 0.4
 - [ ] `auth/devmode.py`: `MCP_DEV_MODE` + principal file; refuse when `MCP_ENV=production`
 - [ ] `okta-mcp --stdio` entrypoint wiring executor + tools + policy; HTTP entrypoint refuses to start when `MCP_DEV_MODE` is set
 - [ ] Manual (after 0.5): connect Claude Code (or Inspector) to the dev org; run every pilot command
+- [ ] T1 check: give the model a few real helpdesk-style tasks on the pilot domains; record tokens per call and whether it reads tables, uses `okta_help` and `select` correctly; revise T1 decisions in the Decisions log before 2.9 and Phase 5 build on them
 
-Verify: refusal tests pass; pilot commands return real data from the dev org; `/security-review`.
+Verify: refusal tests pass; pilot commands return real data from the dev org; T1 check recorded; `/security-review`.
 
 ### 4.2 HTTP app ☐
 Design: §4, §5.2, §11.4 · Depends: 4.1, 0.4
 - [ ] `app.py`: stateless Streamable HTTP at `/mcp`, `/healthz`, `/readyz`; per-principal list results with `cacheScope: "private"` + `ttlMs`; `Origin` validation (reject a present `Origin` not in `MCP_ALLOWED_ORIGINS`); `MCP_TRUST_PROXY`
-- [ ] Delete `spikes/sdk/`
+- [ ] Delete `spikes/sdk/` and `spikes/oauth/`
 - [ ] Tests: health endpoints; bad Origin rejected, missing Origin allowed; `cacheScope` present
 
 Verify: `uv run pytest tests/test_app.py`
@@ -314,11 +332,12 @@ Design: §14 (Integration, Protocol) · Depends: 4.4
 Verify: `uv run pytest tests/integration/`
 
 ### 4.6 Real-client check (Path A) ☐
-Design: §8.3 · Depends: 4.5, 0.5
+Design: §8.3 · Depends: 4.5, 0.5, 0.6
 - [ ] Run locally behind a TLS proxy (e.g. Caddy) or tunnel; connect each target MCP client via Path A (auth is always on, so exposure is safe)
-- [ ] Start `docs/compatibility-matrix.md` (client × discovery × registration × works/limitations)
+- [ ] Move the 0.6 matrix from `design/spike-findings.md` to `docs/compatibility-matrix.md` (client × discovery × registration × works/limitations) and re-run each client against the real server
+- [ ] Under option B, the server accepts refreshed tokens with no new sign-in (Claude Code)
 
-Verify: at least one real client completes OAuth and calls a pilot command; matrix started.
+Verify: at least one real client completes OAuth and calls a pilot command; matrix moved and re-run.
 
 ---
 
@@ -394,6 +413,7 @@ Verify: `docker compose -f docker/compose.example.yaml config` validates; bring-
 ### 7.3 Runbook ☐
 Design: §11.4, Appendix C · Depends: 7.2, 0.5
 - [ ] `docs/runbook.md`: Okta setup (from spike findings), exposure decision, deploy, policy changes (restart), key rotation, kill switch, audit log handling
+- [ ] Refresh tokens and user removal (spike 0.6): choosing A or B (link [`okta-setup.md`](okta-setup.md#refresh-tokens-option-a-or-b)); removing a user is group removal under A, plus clearing sessions with `oauthTokens=true` (or deactivating the user) under B; under B the Global Session Policy doesn't bound refresh chains, so `lifetime_minutes` is the re-sign-in and MFA interval; failed refreshes have no `User` target in the System Log, so find them by client ID
 
 Verify: someone (or a fresh Claude session) follows the runbook on a clean machine to a working `/readyz`.
 
@@ -407,7 +427,7 @@ Verify: someone (or a fresh Claude session) follows the runbook on a clean machi
 
 ### 8.2 Compatibility matrix & E2E ☐
 - [ ] Complete `docs/compatibility-matrix.md` for all target clients (Path A)
-- [ ] E2E checklist: groups claim; per-role tool lists; revocation after token expiry; 429 behavior under load
+- [ ] E2E checklist: groups claim; per-role tool lists; revocation (A: group removal takes effect within one access-token lifetime; B: group removal and role changes at the next refresh, token revocation ends the chain, an expired Okta session doesn't); 429 behavior under load
 
 ### 8.3 Documentation pass ☐
 - [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed)
@@ -437,7 +457,7 @@ Verify: all phases ☑; CI green on tag.
 | ID | Question | Blocks | Resolved in |
 |---|---|---|---|
 | V1 | `groups` claim (IDs) on access tokens; >100 groups | 3.2, 4.3 | 0.5 ☑ (>100 untested) |
-| V3 | Client registration: pre-registered vs DCR vs CIMD | 4.6 | 0.5 / 4.6 |
+| V3 | Client registration: pre-registered vs DCR vs CIMD | 0.6 | 0.6 ◐ |
 | V4 | `.manage ⇒ .read` implication | 3.2 | 3.2 (Okta docs) |
 | V5 | SDK v2 / 2026-07-28: stateless per-request principal, `cacheScope`, back-compat, auth helpers, `httpx` vs `httpx2` | 0.1 deps, 2.3, 4.2 | 0.4 ☑ (see Decisions log) |
 | V6 | Read-only Admin sufficiency per domain | 5.x | 5.x |
@@ -489,3 +509,7 @@ Verify: all phases ☑; CI green on tag.
 | 2026-11-02 | 1.5 | `/code-review` fixes: (1) the catalogue loads with the registry's duplicate-key loader (now public `UniqueKeyLoader`), so a repeated command can't silently drop one. (2) Excluded entries' operations must exist in the spec too (both are indexed GETs). (3) `paginate` and `items_key` are checked against the pinned spec with the loader's rules, so a spec update that changes them fails the catalogue test. (4) YAML, file and spec errors exit 2 with a message. (5) `load_script` lives in `tests/scripts/_load.py`, not `conftest.py` as the step said: importing a conftest by name breaks once a second conftest exists. (6) Counts corrected: 12 `items_key`, not 13; 200 commands are 198 registry entries. Not changed: non-string YAML keys crash rather than report (hand-edited, reviewed file), and `run()` tests reload the spec (~2 s) | 8 new tests; 222 tests |
 | 2026-11-03 | 1.6 | Pilot registries: `network-zones` (2 commands) and `groups` (11; catalogue `search` is `list` with `q`, T1 D3). Classes: groups/zones/rules/apps `org-config`; `get-members`, `get-owners` `pii`; the four role commands `admin-roles` (sensitive, `okta.roles.read`). **Free-form `filter`/`search`/`q` all `raises_sensitivity_to: sensitive`** (fail closed; the arg-rule vocabulary has no "reviewed, stays normal" option), so under the §9.3 example policy group lookup by name needs `include_sensitive` — revisit with 3.1/3.2 if that's too strict. `expand` closed with `allowed_values` (single values only; comma-joined lists are rejected). `fields` on `listGroups` not exposed (`select` covers it). ID patterns: group `^00g…{17}$`, zone `^nzo…{17}$`, group rule `^0pr…{17}$`; role assignment IDs are base32 role types or `irb…`/`ra…`, so `^[A-Za-z0-9]{1,64}$`. `page_size` 200, 20 on role targets (spec max). `list` is not resumable with `q` (unpaged). Synopsis cap forced short summaries on the role-target commands | Coverage report: both domains complete (14 done); 20 new tests; 242 tests |
 | 2026-11-03 | 1.6 | `/security-review`: no findings. `/code-review` fixes: (1) `groups list` `expand: stats` returns `_embedded.stats.hasAdminPrivlege` (admin-role data) from a normal command; `expand` now `raises_sensitivity_to: sensitive`. (2) `pattern` used Python `$`, which matches before a final `\n`, so an ID plus newline passed every anchored pattern; `registry/schema.py` now checks patterns with ECMA-262 `$` (unescaped `$` outside a class → `\Z`). (3) The path-injection test now requires the error to name the bad arg. (4) `list-role-app-targets` view gains `id`. **V14 for `groups get-apps`:** `org-config` kept; the spec says `client_secret` is only shown on create/update, and `credentials.oauthClient.client_secret` stays on the 2.7 scrub list as backstop; confirm with a live fixture in 5.x. Deferred: `q` vs `page_size` (2.10), shared spec fixture (post-v1 backlog). Second `/security-review` (low): the model's load-time pattern check used plain `re.compile`, so a pattern the `\Z` translation breaks (`[]$]`) loaded and then raised on first use; `ecma_pattern` moved to `registry/model.py` and the load check uses it | 4 new tests; 246 tests |
+| 2026-11-03 | 0.6 | Project review: architecture stands. Client sign-in (V3) moves from 4.6 to a new spike step 0.6, and Phase 2–4 work runs as a thin slice to stdio dev mode (see the ordering note at the top) | V3 is the one unknown that could block Path A; T1 decisions need a real model before cursors and Phase 5 build on them |
+| 2026-11-03 | 0.6 | Claude Code signs in (both test users). It requests `offline_access`, so the rule now allows it in `scripts/okta-setup.py` and `terraform/okta/` (without it: `no_matching_policy`). **Refresh tokens are an admin choice, not a server design point:** A (none) is the default; B (`refresh_tokens: {idle_minutes, lifetime_minutes}`, ≤24 h) adds the refresh grant with rotation on the client apps and bounds the rule's refresh lifetimes. Group removal and role changes take effect within one access-token lifetime under both; under B a refused refresh token survives, so permanent removal also revokes tokens. Design §8.3, §9.6, Appendix C; guide in `docs/okta-setup.md` | Spike findings (A, B, group removal and move); 11 new tests; 257 tests |
+| 2026-11-03 | 0.6 | `/security-review`: no findings. `/code-review` fixes: (1) adding `offline_access` removed the accidental refresh block under A, so the A rule now caps refresh lifetime and idle window at `access_token_minutes` and `check` flags longer ones (a client app given the refresh grant by hand gains at most one access-token lifetime); (2) a missing idle window counts as unlimited; (3) B checks rotation leeway ≤30 s; (4) the docs say "untrusted" doesn't remove an app from the access policy; spike-findings dates marked UTC. Not flagged: extra hand-registered clients in the access policy (documented in Limits) | 7 new tests; 264 tests |
+| 2026-11-03 | 0.6 | Okta sessions vs refresh tokens (B): clearing sessions without `oauthTokens=true` leaves the refresh chain working; with it, the next refresh fails `invalid_refresh_token`. So the Global Session Policy doesn't bound a refresh chain, and `lifetime_minutes` is the effective re-sign-in (and MFA) interval. Runbook in `docs/okta-setup.md` names the exact revocation | Spike findings (System Log 03:33–03:36 UTC) |

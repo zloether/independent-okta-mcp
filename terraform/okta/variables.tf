@@ -41,6 +41,25 @@ variable "access_token_minutes" {
   }
 }
 
+variable "refresh_tokens" {
+  description = "Option B: rotating refresh tokens for the MCP clients. null (the default) is option A: no refresh tokens. See docs/okta-setup.md."
+  type = object({
+    idle_minutes     = number
+    lifetime_minutes = number
+  })
+  default = null
+
+  validation {
+    condition = var.refresh_tokens == null || try(
+      var.refresh_tokens.idle_minutes >= 5
+      && var.refresh_tokens.idle_minutes <= var.refresh_tokens.lifetime_minutes
+      && var.refresh_tokens.lifetime_minutes <= 1440,
+      false
+    )
+    error_message = "Need 5 <= idle_minutes <= lifetime_minutes <= 1440."
+  }
+}
+
 variable "groups" {
   description = "Role groups; their IDs go into policy.yaml."
   type        = set(string)
