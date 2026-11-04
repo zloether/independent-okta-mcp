@@ -7,11 +7,11 @@ the registry and the pinned spec 2026.42.1. Do not edit; rerun the script.
 
 | Kind | Commands | Done |
 |---|---|---|
-| simple | 170 | 0 |
+| simple | 170 | 14 |
 | resolved | 30 | 0 |
 | composite (post-v1) | 4 | — |
 | excluded | 2 | — |
-| **total** | **206** | **0** |
+| **total** | **206** | **14** |
 
 Gotcha endpoints (record a fixture): 5, 5 to do
 
@@ -29,11 +29,11 @@ Gotcha endpoints (record a fixture): 5, 5 to do
 | device-integrations | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
 | device-posture | 3 | 3 | 0 | 0 | 0 | 0 | 3 |
 | devices | 5 | 5 | 0 | 0 | 0 | 0 | 5 |
-| groups | 12 | 12 | 0 | 0 | 0 | 0 | 12 |
+| groups | 12 | 12 | 0 | 0 | 0 | 12 | 0 |
 | iam | 20 | 20 | 0 | 0 | 0 | 0 | 20 |
 | identity-providers | 12 | 12 | 0 | 0 | 0 | 0 | 12 |
 | logs | 4 | 1 | 0 | 3 | 0 | 0 | 1 |
-| network-zones | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
+| network-zones | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
 | oauth-client-roles | 4 | 4 | 0 | 0 | 0 | 0 | 4 |
 | org-settings | 14 | 13 | 0 | 0 | 1 | 0 | 13 |
 | policies | 6 | 6 | 0 | 0 | 0 | 0 | 6 |
@@ -55,11 +55,9 @@ Gotcha endpoints (record a fixture): 5, 5 to do
 - **device-integrations**: list, get
 - **device-posture**: list, get, list-defaults
 - **devices**: list, get, get-users, get-os-accounts, get-os-account
-- **groups**: list, get, get-members, search, get-apps, get-owners, list-rules, get-rule, list-roles, get-role, list-role-app-targets, list-role-group-targets
 - **iam**: list, get, list-permissions, get-permission, list-assignees, list-resource-sets, get-resource-set, list-bindings, get-binding, list-binding-members, get-binding-member, list-resources, get-resource, list-bundles, get-bundle, list-bundle-entitlements, list-bundle-entitlement-values, get-opt-in-status, list-role-subscriptions, get-role-subscription
 - **identity-providers**: list, get, list-keys, get-key, list-csrs, get-csr, list-signing-keys, get-active-signing-key, get-signing-key, list-users, get-user, list-tokens
 - **logs**: list
-- **network-zones**: list, get
 - **oauth-client-roles**: list, get, list-app-targets, list-group-targets
 - **org-settings**: get, list-contact-types, get-contact, get-captcha-settings, get-third-party-admin-setting, get-preferences, get-communication-settings, get-support-settings, list-support-cases, get-auto-assign-admin-app-setting, get-client-privileges-setting, list-yubikey-tokens, get-yubikey-token
 - **policies**: list, get, get-rules, get-rule, list-mappings, get-mapping

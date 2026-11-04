@@ -1,0 +1,19 @@
+domain: network-zones
+description: Read Okta network zones (IP, dynamic and enhanced dynamic) (read-only).
+commands:
+  list:
+    operation: listNetworkZones
+    summary: List network zones
+    args:
+      filter: {query: filter, arg_rule: {raises_sensitivity_to: sensitive}}
+    paginate: link
+    page_size: 200
+    view: [id, name, type, status, usage]
+    data_classes: [org-config]
+
+  get:
+    operation: getNetworkZone
+    summary: Get a network zone by ID
+    args:
+      zone: {path_param: zoneId, pattern: "^nzo[A-Za-z0-9]{17}$"}
+    data_classes: [org-config]

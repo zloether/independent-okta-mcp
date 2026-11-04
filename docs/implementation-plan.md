@@ -22,7 +22,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 | Phase | Steps | Status |
 |---|---|---|
 | 0. Bootstrap & spikes | 0.1–0.5 | ◐ |
-| 1. Spec & registry core | 1.1–1.6 | ◐ |
+| 1. Spec & registry core | 1.1–1.6 | ☑ |
 | 2. Okta client & executor | 2.1–2.10 | ☐ |
 | 3. Policy & tool surface | 3.1–3.4 | ☐ |
 | 4. MCP server & auth | 4.1–4.6 | ☐ |
@@ -152,10 +152,10 @@ Design: §5.6 · Depends: 1.2
 
 Verify: report generated; every catalogue entry has a kind; Decisions log records the counts and the new estimate.
 
-### 1.6 Pilot registries ☐
+### 1.6 Pilot registries ☑
 Design: §6.2 · Depends: 1.3, 1.4
-- [ ] `registry/network-zones.yaml` and `registry/groups.yaml`, fully classified, `pattern` on every ID path param
-- [ ] Loader + schema tests pass with real files
+- [x] `registry/network-zones.yaml` and `registry/groups.yaml`, fully classified, `pattern` on every ID path param
+- [x] Loader + schema tests pass with real files
 
 Verify: `uv run pytest`; coverage report shows both domains complete.
 
@@ -203,7 +203,8 @@ Verify: `uv run pytest tests/okta/test_paginate.py`; `/security-review`.
 ### 2.6 URL builder & path-injection controls 🔒 ☐
 Design: §6.4 · Depends: 1.4, 2.3
 - [ ] `exec/params.py`: map validated args → path params (reject empty, `.`, `..`, >256 chars, and any `/ \ % ? #`, whitespace or control character; enforce registry/spec `pattern`; then encode with no safe chars) and query params mapping
-- [ ] Injection regression suite generated over **every path param of every registry command** with the design §6.4 payload set (incl. `a/../b`, `a%2F..%2Fb`, `a\..\b`)
+- [ ] Trailing newline: the schema rejects an ID plus `\n` since 1.6 (`$` checked with ECMA-262 semantics); `params.py`'s whitespace/control-character rejection must catch it too, independently of `pattern`
+- [ ] Injection regression suite generated over **every path param of every registry command** with the design §6.4 payload set (incl. `a/../b`, `a%2F..%2Fb`, `a\..\b`, a valid ID plus trailing `\n`)
 - [ ] Assert rejected payloads produce `invalid_arguments` and **no recorded request**; accepted values produce a URL whose origin == `OKTA_ORG_URL` and whose path matches the template
 
 Verify: `uv run pytest tests/exec/test_params.py`; `/security-review`.
@@ -233,6 +234,7 @@ Verify: `uv run pytest tests/exec/test_cursor.py`; `/security-review`.
 Design: §5.5, §5.6 · Depends: 2.4, 2.6, 2.9
 - [ ] `exec/executor.py`: (principal, tool, command, args, select, strip_links, limit, cursor) → envelope or structured error; policy check (incl. `arg_rules`) before any resolver or Okta request; deadline wrapper; maps exceptions to §5.5 codes
 - [ ] `exec/resolve.py`: `user_id` only — `00u…` ID short-circuit, else exact `getUser` lookup, `not_found` otherwise; cached per call
+- [ ] `groups list` with `q`: Okta doesn't page `q`, so the forced `limit=200` (`page_size`) cuts results with no next link and no sign of truncation (1.6 review). Don't send `limit` when `q` is passed (or mark the result truncated); needs a registry field or executor rule, test with a mocked 250-item response
 - [ ] Tests: pilot commands end to end against mocked Okta; each error code reachable; forbidden call records no Okta request (no resolver oracle)
 
 Verify: `uv run pytest tests/exec/`; `/security-review` (resolver).
@@ -426,6 +428,7 @@ Verify: all phases ☑; CI green on tag.
 | Per-bucket 429 handling, proactive slowdown | §6.5, R6 | Only if logged 429s show starvation |
 | `/metrics` | §13 | |
 | ai-agents domain with a separate, risk-accepted credential | §10 | Vendors the workload-principals spec |
+| One session-scoped `spec` (and `registry`) fixture in `tests/conftest.py` instead of a module-scoped `load_spec()` per test module | §14 | Only if suite time or the flaky `test_load_time_under_two_seconds` gets worse; each module re-parses the spec (~1–2 s) (1.6 review) |
 
 ---
 
@@ -484,3 +487,5 @@ Verify: all phases ☑; CI green on tag.
 | 2026-11-02 | 1.4 | `/code-review` fixes: (1) a registry `pattern` on an array arg was set on the array and checked nothing; `pattern` and `allowed_values` now go on `items`, and the spec-conflict check looks there too. (2) `type` could replace a spec type and widen the arg (`type: string` on `labels` accepted any string); it now only fills a missing type. (3) Duplicate names in `one_of_required` made a command uncallable; now a load error. (4) Unknown key names in `invalid_arguments` were echoed unbounded; now cut to 40 chars, at most 20. (5) Help text now states item constraints (`each min length 20`). (6) Design §5.1/§5.3 still said `okta_help` returns JSON Schema; fixed (merging `okta_status` stays with 3.3). (7) `integer` args accepted `5.0` (JSON Schema 2020-12); the validator's type checker now takes only non-bool `int`. (8) The validator is built once at load (`Command.validator`), not per call | 7 new tests, each failing on the pre-fix code; 191 tests |
 | 2026-11-02 | 1.5 | Catalogue (`docs/coverage/catalogue.yaml`, okta-skills commit `d6c8725`, minus ai-agents and terraform): **206 commands in 23 domains: 170 simple, 30 resolved, 4 composite, 2 excluded**. Extracted once by a script in a scratch directory outside the repo, then kinds, `items_key`, gotchas and exclusions set by hand against the pinned spec. Resolved = every `users` command taking a user except `get` (okta-skills resolves logins there too). Composite: `logs timeline`/`login-failures`/`diagnose` and `apps get-saml-metadata` (XML, not JSON). Excluded: `getAerialConsent` (`okta.orgs.manage`), `listSupportedSecurityQuestions` (`apiToken` only). `paginate` comes from the spec (53 paginate, 10 of them `link_or_body`; 12 need `items_key`). Variants (users/groups `search`, `logs list` filters) share one operation, so the report counts an entry done when its domain registers each of its operations, not by command name (check 5). **M3 re-estimated 8–10 d → 7–9 d** (total ≈32–35 d): 200 commands (198 registry entries), not ~230, and only 5 (2.5%) gotcha endpoints need a recorded fixture. **V8 gotchas:** `listJwk` and `listOAuth2ResourceServerJsonWebKeys` return `{"keys": [...]}`, so Phase 5 extends `response_override` to a wrapped object with `items_key`; `listAuthenticatorEnrollments` (list, done in 1.3); `listActiveIdentityProviderSigningKey` and `listRefreshTokensForAuthorizationServerAndClient` are noted in the catalogue. 118 of 319 spec GETs are in neither catalogue nor registry (listed in the report, informational). `ref_target` in `registry/spec.py` is now shared with `update-spec.py` (with `SpecError`); `tests/scripts/_load.py` has `load_script` | Report generated; 23 new tests; 214 tests |
 | 2026-11-02 | 1.5 | `/code-review` fixes: (1) the catalogue loads with the registry's duplicate-key loader (now public `UniqueKeyLoader`), so a repeated command can't silently drop one. (2) Excluded entries' operations must exist in the spec too (both are indexed GETs). (3) `paginate` and `items_key` are checked against the pinned spec with the loader's rules, so a spec update that changes them fails the catalogue test. (4) YAML, file and spec errors exit 2 with a message. (5) `load_script` lives in `tests/scripts/_load.py`, not `conftest.py` as the step said: importing a conftest by name breaks once a second conftest exists. (6) Counts corrected: 12 `items_key`, not 13; 200 commands are 198 registry entries. Not changed: non-string YAML keys crash rather than report (hand-edited, reviewed file), and `run()` tests reload the spec (~2 s) | 8 new tests; 222 tests |
+| 2026-11-03 | 1.6 | Pilot registries: `network-zones` (2 commands) and `groups` (11; catalogue `search` is `list` with `q`, T1 D3). Classes: groups/zones/rules/apps `org-config`; `get-members`, `get-owners` `pii`; the four role commands `admin-roles` (sensitive, `okta.roles.read`). **Free-form `filter`/`search`/`q` all `raises_sensitivity_to: sensitive`** (fail closed; the arg-rule vocabulary has no "reviewed, stays normal" option), so under the §9.3 example policy group lookup by name needs `include_sensitive` — revisit with 3.1/3.2 if that's too strict. `expand` closed with `allowed_values` (single values only; comma-joined lists are rejected). `fields` on `listGroups` not exposed (`select` covers it). ID patterns: group `^00g…{17}$`, zone `^nzo…{17}$`, group rule `^0pr…{17}$`; role assignment IDs are base32 role types or `irb…`/`ra…`, so `^[A-Za-z0-9]{1,64}$`. `page_size` 200, 20 on role targets (spec max). `list` is not resumable with `q` (unpaged). Synopsis cap forced short summaries on the role-target commands | Coverage report: both domains complete (14 done); 20 new tests; 242 tests |
+| 2026-11-03 | 1.6 | `/security-review`: no findings. `/code-review` fixes: (1) `groups list` `expand: stats` returns `_embedded.stats.hasAdminPrivlege` (admin-role data) from a normal command; `expand` now `raises_sensitivity_to: sensitive`. (2) `pattern` used Python `$`, which matches before a final `\n`, so an ID plus newline passed every anchored pattern; `registry/schema.py` now checks patterns with ECMA-262 `$` (unescaped `$` outside a class → `\Z`). (3) The path-injection test now requires the error to name the bad arg. (4) `list-role-app-targets` view gains `id`. **V14 for `groups get-apps`:** `org-config` kept; the spec says `client_secret` is only shown on create/update, and `credentials.oauthClient.client_secret` stays on the 2.7 scrub list as backstop; confirm with a live fixture in 5.x. Deferred: `q` vs `page_size` (2.10), shared spec fixture (post-v1 backlog). Second `/security-review` (low): the model's load-time pattern check used plain `re.compile`, so a pattern the `\Z` translation breaks (`[]$]`) loaded and then raised on first use; `ecma_pattern` moved to `registry/model.py` and the load check uses it | 4 new tests; 246 tests |

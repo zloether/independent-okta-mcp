@@ -416,6 +416,37 @@ def test_pattern_on_array_applies_to_items(spec: SpecIndex) -> None:
     validate_args(cmd, {"labels": ["lbco3v6xlwdtEX2il1d6"]})
 
 
+def test_pattern_dollar_ends_the_input(spec: SpecIndex) -> None:
+    # ECMA-262 `$`, not Python's, which also matches before a final newline.
+    get = _one(spec, GET_GROUP)
+    assert (
+        _invalid(get, {"group": "00g1emaKYZTWRYYRRTSK\n"}) == f"arg 'group' must match {GROUP_ID}"
+    )
+    # A `$` escaped or inside a class is literal.
+    literal = r"^a[$]\$$"
+    op = {
+        "operationId": "getX",
+        "parameters": [
+            {"name": "x", "in": "query", "schema": {"type": "string", "pattern": literal}}
+        ],
+        "security": [{"oauth2": ["x.read"]}],
+        "responses": {},
+    }
+    index = build_index({"info": {"version": "1"}, "paths": {"/x": {"get": op}}})
+    cmd = _one(
+        index,
+        {
+            "operation": "getX",
+            "summary": "X",
+            "args": {"x": {"query": "x"}},
+            "data_classes": ["pii"],
+        },
+    )
+    validate_args(cmd, {"x": "a$$"})
+    for bad in ("a$$\n", "a$"):
+        assert _invalid(cmd, {"x": bad}) == f"arg 'x' must match {literal}"
+
+
 def test_pattern_on_array_cannot_replace_item_pattern() -> None:
     schema = {"type": "array", "items": {"type": "string", "pattern": "^a$"}}
     op = {
