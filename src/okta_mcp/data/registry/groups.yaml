@@ -1,0 +1,123 @@
+domain: groups
+description: Read Okta groups, members, owners, app assignments, rules and admin roles (read-only).
+commands:
+  list:
+    operation: listGroups
+    summary: List or search groups
+    args:
+      q: {query: q, arg_rule: {raises_sensitivity_to: sensitive}}
+      filter: {query: filter, arg_rule: {raises_sensitivity_to: sensitive}}
+      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      # `stats` includes `hasAdminPrivlege`, admin-role data.
+      expand:
+        query: expand
+        allowed_values: [stats, app]
+        arg_rule: {raises_sensitivity_to: sensitive}
+      sort_by: {query: sortBy}
+      sort_order: {query: sortOrder, allowed_values: [asc, desc]}
+    paginate: link
+    page_size: 200
+    # `q` is unpaged (at most 300 results); a re-fetch need not return the same page.
+    resumable: {unless_args: [q]}
+    view: [id, type, profile.name]
+    data_classes: [org-config]
+
+  get:
+    operation: getGroup
+    summary: Get a group by ID
+    args:
+      group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+    data_classes: [org-config]
+
+  get-members:
+    operation: listGroupUsers
+    summary: Users in a group
+    args:
+      group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      expand: {query: expand, allowed_values: [group-rules, login-status-info]}
+    paginate: link
+    page_size: 200
+    view: [id, status, profile.login]
+    data_classes: [pii]
+
+  get-apps:
+    operation: listAssignedApplicationsForGroup
+    summary: Apps assigned to a group
+    args:
+      group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+    paginate: link
+    page_size: 200
+    view: [id, label, status, signOnMode]
+    data_classes: [org-config]
+
+  get-owners:
+    operation: listGroupOwners
+    summary: Owners of a group
+    args:
+      group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+      filter: {query: filter, arg_rule: {raises_sensitivity_to: sensitive}}
+    paginate: link
+    page_size: 200
+    view: [id, type, displayName, resolved]
+    data_classes: [pii]
+
+  list-rules:
+    operation: listGroupRules
+    summary: List group rules
+    args:
+      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      expand: {query: expand, allowed_values: [groupIdToGroupNameMap]}
+    paginate: link
+    page_size: 200
+    view: [id, name, status]
+    data_classes: [org-config]
+
+  get-rule:
+    operation: getGroupRule
+    summary: Get a group rule by ID
+    args:
+      rule: {path_param: groupRuleId, pattern: "^0pr[A-Za-z0-9]{17}$"}
+      expand: {query: expand, allowed_values: [groupIdToGroupNameMap]}
+    data_classes: [org-config]
+
+  list-roles:
+    operation: listGroupAssignedRoles
+    summary: Admin roles assigned to a group
+    args:
+      group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+      expand: {query: expand, allowed_values: [targets/groups, targets/catalog/apps]}
+    view: [id, type, label, status, assignmentType]
+    data_classes: [admin-roles]
+
+  # Role assignment IDs are standard (base32 role type, e.g. JBCUYUC7IRCVGS27IFCE2SKO) or
+  # custom (irb…, ra…), so only the character set is fixed.
+  get-role:
+    operation: getGroupAssignedRole
+    summary: Get a group's admin role assignment
+    args:
+      group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [admin-roles]
+
+  list-role-app-targets:
+    operation: listApplicationTargetsForApplicationAdministratorRoleForGroup
+    summary: Role app targets
+    args:
+      group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    paginate: link
+    page_size: 20
+    view: [id, name, displayName, status]
+    data_classes: [admin-roles]
+
+  list-role-group-targets:
+    operation: listGroupTargetsForGroupRole
+    summary: Role group targets
+    args:
+      group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    paginate: link
+    page_size: 20
+    view: [id, type, profile.name]
+    data_classes: [admin-roles]

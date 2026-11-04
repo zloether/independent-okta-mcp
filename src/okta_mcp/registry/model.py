@@ -4,6 +4,7 @@ These models check each file's shape. Everything that needs the spec or other co
 checked by `registry/loader.py`.
 """
 
+import functools
 import re
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -44,6 +45,28 @@ def sensitivity_of(classes: tuple[DataClass, ...]) -> Sensitivity:
     return "sensitive" if any(SENSITIVITY[c] == "sensitive" for c in classes) else "normal"
 
 
+@functools.cache
+def ecma_pattern(pattern: str) -> re.Pattern[str]:
+    """JSON Schema patterns are ECMA-262, where `$` ends the input; Python's `$` also matches
+    before a final newline, so `^00g…$` would accept an ID plus `\\n`. Unescaped `$` outside
+    a character class becomes `\\Z`."""
+    out: list[str] = []
+    escaped = in_class = False
+    for ch in pattern:
+        if escaped:
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == "[":
+            in_class = True
+        elif ch == "]":
+            in_class = False
+        elif ch == "$" and not in_class:
+            ch = r"\Z"
+        out.append(ch)
+    return re.compile("".join(out))
+
+
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -73,9 +96,10 @@ class Arg(_Model):
     @field_validator("pattern")
     @classmethod
     def _compiles(cls, v: str | None) -> str | None:
+        # Compile as validation will, so a pattern the translation breaks fails at load.
         if v is not None:
             try:
-                re.compile(v)
+                ecma_pattern(v)
             except re.error as e:
                 raise ValueError(f"invalid pattern: {e}") from e
         return v

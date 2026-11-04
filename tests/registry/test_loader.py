@@ -430,6 +430,11 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
     ),
     "empty-path-param": (_with(GET, args={"user": {"path_param": ""}}), "path_param"),
     "bad-pattern": (_with(GET, args={"user": {"path_param": "id", "pattern": "("}}), "pattern"),
+    # Python reads `]` first in a class as literal; the `$` → `\Z` translation doesn't.
+    "pattern-breaks-ecma-translation": (
+        _with(GET, args={"user": {"path_param": "id", "pattern": "^[]$]$"}}),
+        r"invalid pattern: bad escape \Z",
+    ),
     "empty-arg-rule": (
         _with(GET, args={"user": {"path_param": "id", "arg_rule": {}}}),
         "arg_rule must set",

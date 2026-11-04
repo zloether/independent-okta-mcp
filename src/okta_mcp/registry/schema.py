@@ -6,13 +6,13 @@ and is the one source for the synopsis, `okta_help` text (T1 D11) and validation
 
 import copy
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError, validators
 from jsonschema.protocols import Validator
 
-from okta_mcp.registry.model import CommandEntry
+from okta_mcp.registry.model import CommandEntry, ecma_pattern
 from okta_mcp.registry.spec import Operation
 
 if TYPE_CHECKING:
@@ -24,10 +24,16 @@ def _is_int(_: object, v: object) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+def _pattern(_: object, pattern: str, instance: object, __: object) -> Iterator[ValidationError]:
+    if isinstance(instance, str) and not ecma_pattern(pattern).search(instance):
+        yield ValidationError(f"does not match {pattern!r}")
+
+
 _Validator = cast(
     type[Validator],
     validators.extend(  # pyright: ignore[reportUnknownMemberType]
         Draft202012Validator,
+        validators={"pattern": _pattern},
         type_checker=Draft202012Validator.TYPE_CHECKER.redefine("integer", _is_int),
     ),
 )
