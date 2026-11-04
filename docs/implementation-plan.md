@@ -332,11 +332,12 @@ Design: §14 (Integration, Protocol) · Depends: 4.4
 Verify: `uv run pytest tests/integration/`
 
 ### 4.6 Real-client check (Path A) ☐
-Design: §8.3 · Depends: 4.5, 0.5
+Design: §8.3 · Depends: 4.5, 0.5, 0.6
 - [ ] Run locally behind a TLS proxy (e.g. Caddy) or tunnel; connect each target MCP client via Path A (auth is always on, so exposure is safe)
-- [ ] Start `docs/compatibility-matrix.md` (client × discovery × registration × works/limitations)
+- [ ] Move the 0.6 matrix from `design/spike-findings.md` to `docs/compatibility-matrix.md` (client × discovery × registration × works/limitations) and re-run each client against the real server
+- [ ] Under option B, the server accepts refreshed tokens with no new sign-in (Claude Code)
 
-Verify: at least one real client completes OAuth and calls a pilot command; matrix started.
+Verify: at least one real client completes OAuth and calls a pilot command; matrix moved and re-run.
 
 ---
 
@@ -412,6 +413,7 @@ Verify: `docker compose -f docker/compose.example.yaml config` validates; bring-
 ### 7.3 Runbook ☐
 Design: §11.4, Appendix C · Depends: 7.2, 0.5
 - [ ] `docs/runbook.md`: Okta setup (from spike findings), exposure decision, deploy, policy changes (restart), key rotation, kill switch, audit log handling
+- [ ] Refresh tokens and user removal (spike 0.6): choosing A or B (link [`okta-setup.md`](okta-setup.md#refresh-tokens-option-a-or-b)); removing a user is group removal under A, plus clearing sessions with `oauthTokens=true` (or deactivating the user) under B; under B the Global Session Policy doesn't bound refresh chains, so `lifetime_minutes` is the re-sign-in and MFA interval; failed refreshes have no `User` target in the System Log, so find them by client ID
 
 Verify: someone (or a fresh Claude session) follows the runbook on a clean machine to a working `/readyz`.
 
@@ -425,7 +427,7 @@ Verify: someone (or a fresh Claude session) follows the runbook on a clean machi
 
 ### 8.2 Compatibility matrix & E2E ☐
 - [ ] Complete `docs/compatibility-matrix.md` for all target clients (Path A)
-- [ ] E2E checklist: groups claim; per-role tool lists; revocation after token expiry; 429 behavior under load
+- [ ] E2E checklist: groups claim; per-role tool lists; revocation (A: group removal takes effect within one access-token lifetime; B: group removal and role changes at the next refresh, token revocation ends the chain, an expired Okta session doesn't); 429 behavior under load
 
 ### 8.3 Documentation pass ☐
 - [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed)
