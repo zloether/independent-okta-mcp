@@ -82,8 +82,15 @@ def test_nonce_on_success_is_captured_without_retry() -> None:
         httpx2.Response(400, headers={"DPoP-Nonce": "n1"}, content=b"not json"),
         _response(401, {"DPoP-Nonce": "n1", "WWW-Authenticate": 'DPoP error="invalid_token"'}),
         _response(403, {"DPoP-Nonce": "n1", "WWW-Authenticate": 'DPoP error="use_dpop_nonce"'}),
+        _response(
+            401,
+            {
+                "DPoP-Nonce": "n1",
+                "WWW-Authenticate": 'DPoP error="invalid_token", DPoP error="use_dpop_nonce"',
+            },
+        ),
     ],
-    ids=["no-header", "other-error", "non-object", "non-json", "other-401", "403"],
+    ids=["no-header", "other-error", "non-object", "non-json", "other-401", "403", "two-errors"],
 )
 def test_no_retry(response: httpx2.Response) -> None:
     assert not DPoP().needs_retry(response)

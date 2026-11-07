@@ -63,6 +63,10 @@ class ServiceToken:
 class TokenProvider(Protocol):
     async def token(self) -> ServiceToken: ...
 
+    def invalidate(self, token: ServiceToken) -> None:
+        """Okta answered 401 to `token`: stop serving it from the cache."""
+        ...
+
 
 def load_private_key(path: Path) -> rsa.RSAPrivateKey:
     """The service app's signing key from `OKTA_PRIVATE_KEY_FILE`; Okta needs RSA ≥ 2048 bits
@@ -87,6 +91,9 @@ class SSWSProvider:
 
     async def token(self) -> ServiceToken:
         return self._token
+
+    def invalidate(self, token: ServiceToken) -> None:
+        pass  # nothing to fetch again
 
 
 class ClientCredentialsProvider:
@@ -143,6 +150,13 @@ class ClientCredentialsProvider:
             if self._token is not None and self._monotonic() < self._expires_at:
                 return self._token
             raise TokenError(self._error)
+
+    def invalidate(self, token: ServiceToken) -> None:
+        """Covers a token Okta expired before our clock did (e.g. `time.monotonic` stopped
+        while the host was suspended). A newer token isn't dropped for an older one's 401."""
+        if token == self._token:
+            self._token = None
+            self._expires_at = 0.0
 
     def _cached(self) -> ServiceToken | None:
         if self._monotonic() < self._expires_at - _REFRESH_MARGIN:
