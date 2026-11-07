@@ -230,6 +230,7 @@ __marimo__/
 
 # Step 0.5 spike: local org IDs, test-user passwords, service key
 .spike/
+environment.*
 
 # Terraform: provider cache, state and per-org inputs
 .terraform/
