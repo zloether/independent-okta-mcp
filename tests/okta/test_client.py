@@ -1,6 +1,9 @@
 import base64
 import hashlib
 import json
+import time
+from collections.abc import Iterator
+from email.utils import formatdate
 from typing import Any
 
 import anyio
@@ -10,8 +13,10 @@ import pytest
 from _fakes import FakeTokenProvider
 from jwt.algorithms import ECAlgorithm
 
+from okta_mcp.okta import ratelimit
 from okta_mcp.okta.client import OktaClient, OriginError, UpstreamError, new_http_client
 from okta_mcp.okta.dpop import DPoP
+from okta_mcp.okta.ratelimit import RateLimited, RequestLimiter
 from okta_mcp.okta.token import ServiceToken, TokenError
 
 ORG = "https://example.okta.com"
@@ -60,6 +65,7 @@ def client(
         tokens=tokens or FakeTokenProvider(),
         dpop=dpop,
         max_inflight=max_inflight,
+        rate_limit_max_wait=10,
         on_request=on_request,
     )
 
@@ -269,14 +275,130 @@ async def test_401_403_sanitized(status: int) -> None:
             "Okta returned HTTP 400: " + "x" * 500,
         ),
         (httpx2.Response(500, text="<html>"), "Okta returned HTTP 500"),
-        (httpx2.Response(502, json={"errorSummary": 5}), "Okta returned HTTP 502"),
-        (httpx2.Response(429, json={"errorSummary": ""}), "Okta returned HTTP 429"),
+        (httpx2.Response(502, json={"errorSummary": ""}), "Okta returned HTTP 502"),
+        (httpx2.Response(503, json={"errorSummary": 5}), "Okta returned HTTP 503"),
     ],
 )
 async def test_error_mapping(response: httpx2.Response, message: str) -> None:
     with pytest.raises(UpstreamError) as e:
         await client(Okta(response)).get(USERS)
     assert (e.value.status, str(e.value)) == (response.status_code, message)
+
+
+def rate_limited(wait: int = 0) -> httpx2.Response:
+    sent = int(time.time())
+    return httpx2.Response(
+        429,
+        headers={"Date": formatdate(sent, usegmt=True), "x-rate-limit-reset": str(sent + wait)},
+        json={"errorSummary": "API call exceeded rate limit due to too many requests."},
+    )
+
+
+@pytest.fixture
+def no_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ratelimit, "_jitter", lambda: 0.0)
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("no_jitter")
+async def test_429_retried_once() -> None:
+    okta = Okta(rate_limited(), httpx2.Response(200, json=[{"id": "00u1"}]))
+    calls: list[None] = []
+    tokens = FakeTokenProvider(DPOP_TOKEN)
+    c = client(okta, tokens, dpop=DPoP(), on_request=lambda: calls.append(None))
+    response = await c.get(USERS, {"limit": "2"})
+    assert response.json() == [{"id": "00u1"}]
+    assert len(okta.requests) == len(calls) == 2
+    assert okta.requests[1].url == okta.requests[0].url
+    assert okta.proof(0)["jti"] != okta.proof(1)["jti"]
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("no_jitter")
+async def test_429_not_retried_twice() -> None:
+    okta = Okta(rate_limited(), rate_limited(40))
+    with pytest.raises(RateLimited, match="try again in 40 s"):
+        await client(okta).get(USERS)
+    assert len(okta.requests) == 2
+
+
+@pytest.mark.anyio
+async def test_429_over_max_wait_not_retried() -> None:
+    okta = Okta(rate_limited(30))
+    with pytest.raises(RateLimited, match="try again in 30 s"):
+        await client(okta).get(USERS)
+    assert len(okta.requests) == 1
+
+
+@pytest.mark.anyio
+async def test_429_wait_past_deadline_not_retried() -> None:
+    okta = Okta(rate_limited(5))
+    with pytest.raises(RateLimited), anyio.fail_after(1):
+        await client(okta).get(USERS)
+    assert len(okta.requests) == 1
+
+
+@pytest.mark.anyio
+async def test_429_wait_frees_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ratelimit, "_jitter", lambda: 0.2)
+    done: list[str] = []
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return rate_limited() if request.url.params.get("first") else httpx2.Response(200)
+
+    c = client(handler, max_inflight=1)
+
+    async def get(name: str, params: dict[str, str]) -> None:
+        await c.get(USERS, params)
+        done.append(name)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(get, "limited", {"first": "1"})
+        await anyio.sleep(0.05)
+        with anyio.fail_after(0.1):
+            await get("other", {})
+        tg.cancel_scope.cancel()
+    assert done == ["other"]
+
+
+@pytest.fixture
+def as_user() -> Iterator[None]:
+    token = ratelimit.principal.set("00u1")
+    yield
+    ratelimit.principal.reset(token)
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("as_user")
+async def test_limiter_rejects_before_slot_and_token() -> None:
+    sent: list[httpx2.Request] = []
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        await anyio.sleep_forever()
+        raise AssertionError
+
+    tokens = FakeTokenProvider()
+    c = client(handler, tokens, max_inflight=1, on_request=RequestLimiter(1).charge)
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(c.get, USERS)  # holds the only slot
+        await anyio.sleep(0.02)
+        with pytest.raises(RateLimited), anyio.fail_after(0.1):
+            await c.get(USERS)
+        tg.cancel_scope.cancel()
+    assert len(sent) == tokens.calls == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("as_user")
+async def test_limiter_charges_429_retry_before_wait() -> None:
+    okta = Okta(rate_limited(5))
+    c = client(okta, on_request=RequestLimiter(1).charge)
+    start = anyio.current_time()
+    with pytest.raises(RateLimited, match="Too many Okta requests"):
+        await c.get(USERS)
+    assert anyio.current_time() - start < 1
+    assert len(okta.requests) == 1
 
 
 @pytest.mark.anyio

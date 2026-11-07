@@ -3,10 +3,10 @@
 GET only: `OktaClient.get` is the one way the server reads from Okta. Each call checks the URL
 is on `OKTA_ORG_URL` before anything is sent, holds one of `MCP_OKTA_MAX_INFLIGHT` slots, attaches
 the service token (and a fresh DPoP proof for a DPoP token), retries once for a `use_dpop_nonce`
-error, and turns any non-2xx response, and a failure to get the service token, into an
-`UpstreamError`. The provider logs a token failure's hint for the operator; callers get a fixed
-message. Deadlines are the caller's (`anyio.fail_after`); cancelling one aborts the request in
-flight and frees its slot.
+error and once after a 429 (`ratelimit.retry_wait`; else `RateLimited`), and turns any other
+non-2xx response, and a failure to get the service token, into an `UpstreamError`. The provider
+logs a token failure's hint for the operator; callers get a fixed message. Deadlines are the
+caller's (`anyio.fail_after`); cancelling one aborts the request in flight and frees its slot.
 """
 
 import logging
@@ -16,6 +16,7 @@ import anyio
 import httpx2
 
 from okta_mcp.okta.dpop import DPoP, use_dpop_nonce
+from okta_mcp.okta.ratelimit import rate_limited, retry_wait
 from okta_mcp.okta.token import ServiceToken, TokenError, TokenProvider
 
 log = logging.getLogger(__name__)
@@ -61,16 +62,19 @@ class OktaClient:
         tokens: TokenProvider,
         dpop: DPoP | None,
         max_inflight: int,
+        rate_limit_max_wait: float,
         on_request: Callable[[], None] | None = None,
     ) -> None:
         """`dpop` is the instance the token provider was given, so token and resource proofs
-        share one key and nonce. `on_request` runs before every request sent to Okta, nonce
-        retries included (the per-principal limiter's counter)."""
+        share one key and nonce. `on_request` (`RequestLimiter.charge`) runs once per request
+        to Okta, nonce and 429 retries included: before the slot and the token are taken, and
+        for a 429 retry before the wait. What it raises propagates."""
         self._http = http
         self._origin = _origin(httpx2.URL(org_url))
         self._tokens = tokens
         self._dpop = dpop
         self._slots = anyio.Semaphore(max_inflight)
+        self._max_wait = rate_limit_max_wait
         self._on_request = on_request
 
     async def get(self, url: str, params: Mapping[str, str] | None = None) -> httpx2.Response:
@@ -84,11 +88,17 @@ class OktaClient:
             raise OriginError("URL is not on the Okta org")
         if params:
             target = target.copy_merge_params(params)
-        async with self._slots:
-            token, response = await self._send(target)
-            if self._dpop is not None and self._dpop.needs_retry(response):
-                token, response = await self._send(target)
-                self._dpop.needs_retry(response)  # records a rotated nonce; no second retry
+        self._charge()
+        token, response = await self._attempt(target)
+        if response.status_code == 429:
+            wait = retry_wait(response, self._max_wait)
+            self._charge()  # before the wait: a principal at its limit fails now, not after it
+            log.warning("Okta rate limit hit; retrying in %.1f s", wait)
+            await anyio.sleep(wait)
+            token, response = await self._attempt(target)
+            if response.status_code == 429:
+                log.warning("Okta rate limit hit again; giving up")
+                raise rate_limited(response)
         if response.is_success:
             return response
         # Only a nonce challenge is known to be about the proof, not the token; any other 401
@@ -97,6 +107,21 @@ class OktaClient:
         if response.status_code == 401 and not use_dpop_nonce(response):
             self._tokens.invalidate(token)
         raise self._error(response)
+
+    def _charge(self) -> None:
+        if self._on_request is not None:
+            self._on_request()
+
+    async def _attempt(self, url: httpx2.URL) -> tuple[ServiceToken, httpx2.Response]:
+        """One request in one slot, with the nonce retry. The caller has charged the first
+        request. The slot is free during a 429 wait."""
+        async with self._slots:
+            token, response = await self._send(url)
+            if self._dpop is not None and self._dpop.needs_retry(response):
+                self._charge()
+                token, response = await self._send(url)
+                self._dpop.needs_retry(response)  # records a rotated nonce; no second retry
+        return token, response
 
     async def _send(self, url: httpx2.URL) -> tuple[ServiceToken, httpx2.Response]:
         try:
@@ -115,8 +140,6 @@ class OktaClient:
             if self._dpop is None:
                 raise RuntimeError("DPoP token but the Okta client has no DPoP key")
             request.headers["DPoP"] = self._dpop.proof("GET", str(request.url), token.value)
-        if self._on_request is not None:
-            self._on_request()
         try:
             return token, await self._http.send(request)
         except httpx2.HTTPError as e:
