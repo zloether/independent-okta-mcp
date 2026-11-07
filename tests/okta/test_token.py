@@ -222,6 +222,29 @@ async def test_cached_then_refreshed_under_a_minute(key: rsa.RSAPrivateKey) -> N
 
 
 @pytest.mark.anyio
+async def test_invalidate_drops_only_that_token(key: rsa.RSAPrivateKey) -> None:
+    okta = Okta(ok(), httpx2.Response(200, json={**ok().json(), "access_token": "eyJ.newer"}))
+    p = provider(okta, key)
+    old = await p.token()
+    p.invalidate(old)
+    new = await p.token()
+    assert len(okta.requests) == 2
+    assert new.value == "eyJ.newer"
+    p.invalidate(old)  # a late 401 for the old token
+    assert await p.token() is new
+    assert len(okta.requests) == 2
+
+
+@pytest.mark.anyio
+async def test_invalidated_token_not_served_when_refresh_fails(key: rsa.RSAPrivateKey) -> None:
+    okta = Okta(ok(), httpx2.Response(500))
+    p = provider(okta, key)
+    p.invalidate(await p.token())
+    with pytest.raises(TokenError, match="HTTP 500"):
+        await p.token()
+
+
+@pytest.mark.anyio
 async def test_one_refresh_for_concurrent_callers(key: rsa.RSAPrivateKey) -> None:
     okta = Okta(ok(), delay=0.05)
     p = provider(okta, key)
@@ -392,9 +415,12 @@ async def test_secrets_never_logged_or_shown(
 
 @pytest.mark.anyio
 async def test_ssws() -> None:
-    token = await SSWSProvider(SecretStr("00ssws-secret")).token()
+    provider = SSWSProvider(SecretStr("00ssws-secret"))
+    token = await provider.token()
     assert token.authorization == "SSWS 00ssws-secret"
     assert "00ssws-secret" not in repr(token)
+    provider.invalidate(token)
+    assert await provider.token() == token
 
 
 @pytest.mark.anyio
