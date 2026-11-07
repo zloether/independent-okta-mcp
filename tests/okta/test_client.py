@@ -79,6 +79,24 @@ async def test_get_sends_token_and_params() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
+    ("params", "query"),
+    [
+        ({"limit": "2"}, "after=00u5&limit=2"),
+        ({"after": "00u9"}, "after=00u9"),
+        ({}, "after=00u5"),
+        (None, "after=00u5"),
+    ],
+)
+async def test_params_merged_into_url_query(params: dict[str, str] | None, query: str) -> None:
+    okta = Okta()
+    c = client(okta, FakeTokenProvider(DPOP_TOKEN), dpop=DPoP())
+    await c.get(USERS + "?after=00u5", params)
+    assert okta.requests[0].url.query.decode() == query
+    assert okta.proof()["htu"] == USERS
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
     "url",
     [
         "https://example.okta.com/api/v1/users?after=x",
@@ -174,7 +192,34 @@ async def test_nonce_retry_not_repeated() -> None:
     assert e.value.status == 401
     assert len(okta.requests) == 2
     assert dpop.nonce == "n2"
-    assert tokens.invalidated == [DPOP_TOKEN]
+    assert tokens.invalidated == []  # the proof failed, not the token
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("challenge", "invalidated"),
+    [
+        ('DPoP error="use_dpop_nonce"', False),  # no nonce, so no retry
+        ("DPoP error=use_dpop_nonce", False),
+        ('DPoP error="invalid_dpop_proof"', True),
+        ('DPoP error="invalid_token"', True),
+        ("", True),
+    ],
+)
+async def test_401_invalidates_unless_nonce_challenge(challenge: str, invalidated: bool) -> None:
+    okta = Okta(httpx2.Response(401, headers={"WWW-Authenticate": challenge}))
+    tokens = FakeTokenProvider(DPOP_TOKEN)
+    with pytest.raises(UpstreamError):
+        await client(okta, tokens, dpop=DPoP()).get(USERS)
+    assert tokens.invalidated == ([DPOP_TOKEN] if invalidated else [])
+
+
+@pytest.mark.anyio
+async def test_dpop_token_without_key_not_sent() -> None:
+    okta = Okta()
+    with pytest.raises(RuntimeError, match="no DPoP key"):
+        await client(okta, FakeTokenProvider(DPOP_TOKEN)).get(USERS)
+    assert okta.requests == []
 
 
 @pytest.mark.anyio

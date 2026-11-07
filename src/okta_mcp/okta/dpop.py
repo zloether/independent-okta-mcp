@@ -28,9 +28,9 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-def _use_dpop_nonce(response: httpx2.Response) -> bool:
+def use_dpop_nonce(response: httpx2.Response) -> bool:
     """Token endpoint: 400 with `error` in the body (RFC 9449 §8). Resource server: 401 with
-    the error in `WWW-Authenticate` (§9)."""
+    the error in `WWW-Authenticate` (§9). True whether or not a usable nonce came with it."""
     if response.status_code == 401:
         return bool(_RESOURCE_NONCE_ERROR.search(response.headers.get("WWW-Authenticate", "")))
     if response.status_code == 400:
@@ -78,4 +78,4 @@ class DPoP:
         if nonce is None or not _NONCE.fullmatch(nonce):
             return False
         self.nonce = nonce
-        return _use_dpop_nonce(response)
+        return use_dpop_nonce(response)
