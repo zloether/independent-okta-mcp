@@ -3,10 +3,10 @@
 GET only: `OktaClient.get` is the one way the server reads from Okta. Each call checks the URL
 is on `OKTA_ORG_URL` before anything is sent, holds one of `MCP_OKTA_MAX_INFLIGHT` slots, attaches
 the service token (and a fresh DPoP proof for a DPoP token), retries once for a `use_dpop_nonce`
-error, and turns any non-2xx response into an `UpstreamError`. A `TokenError` from the provider
-passes through unchanged; its hint is for the operator, so the executor maps it without the text.
-Deadlines are the caller's (`anyio.fail_after`); cancelling one aborts the request in flight and
-frees its slot.
+error, and turns any non-2xx response, and a failure to get the service token, into an
+`UpstreamError`. The provider logs a token failure's hint for the operator; callers get a fixed
+message. Deadlines are the caller's (`anyio.fail_after`); cancelling one aborts the request in
+flight and frees its slot.
 """
 
 import logging
@@ -16,7 +16,7 @@ import anyio
 import httpx2
 
 from okta_mcp.okta.dpop import DPoP, use_dpop_nonce
-from okta_mcp.okta.token import ServiceToken, TokenProvider
+from okta_mcp.okta.token import ServiceToken, TokenError, TokenProvider
 
 log = logging.getLogger(__name__)
 
@@ -99,7 +99,15 @@ class OktaClient:
         raise self._error(response)
 
     async def _send(self, url: httpx2.URL) -> tuple[ServiceToken, httpx2.Response]:
-        token = await self._tokens.token()
+        try:
+            token = await self._tokens.token()
+        except TokenError:
+            token = None
+        # Raised outside `except`: the TokenError's hint is for the operator log only.
+        if token is None:
+            raise UpstreamError(
+                None, "Okta service credentials are unavailable; contact the MCP administrator"
+            )
         request = self._http.build_request("GET", url)
         request.headers["Accept"] = "application/json"
         request.headers["Authorization"] = token.authorization

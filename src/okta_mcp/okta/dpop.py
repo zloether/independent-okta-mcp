@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from jwt.algorithms import ECAlgorithm
 
 _NONCE = re.compile(r"[\x21\x23-\x5b\x5d-\x7e]{1,512}")  # RFC 9449 NQCHAR, bounded
-_RESOURCE_NONCE_ERROR = re.compile(r'\berror\s*=\s*"?use_dpop_nonce\b')  # quoted or token
+_RESOURCE_ERROR = re.compile(r'\berror\s*=\s*"?([A-Za-z0-9_]+)')  # quoted or token
 
 
 def _b64url(data: bytes) -> str:
@@ -30,9 +30,11 @@ def _b64url(data: bytes) -> str:
 
 def use_dpop_nonce(response: httpx2.Response) -> bool:
     """Token endpoint: 400 with `error` in the body (RFC 9449 §8). Resource server: 401 with
-    the error in `WWW-Authenticate` (§9). True whether or not a usable nonce came with it."""
+    the error in `WWW-Authenticate` (§9), and no other error there (e.g. `invalid_token` in a
+    second challenge). True whether or not a usable nonce came with it."""
     if response.status_code == 401:
-        return bool(_RESOURCE_NONCE_ERROR.search(response.headers.get("WWW-Authenticate", "")))
+        errors = _RESOURCE_ERROR.findall(response.headers.get("WWW-Authenticate", ""))
+        return set(errors) == {"use_dpop_nonce"}
     if response.status_code == 400:
         try:
             body = response.json()

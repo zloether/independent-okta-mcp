@@ -12,7 +12,7 @@ from jwt.algorithms import ECAlgorithm
 
 from okta_mcp.okta.client import OktaClient, OriginError, UpstreamError, new_http_client
 from okta_mcp.okta.dpop import DPoP
-from okta_mcp.okta.token import ServiceToken
+from okta_mcp.okta.token import ServiceToken, TokenError
 
 ORG = "https://example.okta.com"
 USERS = ORG + "/api/v1/users"
@@ -203,6 +203,8 @@ async def test_nonce_retry_not_repeated() -> None:
         ("DPoP error=use_dpop_nonce", False),
         ('DPoP error="invalid_dpop_proof"', True),
         ('DPoP error="invalid_token"', True),
+        ('DPoP error="invalid_token", DPoP error="use_dpop_nonce"', True),
+        ('DPoP error="invalid_token", error_description="not error=use_dpop_nonce"', True),
         ("", True),
     ],
 )
@@ -212,6 +214,24 @@ async def test_401_invalidates_unless_nonce_challenge(challenge: str, invalidate
     with pytest.raises(UpstreamError):
         await client(okta, tokens, dpop=DPoP()).get(USERS)
     assert tokens.invalidated == ([DPOP_TOKEN] if invalidated else [])
+
+
+class FailingTokenProvider(FakeTokenProvider):
+    async def token(self) -> ServiceToken:
+        raise TokenError("token request failed: HTTP 401 invalid_client (check OKTA_CLIENT_ID)")
+
+
+@pytest.mark.anyio
+async def test_token_failure_is_upstream_error_without_hint() -> None:
+    okta = Okta()
+    with pytest.raises(UpstreamError) as e:
+        await client(okta, FailingTokenProvider()).get(USERS)
+    assert e.value.status is None
+    assert str(e.value) == (
+        "Okta service credentials are unavailable; contact the MCP administrator"
+    )
+    assert e.value.__context__ is None
+    assert okta.requests == []
 
 
 @pytest.mark.anyio
