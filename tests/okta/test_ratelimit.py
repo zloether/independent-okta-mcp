@@ -6,9 +6,10 @@ import httpx2
 import pytest
 
 from okta_mcp.okta import ratelimit
-from okta_mcp.okta.ratelimit import RateLimited, RequestLimiter, retry_wait
+from okta_mcp.okta.ratelimit import RateLimited, RequestLimiter, rate_limited, retry_wait
 
 SENT = 1_700_000_000
+real_jitter = ratelimit._jitter  # pyright: ignore[reportPrivateUsage]  # before no_jitter
 
 
 def response_429(headers: dict[str, str]) -> httpx2.Response:
@@ -52,7 +53,9 @@ async def test_jitter_added_after_cap(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_jitter_bounded() -> None:
-    assert all(0 <= ratelimit._jitter() <= 1 for _ in range(100))  # pyright: ignore[reportPrivateUsage]
+    samples = [real_jitter() for _ in range(100)]
+    assert all(0 <= s <= 1 for s in samples)
+    assert len(set(samples)) > 1
 
 
 @pytest.mark.anyio
@@ -71,7 +74,13 @@ async def test_zero_cap_retries_only_past_reset() -> None:
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     "headers",
-    [{}, {"x-rate-limit-reset": "soon"}, {"x-rate-limit-reset": ""}, {"Date": "x"}],
+    [
+        {},
+        {"x-rate-limit-reset": "soon"},
+        {"x-rate-limit-reset": ""},
+        {"x-rate-limit-reset": "1" + "0" * 400},
+        {"Date": "x"},
+    ],
 )
 async def test_no_usable_reset_raises(headers: dict[str, str]) -> None:
     with pytest.raises(RateLimited, match="try again later"):
@@ -79,11 +88,23 @@ async def test_no_usable_reset_raises(headers: dict[str, str]) -> None:
 
 
 @pytest.mark.anyio
-async def test_wait_past_deadline_raises() -> None:
-    with anyio.fail_after(2):
+async def test_wait_must_leave_headroom_before_deadline() -> None:
+    with anyio.fail_after(3):
         assert retry_wait(at(SENT, SENT + 1), 10) == 1
         with pytest.raises(RateLimited):
-            retry_wait(at(SENT, SENT + 2), 10)
+            retry_wait(at(SENT, SENT + 2), 10)  # ends 1 s before the deadline: too close
+
+
+@pytest.mark.anyio
+async def test_message_wait_excludes_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ratelimit, "_jitter", lambda: 0.5)
+    with pytest.raises(RateLimited, match="try again in 2 s"), anyio.fail_after(3):
+        retry_wait(at(SENT, SENT + 2), 10)
+
+
+def test_rate_limited_message() -> None:
+    assert str(rate_limited(at(SENT, SENT + 40))) == "Okta rate limit reached; try again in 40 s"
+    assert str(rate_limited(response_429({}))) == "Okta rate limit reached; try again later"
 
 
 class Clock:

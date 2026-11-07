@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import time
+from collections.abc import Iterator
 from email.utils import formatdate
 from typing import Any
 
@@ -315,8 +316,8 @@ async def test_429_retried_once() -> None:
 @pytest.mark.anyio
 @pytest.mark.usefixtures("no_jitter")
 async def test_429_not_retried_twice() -> None:
-    okta = Okta(rate_limited())
-    with pytest.raises(RateLimited, match="try again later"):
+    okta = Okta(rate_limited(), rate_limited(40))
+    with pytest.raises(RateLimited, match="try again in 40 s"):
         await client(okta).get(USERS)
     assert len(okta.requests) == 2
 
@@ -360,17 +361,43 @@ async def test_429_wait_frees_slot(monkeypatch: pytest.MonkeyPatch) -> None:
     assert done == ["other"]
 
 
-@pytest.mark.anyio
-async def test_limiter_rejection_sends_nothing() -> None:
-    okta = Okta()
-    c = client(okta, on_request=RequestLimiter(1).charge)
+@pytest.fixture
+def as_user() -> Iterator[None]:
     token = ratelimit.principal.set("00u1")
-    try:
-        await c.get(USERS)
-        with pytest.raises(RateLimited):
+    yield
+    ratelimit.principal.reset(token)
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("as_user")
+async def test_limiter_rejects_before_slot_and_token() -> None:
+    sent: list[httpx2.Request] = []
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(request)
+        await anyio.sleep_forever()
+        raise AssertionError
+
+    tokens = FakeTokenProvider()
+    c = client(handler, tokens, max_inflight=1, on_request=RequestLimiter(1).charge)
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(c.get, USERS)  # holds the only slot
+        await anyio.sleep(0.02)
+        with pytest.raises(RateLimited), anyio.fail_after(0.1):
             await c.get(USERS)
-    finally:
-        ratelimit.principal.reset(token)
+        tg.cancel_scope.cancel()
+    assert len(sent) == tokens.calls == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("as_user")
+async def test_limiter_charges_429_retry_before_wait() -> None:
+    okta = Okta(rate_limited(5))
+    c = client(okta, on_request=RequestLimiter(1).charge)
+    start = anyio.current_time()
+    with pytest.raises(RateLimited, match="Too many Okta requests"):
+        await c.get(USERS)
+    assert anyio.current_time() - start < 1
     assert len(okta.requests) == 1
 
 

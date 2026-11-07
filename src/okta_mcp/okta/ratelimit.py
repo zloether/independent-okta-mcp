@@ -2,10 +2,11 @@
 
 On a 429 the client waits until Okta's `x-rate-limit-reset`, measured against the response's
 `Date` header so a skewed local clock doesn't change it, plus jitter, and retries once. A wait
-over `OKTA_RATE_LIMIT_MAX_WAIT`, or past the caller's deadline, is `RateLimited` at once.
+over `OKTA_RATE_LIMIT_MAX_WAIT`, or too close to the caller's deadline, is `RateLimited` at once.
 
-`RequestLimiter.charge` is the client's `on_request` hook: every request sent to Okta, retries
+`RequestLimiter.charge` is the client's `on_request` hook: every request to Okta, retries
 included, counts against the principal in `principal` (`MCP_REQUESTS_PER_MINUTE` in any 60 s).
+The client charges before it takes a slot or a token, and charges a 429 retry before the wait.
 """
 
 import logging
@@ -24,6 +25,8 @@ import httpx2
 log = logging.getLogger(__name__)
 
 _JITTER_MAX = 1.0
+_RETRY_HEADROOM = 1.0
+"""Time the retry needs after the wait, so it isn't cut off by the deadline."""
 _WINDOW = 60.0
 
 principal: ContextVar[str | None] = ContextVar("okta_mcp_principal", default=None)
@@ -42,33 +45,43 @@ def _jitter() -> float:
 def _sent_at(response: httpx2.Response, now: Callable[[], float]) -> float:
     try:
         sent = parsedate_to_datetime(response.headers["Date"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, ValueError):
         return now()
     if sent.tzinfo is None:
         sent = sent.replace(tzinfo=UTC)
     return sent.timestamp()
 
 
+def _reset_wait(response: httpx2.Response, now: Callable[[], float]) -> float | None:
+    """Seconds until Okta's reset, or None without a usable `x-rate-limit-reset`."""
+    try:
+        return max(0.0, int(response.headers["x-rate-limit-reset"]) - _sent_at(response, now))
+    except (KeyError, ValueError, OverflowError):
+        return None
+
+
+def rate_limited(response: httpx2.Response, now: Callable[[], float] = time.time) -> RateLimited:
+    """The error for a 429 that won't be retried, with Okta's wait (no jitter) when known."""
+    wait = _reset_wait(response, now)
+    if wait is None:
+        return RateLimited("Okta rate limit reached; try again later")
+    return RateLimited(f"Okta rate limit reached; try again in {math.ceil(wait)} s")
+
+
 def retry_wait(
     response: httpx2.Response, max_wait: float, now: Callable[[], float] = time.time
 ) -> float:
     """Seconds to sleep before retrying a 429 `response`, or `RateLimited` if the wait is over
-    `max_wait`, doesn't end before the current deadline, or Okta sent no usable reset time.
-    `now` is used only when the response has no valid `Date`. Call inside the caller's
-    cancel scope."""
-    try:
-        reset = int(response.headers["x-rate-limit-reset"])
-    except (KeyError, ValueError):
-        reset = None
-    if reset is None:
-        raise RateLimited("Okta rate limit reached; try again later")
-    wait = max(0.0, reset - _sent_at(response, now))
-    if wait > max_wait:
-        raise RateLimited(f"Okta rate limit reached; try again in {math.ceil(wait)} s")
-    wait += _jitter()
-    if anyio.current_time() + wait >= anyio.current_effective_deadline():
-        raise RateLimited(f"Okta rate limit reached; try again in {math.ceil(wait)} s")
-    return wait
+    `max_wait`, doesn't leave `_RETRY_HEADROOM` before the current deadline, or Okta sent no
+    usable reset time. `now` is used only when the response has no valid `Date`. Call inside
+    the caller's cancel scope."""
+    wait = _reset_wait(response, now)
+    if wait is None or wait > max_wait:
+        raise rate_limited(response, now)
+    delay = wait + _jitter()
+    if anyio.current_time() + delay + _RETRY_HEADROOM > anyio.current_effective_deadline():
+        raise rate_limited(response, now)
+    return delay
 
 
 class RequestLimiter:
