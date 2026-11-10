@@ -57,7 +57,7 @@ def test_defaults(env: dict[str, str]) -> None:
     assert c.cursor_key.get_secret_value() == b"k" * 32
     assert c.allowed_origins == ()
     assert (c.host, c.port, c.trust_proxy) == ("127.0.0.1", 8080, False)
-    assert (c.default_limit, c.max_items, c.max_bytes, c.max_batch) == (100, 1000, 262144, 50)
+    assert (c.default_limit, c.max_items, c.max_bytes, c.max_batch) == (50, 1000, 65536, 50)
     assert (c.call_timeout, c.okta_max_inflight, c.requests_per_minute) == (60, 10, 600)
     assert (c.audit_log, c.audit_args, c.log_level) == ("stdout", "full", "INFO")
     assert c.okta_scopes == {"okta.users.read", "okta.groups.read"}

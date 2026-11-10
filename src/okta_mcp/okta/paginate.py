@@ -8,7 +8,7 @@ after RFC 3986 normalisation, equals the first request's path; anything else fai
 """
 
 import re
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from typing import Any, Literal, cast
 
 import httpx2
@@ -71,7 +71,7 @@ async def paginate(
     *,
     mode: Mode,
     items_key: str | None = None,
-) -> AsyncIterator[tuple[Any, str, int]]:
+) -> AsyncGenerator[tuple[Any, str, int]]:
     """Yield `(item, page, index_in_page)` from `url` with `params` and, by `mode`, the pages
     after it. `page` is the relative path and query that fetched the item's page. Stops at the
     first page with no items or no next link. Raises `PaginationError`, and whatever
