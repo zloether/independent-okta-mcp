@@ -20,12 +20,12 @@ GROUP_ID = re.compile(r"00g[A-Za-z0-9]{17}")
 
 Grant = tuple[str, str]
 """(domain, command), both registry names."""
+# Every string in the file is a `StrictStr`: pydantic would otherwise decode a YAML `!!binary`
+# scalar into one, and a `b"groups"` key beside `"groups"` gets past the duplicate-key check.
 Patterns = Mapping[StrictStr, tuple[StrictStr, ...]]
 """Domain or `*` → command names or `*`. There are no partial globs (`get-*`)."""
 
 
-# Strings are `StrictStr`: pydantic would otherwise decode a YAML `!!binary` scalar into one,
-# and `b"deny"` beside `"deny"` gets past the duplicate-key check.
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

@@ -16,6 +16,8 @@ from pydantic import ValidationError
 from okta_mcp.policy.model import WILDCARD, Grant, Patterns, Policy, PolicyFile, Role, RoleEntry
 from okta_mcp.registry.loader import Registry, UniqueKeyLoader
 
+_EVERYWHERE = frozenset({WILDCARD})
+
 
 class PolicyError(Exception):
     def __init__(self, errors: list[str]) -> None:
@@ -57,16 +59,16 @@ def build_policy(doc: Any, registry: Registry) -> Policy:
     if errors:
         raise PolicyError(errors)
 
-    roles = {
-        name: Role(
-            name,
-            frozenset(entry.groups),
-            _allowed(entry, frozenset(entry.include_sensitive), registry),
-            _expand(entry.allow, registry, frozenset(entry.include_sensitive), plain=False),
-            _expand(entry.deny, registry, frozenset({WILDCARD})),
+    roles: dict[str, Role] = {}
+    for name, entry in parsed.roles.items():
+        allow, allow_raised = _allowed(entry, frozenset(entry.include_sensitive), registry)
+        roles[name] = Role(
+            name=name,
+            groups=frozenset(entry.groups),
+            allow=allow,
+            allow_raised=allow_raised,
+            deny=_expand(entry.deny, registry, _EVERYWHERE),
         )
-        for name, entry in parsed.roles.items()
-    }
     return Policy(MappingProxyType(roles), tuple(_warnings(parsed, roles, registry)))
 
 
@@ -113,8 +115,15 @@ def _expand(
     return frozenset(grants)
 
 
-def _allowed(entry: RoleEntry, include: frozenset[str], registry: Registry) -> frozenset[Grant]:
-    return _expand(entry.allow, registry, include)
+def _allowed(
+    entry: RoleEntry, include: frozenset[str], registry: Registry
+) -> tuple[frozenset[Grant], frozenset[Grant]]:
+    """(`Role.allow`, `Role.allow_raised`) for the role with `include` as its
+    `include_sensitive`."""
+    return (
+        _expand(entry.allow, registry, include),
+        _expand(entry.allow, registry, include, plain=False),
+    )
 
 
 def _warnings(parsed: PolicyFile, roles: dict[str, Role], registry: Registry) -> list[str]:
@@ -131,9 +140,9 @@ def _warnings(parsed: PolicyFile, roles: dict[str, Role], registry: Registry) ->
             )
         warnings.extend(
             f"{where}.include_sensitive: {d!r} has no effect (no wildcard in this role's allow "
-            "reaches a sensitive command there)"
+            "reaches a command there that isn't granted in full already)"
             for d in entry.include_sensitive
-            if _allowed(entry, include - {d}, registry) == role.allow
+            if _allowed(entry, include - {d}, registry) == (role.allow, role.allow_raised)
         )
         for domain, commands in entry.allow.items():
             if WILDCARD in commands and not _expand({domain: (WILDCARD,)}, registry, include):
@@ -145,7 +154,7 @@ def _warnings(parsed: PolicyFile, roles: dict[str, Role], registry: Registry) ->
             warnings.extend(
                 f"{where}.deny.{domain}: {c!r} matches nothing any role allows"
                 for c in commands
-                if not _expand({domain: (c,)}, registry, frozenset({WILDCARD})) & allowed_by_any
+                if not _expand({domain: (c,)}, registry, _EVERYWHERE) & allowed_by_any
             )
         if not role.allow - role.deny:
             warnings.append(f"{where}: grants nothing (its deny covers all of its allow)")

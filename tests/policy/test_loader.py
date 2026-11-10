@@ -421,8 +421,8 @@ def test_warns_on_include_sensitive_star(registry: Registry) -> None:
     [
         ({"groups": ["list"]}, "groups"),  # no wildcard
         ({"groups": ["*"]}, "vault"),  # wildcard elsewhere
-        ({"network-zones": ["*"]}, "network-zones"),  # no sensitive command there
-        ({"groups": ["*", *sorted(GROUPS_SENSITIVE)]}, "groups"),  # all named already
+        # Every command named already, so the wildcard adds nothing, raised calls included.
+        ({"groups": ["*", *sorted(GROUPS_NORMAL | GROUPS_SENSITIVE)]}, "groups"),
     ],
 )
 def test_warns_on_include_sensitive_without_effect(
@@ -430,6 +430,27 @@ def test_warns_on_include_sensitive_without_effect(
 ) -> None:
     (warning,) = _warnings(_doc(r=_role(allow=allow, include_sensitive=[include])), registry)
     assert warning.startswith(f"roles.r.include_sensitive: {include!r} has no effect")
+
+
+@pytest.mark.parametrize(
+    "allow",
+    [
+        # No sensitive command there, but the entry lets the wildcard's commands take
+        # arguments that raise a call to sensitive.
+        {"network-zones": ["*"]},
+        # The sensitive commands are named; the normal ones gain the same.
+        {"groups": ["*", *sorted(GROUPS_SENSITIVE)]},
+    ],
+)
+def test_include_sensitive_that_only_widens_raised_calls_has_an_effect(
+    registry: Registry, allow: dict[str, list[str]]
+) -> None:
+    (domain,) = allow
+    with_entry = build_policy(_doc(r=_role(allow=allow, include_sensitive=[domain])), registry)
+    without = build_policy(_doc(r=_role(allow=allow)), registry)
+    assert with_entry.warnings == ()
+    assert with_entry.roles["r"].allow == without.roles["r"].allow
+    assert with_entry.roles["r"].allow_raised > without.roles["r"].allow_raised
 
 
 def test_include_sensitive_star_without_effect_gets_both_warnings(registry: Registry) -> None:
@@ -574,6 +595,11 @@ def test_duplicate_keys(tmp_path: Path, registry: Registry, text: str) -> None:
         "    deny: {groups: [get]}\n    !!binary ZGVueQ==: {groups: [list]}\n",
         f"version: 1\nroles:\n  r:\n    groups: [{G1}]\n"
         "    allow: {groups: [!!binary bGlzdA==]}\n",
+        # A second `groups` under `deny`, which the duplicate-key check can't see.
+        f"version: 1\nroles:\n  r:\n    groups: [{G1}]\n    allow: {{groups: ['*']}}\n"
+        "    deny: {groups: [get], !!binary Z3JvdXBz: [list]}\n",
+        f"version: 1\nroles:\n  r:\n    groups: [{G1}]\n    allow: {{groups: [list]}}\n"
+        "    include_sensitive: [!!binary Z3JvdXBz]\n",
     ],
 )
 def test_binary_scalars_are_not_strings(tmp_path: Path, registry: Registry, text: str) -> None:
