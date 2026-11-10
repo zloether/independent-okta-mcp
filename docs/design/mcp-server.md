@@ -10,6 +10,16 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 
 ## 0. Change log
 
+### 0.0 Changes since r4 (design review, 2026-11-10)
+
+| r4 position | Now | Reason |
+|---|---|---|
+| A path value only had to stay inside its segment (§6.4) | A value equal to a literal segment the spec has in the parameter's place is also **rejected** (§6.4 item 5) | `rules` as a group ID is `/api/v1/groups/rules` (`listGroupRules`); `export` as an app ID is the apps CSV export. 74 of the spec's 319 GET operations have such a sibling, and 319 of 328 path parameters have no spec `pattern` |
+| "Restrict who can create or rename `mcp-okta-*` groups" (§8.2) | The control that matters is **membership** of the role groups (§8.2, §12.1, R7) | Policy matches group IDs, so a new or renamed group grants nothing; adding yourself to an existing role group grants the role |
+| Client apps' sign-in strength not mentioned | Client apps need an authentication policy with MFA (§8.2, Appendix C) | A password-only sign-in would be the only factor in front of an org-wide read |
+| Service app shares the org's Okta rate limits unbounded | Cap the service app's share of each rate limit in Okta (§10, V16) | MCP use must not starve provisioning and sign-in integrations |
+| Global in-flight cap only (§6.5) | A per-principal share of the in-flight slots is planned with the limiter (plan 6.2) | A few slow calls (System Log) from one user can hold all 10 slots well inside the request limit |
+
 ### 0.1 Changes from r3
 
 | r3 position | r4 position | Reason |
@@ -400,7 +410,8 @@ Native URL building replaces argv, so the r2 option-injection class disappears; 
 2. **Query parameters** are passed as an `httpx` params mapping, never string-concatenated. Array values follow the spec's `explode`: `false` → one comma-joined value, otherwise (the OpenAPI `form` default) one key per item; a query `style` other than `form` fails the spec load. Free-form expressions (`filter`, `search`, `q`) are passed through as values; Okta evaluates them (and `arg_rules` govern who may use them).
 3. **Templates are literal.** Paths come from the spec, joined to the configured org base URL; the host is never derived from input. Every built URL's origin must equal `OKTA_ORG_URL` and its path must match the operation's template.
 4. **No file, stdin, or local-path inputs exist.** Batch inputs (post-v1) are typed arrays with `maxItems` ≤ `MCP_MAX_BATCH`.
-5. **Regression tests** send, for every path parameter of every command: `..`, `.`, `../x`, `a/b`, `a/../b`, `a%2F..%2Fb`, `%2e%2e`, `a\..\b`, `a?b=c`, `a#b`, `a b`, `a\x00b`, a 10k-character string, and a non-string; each must produce `invalid_arguments` with **no request recorded** by the HTTP mock.
+5. **Sibling endpoints are not IDs.** A value that stays inside its segment can still be another endpoint's name: `/api/v1/groups/{groupId}` with `rules` is `listGroupRules`, `/api/v1/apps/{appId}` with `export` is the apps CSV export, `/api/v1/users/{userId}/factors/{factorId}` with `catalog` is the supported-factor list. The result would be returned under the wrong command's classification and policy. So the spec index records, per path parameter, every literal segment that any spec path (any method) has in that position under a compatible prefix (`Operation.reserved`), and `exec/params.py` rejects a value whose raw or NFKC form equals one, case-insensitively. This is derived from the pinned spec, so it needs no registry field and covers parameters without a `pattern`; an ID `pattern` remains the stronger control, because Okta may route names the spec doesn't list.
+6. **Regression tests** send, for every path parameter of every command: `..`, `.`, `../x`, `a/b`, `a/../b`, `a%2F..%2Fb`, `%2e%2e`, `a\..\b`, `a?b=c`, `a#b`, `a b`, `a\x00b`, a 10k-character string, and a non-string; each must produce `invalid_arguments` with **no request recorded** by the HTTP mock. Every reserved literal of every GET operation in the pinned spec is tested against its parameter as well.
 
 ### 6.5 Okta client and execution
 
@@ -488,7 +499,11 @@ The SDK v2 ships resource-server helpers (`token_verifier`/`auth` settings, `get
 
 **Dedicated AS is mandatory** (a custom AS has one static audience and ignores `resource`; sharing it lets other apps' tokens pass the `aud` check). `MCP_ALLOWED_CLIENT_IDS` is **required**.
 
-**Groups claim.** The claim value is an expression that emits the IDs of Okta-mastered groups whose name starts with `mcp-okta-`, for example `user.getGroups({'group.type': {'OKTA_GROUP'}}, {'group.profile.name': {'mcp-okta-'}}).![id]` (verified, V1/V13). Emitting IDs makes renames and look-alike imported groups irrelevant to authorization; the name prefix only bounds claim size. Restrict who can create or rename `mcp-okta-*` groups anyway, and alert on it.
+**Groups claim.** The claim value is an expression that emits the IDs of Okta-mastered groups whose name starts with `mcp-okta-`, for example `user.getGroups({'group.type': {'OKTA_GROUP'}}, {'group.profile.name': {'mcp-okta-'}}).![id]` (verified, V1/V13). Emitting IDs makes renames and look-alike imported groups irrelevant to authorization; the name prefix only bounds claim size.
+
+**Role-group membership is the authorization boundary.** Whoever can add a user to a role group grants that role, and the server cannot tell. In Okta that is more people than Super Admins: Org Admins, Group Admins and Group Membership Admins whose scope includes the group, custom roles with `okta.groups.members.manage`, and anyone who can write a group rule targeting it. A help-desk admin who adds themselves to `mcp-okta-admins` reads the System Log, admin-role assignments and everything else the service app can see. Required setup (Appendix C step 2): scope delegated admins' resource sets to exclude the `mcp-okta-*` groups; no group rules that target them; alert on `group.user_membership.add` for those group IDs. The same applies to who may edit the policy file and the AS access policy.
+
+**Sign-in strength.** The client apps are the front door to an org-wide read. Assign them an authentication policy that requires MFA (phishing-resistant where available); a new OIDC app otherwise gets the org's default policy. The server cannot check this from the token.
 
 ### 8.3 Browser-based OAuth (Path A)
 
@@ -631,6 +646,7 @@ Group removal takes effect at next token issuance. Short access-token lifetimes 
 - **Admin role:** start with Read-only Administrator; verify per domain (V6); custom role/resource set for tighter ceilings. Never Super Admin — which is why ai-agents (workload principals) is out of v1: every one of its operations requires `SUPER_ADMIN` plus a paid subscription, and its spec declares no scopes. Re-adding it needs a separate, explicitly risk-accepted credential.
 - **DPoP:** on by default (§6.5). API Services apps created in the admin console default to "Require DPoP"; apps created through the API (and so Terraform) default to off, so setup turns it on explicitly (V15). Designing for it costs little and avoids a retrofit through the client and paginator.
 - Token held in memory only; never written to disk.
+- **Rate-limit share:** the service app draws on the same org-wide rate limits as every other integration (provisioning, HR sync, sign-in widgets calling the Management API). `MCP_REQUESTS_PER_MINUTE` bounds one user, not the server. Set the app's rate-limit capacity in Okta (Applications → the service app → Application Rate Limits) well below the default share, so a busy or looping MCP client gets 429s before other integrations do **[unverified, V16]**.
 - **Attribution:** Okta System Log attributes calls to the service app. Per-human attribution exists only in the MCP audit log (§12.3); forward to the SIEM.
 - **Service-key compromise = full read of everything the app's scopes and role allow.** Key mounted as a secret file, never in image/env; read-only FS; non-root; scheduled rotation; kill switch in §11.4.
 
@@ -733,12 +749,15 @@ Startup fails fast on missing/invalid values, unreadable key, invalid policy, or
 | Token minted for another service | Strict `aud`; dedicated AS; no token passthrough |
 | **Privilege escalation via the shared service app** | Default-deny policy; derived sensitivity; wildcard excludes sensitive; call-time re-check; read-only scopes + role |
 | Group claim tampering | Claim inside verified JWT; groups ignored unless named by a role |
-| Group-name spoofing (imported or renamed group named like a role group) | Claim and policy use group IDs only; Okta-mastered-only claim expression; restrict and alert on `mcp-okta-*` creation |
+| Group-name spoofing (imported or renamed group named like a role group) | Claim and policy use group IDs only; Okta-mastered-only claim expression |
+| **Self-granted role**: a delegated Okta admin (group, membership or help-desk admin, or a group-rule author) adds themselves to a role group | Outside the server's view. Okta-side: role groups excluded from delegated admins' resource sets, no group rules on them, alert on membership changes (§8.2). Residual: R7 |
+| Weak sign-in to a client app | Authentication policy with MFA on the client apps (§8.2); short token lifetimes |
 | Cross-user leakage of tool lists via shared caches | `cacheScope: "private"` on per-principal list results |
 | Policy tampering / typo | Read-only mount; PR review; load-time validation |
 | Unclassified command exposed | Registry classification required; CI fails |
 | Scope-less operation looks "always available" | Empty derived scopes are a load error (§6.2 check 3) |
 | **Path-parameter injection** (`../`, encoded `/`, `?`, `#`) redirecting the service token to another endpoint, including via Okta's server-side `%2F` decoding | Character rejection before encoding, spec/registry patterns, literal templates, origin+path assertion; regression suite (§6.4) |
+| **Sibling-endpoint aliasing**: a path value that is another endpoint's name (`groups get rules`, `apps get export`), returning that endpoint's data under the called command's policy | Reserved literals derived from the spec are rejected for every path parameter; ID patterns (§6.4 items 1, 5) |
 | Existence oracle via resolver | Policy check runs before resolution (§5.6) |
 | Non-GET operation added to registry | Loader rejects non-GET operations; HTTP client exposes only `get` |
 | Secret-bearing "normal" endpoints | Classify by data returned; `scrub.yaml` regardless of role |
@@ -747,6 +766,7 @@ Startup fails fast on missing/invalid values, unreadable key, invalid policy, or
 | Dev mode exposed over the network | stdio-only dev mode; HTTP always authenticates; image sets `MCP_ENV=production` |
 | Stolen service access token replayed elsewhere | DPoP binds it to an in-memory key |
 | DoS | Item/byte/deadline budgets, global in-flight cap, per-principal limiter, proxy limits |
+| MCP traffic exhausting Okta rate limits shared with other integrations | Per-principal limiter; service app's rate-limit capacity capped in Okta (§10) |
 | Prompt injection via Okta data (unauthenticated attackers control System Log `actor.alternateId`; users control profile fields, device names, descriptions) | `untrusted: true` envelope; `readOnlyHint`; descriptions state results are data; no write tools. **Residual:** client's other tools can exfiltrate; document client-side isolation (dedicated session without egress tools, human approval) |
 | DNS rebinding / browser attacks | `Origin` validation, bearer-only, no cookies, no CORS wildcard |
 | Secret leakage in logs/errors | Never log tokens, keys or result bodies; args redaction; sanitized errors |
@@ -759,7 +779,7 @@ Recorded in `AGENTS.md`. Code in these paths must pass `/security-review` before
 
 - `src/okta_mcp/auth/` (JWT validation, PRM, 401/403, dev mode)
 - `src/okta_mcp/policy/`, `registry/*.yaml` classification fields, the data-class table, `scrub.yaml` (who may call what; what leaves the server)
-- `src/okta_mcp/exec/params.py` and URL building (path-parameter injection)
+- `src/okta_mcp/exec/params.py` and URL building, with the reserved path literals in `src/okta_mcp/registry/spec.py` (path-parameter injection, sibling-endpoint aliasing)
 - `src/okta_mcp/exec/resolve.py` (runs Okta lookups on user input)
 - `src/okta_mcp/exec/cursor.py`, `src/okta_mcp/okta/paginate.py` (token-attached URL following)
 - `src/okta_mcp/okta/token.py`, `src/okta_mcp/okta/dpop.py` (service credential handling)
@@ -853,12 +873,14 @@ M3 is the least certain line. The step 1.5 inventory (`docs/coverage/report.md`)
 | V13 | `uid` vs `sub` semantics; claim expression emitting IDs of Okta-mastered `mcp-okta-*` groups | Identity; authz | **Verified 0.5:** `uid` = user ID, `sub` = login; expression emits IDs |
 | V14 | Which "normal" endpoints return secrets | Data exposure | Dev-org review of every `get`/`list`; extend `scrub.yaml` |
 | V15 | Whether the service app requires DPoP by default; Okta nonce behavior at token and resource endpoints | Service auth | **Verified 0.5:** on by default in the console, off through the API; token endpoint requires a nonce. DPoP on by default in the server |
+| V16 | Okta lets an OAuth service app's share of each rate limit be capped (Application Rate Limits), and the cap applies to `private_key_jwt` client-credentials tokens | Blast radius on other integrations | Check in the dev org with step 6.2; record the chosen share in the runbook |
 | L1 | ~~License for this repo~~ **Decided 2026-10-23:** Apache-2.0 + Commons Clause, same as okta-skills (free to use; may not be sold). Re-authored `SKILL.md` text is compatible (same licensor, same terms) | Distribution | Keep attribution to okta-skills in `resources/`; `pyproject.toml` declares the license file |
 | R1 | Prompt injection via Okta data; exfiltration by client's other tools | Data exfiltration | `untrusted` envelope, `readOnlyHint`, client isolation guidance. Residual accepted |
 | R2 | Okta logs cannot attribute humans | Forensics | Audit log + SIEM |
 | R3 | Group removal not immediate | Revocation lag | Short token TTL |
 | R4 | Behavioral drift from okta-skills (missed gotchas) now that code isn't shared | Correctness | §3 gotcha list as tests; optional dev cross-check; coverage report |
 | R5 | Reimplementation volume (M3) larger than estimated | Schedule | Generated fixtures; re-estimate after step 1.5; ship by domain, prioritizing domains used by the first roles |
+| R7 | Anyone who can manage membership of a role group can grant themselves that role; the server only sees the resulting claim | Privilege escalation through the shared service app | Okta-side controls in §8.2; runbook checklist and System Log alert (plan 7.3). Residual accepted once those are in place |
 | R6 | A single 429 retry with no per-bucket pausing starves under heavy shared use | Throughput | Logged 429 events show whether per-bucket handling is needed (deferred) |
 
 Future work: Path B (XAA), composite handlers, per-bucket 429 handling, `/metrics`, ai-agents with a separate credential, shared rate limiting across replicas, per-role field redaction, DPoP/mTLS-bound user tokens, Helm chart, multi-org.
@@ -912,7 +934,7 @@ The `groups` claim carries IDs of Okta-mastered `mcp-okta-*` groups (§8.2).
 Steps 1–4 are automated by `scripts/okta-setup.py` or the `terraform/okta/` module ([guide](../okta-setup.md)).
 
 1. **Dedicated custom AS:** audience `MCP_PUBLIC_URL`; scope `okta-mcp`; `groups` claim on the access token emitting **IDs** of Okta-mastered `mcp-okta-*` groups (V13); access-token lifetime ≤30 min; rule scopes include `offline_access`; refresh tokens off (A) or rotating with bounded lifetimes (B, §8.3); access policy limiting clients/users.
-2. **Groups:** create role groups; copy their IDs into the policy (names as comments); restrict and alert on `mcp-okta-*` creation/rename.
+2. **Groups:** create role groups; copy their IDs into the policy (names as comments); keep them out of delegated admins' resource sets and out of group rules, and alert on membership changes (§8.2).
 3. **Service app:** API Services app, `private_key_jwt` (upload public JWK, note `kid`), "Require DPoP" on (the console default; turn it on explicitly if the app was created through the API, V15); grant only intended `okta.*.read` scopes; assign Read-only Administrator or a custom role (never Super Admin); store the private key as a container secret.
-4. **Clients:** register approved MCP clients as public OIDC apps (PKCE, exact redirect URIs); allow them in the AS access policy.
+4. **Clients:** register approved MCP clients as public OIDC apps (PKCE, exact redirect URIs); allow them in the AS access policy; assign them an authentication policy that requires MFA (§8.2). Cap the service app's rate-limit share (§10).
 5. **Server:** fill `docker/compose.example.yaml`; mount the policy file read-only; place behind TLS; verify `/readyz`, both PRM URLs, and `tools/list` per role with test users.

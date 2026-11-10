@@ -100,7 +100,9 @@ The rule must allow the authorization code grant only, so a rule that also lists
 
 - Add users to the `mcp-okta-*` groups. The tool creates the groups but never manages membership.
 - To remove a user, take them out of the groups. Under option B, also clear their sessions with token revocation (see [the table above](#refresh-tokens-option-a-or-b)).
-- Restrict who can create or rename `mcp-okta-*` groups, and alert on it: anyone who can create such a group can get it into the `groups` claim.
+- **Protect membership of the `mcp-okta-*` groups.** Anyone who can add a user to one grants that role (design §8.2): Org Admins, Group Admins and Group Membership Admins whose scope includes the group, custom roles with `okta.groups.members.manage`, and group rules that target it. Keep these groups out of delegated admins' resource sets, don't target them with group rules, and alert on `group.user_membership.add` for their IDs. A new or renamed `mcp-okta-*` group grants nothing by itself: the server's policy matches group IDs.
+- **Require MFA for the client apps.** Assign the public client apps an authentication policy that requires MFA (Applications > the client > Sign On); a new app gets the org's default policy. Neither tool sets this.
+- **Cap the service app's rate-limit share** (Applications > the service app > Application Rate Limits), so MCP traffic can't use up limits other integrations depend on (design §10, not yet verified in the dev org).
 - Re-run `check` after any change in the admin console.
 
 ## Terraform

@@ -66,6 +66,11 @@ class Operation:
     """Alternatives: each `oauth2` security entry is one, and any one granted set suffices."""
     tags: tuple[str, ...]
     response: Response
+    reserved: Mapping[str, frozenset[str]] = field(default_factory=lambda: MappingProxyType({}))
+    """Path parameter → the literal segments (casefolded) that any spec path, of any method, has
+    in that parameter's place under a compatible prefix. Sent as the value, one would reach
+    another endpoint: `rules` for `{groupId}` in `/api/v1/groups/{groupId}` is `listGroupRules`
+    (design §6.4)."""
 
 
 @dataclass(frozen=True)
@@ -242,6 +247,37 @@ def _response(r: _Resolver, op: dict[str, Any]) -> Response:
     )
 
 
+def _segments(path: str) -> tuple[str, ...]:
+    return tuple(path.strip("/").split("/"))
+
+
+def _is_var(segment: str) -> bool:
+    return segment.startswith("{") and segment.endswith("}")
+
+
+def _reserved(path: str, paths: list[tuple[str, ...]]) -> dict[str, frozenset[str]]:
+    """See `Operation.reserved`. A prefix is compatible when each segment before the parameter
+    is equal in both paths or a variable in either, so the set errs on the large side: it also
+    holds literals of longer paths and of paths with only non-GET operations (`me` for
+    `/api/v1/users/{id}`)."""
+    template = _segments(path)
+    reserved: dict[str, frozenset[str]] = {}
+    for i, segment in enumerate(template):
+        if not _is_var(segment):
+            continue
+        reserved[segment[1:-1]] = frozenset(
+            other[i].casefold()
+            for other in paths
+            if len(other) > i
+            and not _is_var(other[i])
+            and all(
+                a == b or _is_var(a) or _is_var(b)
+                for a, b in zip(template[:i], other[:i], strict=True)
+            )
+        )
+    return {name: literals for name, literals in reserved.items() if literals}
+
+
 def build_index(spec: Mapping[str, Any]) -> SpecIndex:
     try:
         return _build_index(spec)
@@ -253,6 +289,7 @@ def _build_index(spec: Mapping[str, Any]) -> SpecIndex:
     r = _Resolver(spec)
     operations: dict[str, Operation] = {}
     non_get: dict[str, str] = {}
+    all_paths = [_segments(path) for path in cast(dict[str, Any], spec["paths"])]
     for path, item in cast(dict[str, dict[str, Any]], spec["paths"]).items():
         if "$ref" in item:
             raise SpecError(f"{path}: path item $ref is not supported")
@@ -275,6 +312,7 @@ def _build_index(spec: Mapping[str, Any]) -> SpecIndex:
                 scope_sets=_scope_sets(op),
                 tags=tuple(op.get("tags", [])),
                 response=_response(r, op),
+                reserved=MappingProxyType(_reserved(path, all_paths)),
             )
     return SpecIndex(
         version=str(spec["info"]["version"]),

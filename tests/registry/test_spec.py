@@ -334,3 +334,43 @@ def test_malformed_specs_raise(paths: dict[str, Any]) -> None:
     }
     with pytest.raises(SpecError):
         build_index(_spec(paths, components))
+
+
+def test_reserved_path_literals_from_the_pinned_spec(pinned: SpecIndex) -> None:
+    # `/api/v1/groups/rules` is listGroupRules; `/api/v1/apps/export` a CSV export.
+    assert pinned.operations["getGroup"].reserved == {"groupId": frozenset({"rules"})}
+    assert pinned.operations["listGroupUsers"].reserved == {"groupId": frozenset({"rules"})}
+    assert {"export", "search", "types"} <= pinned.operations["getApplication"].reserved["appId"]
+    assert {"catalog", "questions"} <= pinned.operations["getFactor"].reserved["factorId"]
+    assert pinned.operations["getNetworkZone"].reserved == {}
+    assert "userId" not in pinned.operations["getFactor"].reserved
+
+
+def test_reserved_path_literals() -> None:
+    def op(op_id: str, *names: str) -> dict[str, Any]:
+        params = [{"name": n, "in": "path", "schema": {"type": "string"}} for n in names]
+        return {"operationId": op_id, "parameters": params, "responses": {}}
+
+    spec = {
+        "info": {"version": "1"},
+        "paths": {
+            "/things/{id}": {"get": op("getThing", "id")},
+            "/things/Export": {"get": op("exportThings")},
+            # Non-GET only, and longer than the template: still a name Okta routes elsewhere.
+            "/things/me/reset": {"post": op("resetMine")},
+            "/things/{id}/parts/{partId}": {"get": op("getPart", "id", "partId")},
+            "/things/{id}/parts/catalog": {"get": op("listCatalog", "id")},
+            # A literal where the template has a variable earlier on is a compatible prefix.
+            "/things/Export/parts/all": {"get": op("exportParts")},
+            "/others/{id}/parts/none": {"get": op("otherParts", "id")},
+            "/things": {"get": op("listThings")},
+        },
+    }
+    ops = build_index(spec).operations
+    assert ops["getThing"].reserved == {"id": frozenset({"export", "me"})}
+    assert ops["getPart"].reserved == {
+        "id": frozenset({"export", "me"}),
+        "partId": frozenset({"catalog", "all"}),
+    }
+    assert ops["listCatalog"].reserved == {"id": frozenset({"export", "me"})}
+    assert ops["listThings"].reserved == {}
