@@ -6,10 +6,12 @@ import anyio
 import httpx2
 import pytest
 
+from okta_mcp.exec import envelope
 from okta_mcp.exec.envelope import ResultTooLarge, dumps, item_result, list_result
 from okta_mcp.exec.output import REDACTED, load_scrub
 from okta_mcp.okta.client import OktaClient, UpstreamError, new_http_client
-from okta_mcp.okta.paginate import paginate
+from okta_mcp.okta.paginate import PaginationError, paginate
+from okta_mcp.okta.ratelimit import RateLimited
 from okta_mcp.okta.token import ServiceToken
 
 RULES = load_scrub()
@@ -28,7 +30,7 @@ async def gen(items: list[Any], *, then_sleep: float = 0) -> AsyncGenerator[tupl
     await anyio.sleep(then_sleep)
 
 
-async def result(items: list[Any], **kw: Any) -> dict[str, Any]:
+async def result(items: list[Any], *, then_sleep: float = 0, **kw: Any) -> dict[str, Any]:
     opts: dict[str, Any] = {
         "links": False,
         "cols": COLS,
@@ -36,7 +38,7 @@ async def result(items: list[Any], **kw: Any) -> dict[str, Any]:
         "max_bytes": 65536,
         "resumable": True,
     }
-    text = await list_result(gen(items), RULES, **(opts | kw))
+    text = await list_result(gen(items, then_sleep=then_sleep), RULES, **(opts | kw))
     assert len(text) <= (opts | kw)["max_bytes"]
     return json.loads(text)
 
@@ -200,20 +202,58 @@ async def test_first_item_over_budget_is_result_too_large() -> None:
         await result([group(1, "x" * 500)], max_bytes=200)
 
 
+@pytest.fixture
+def headroom(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The list stops 0.1 s into a 2.1 s call, leaving 2 s before `fail_after` would fire.
+    monkeypatch.setattr(envelope, "_DEADLINE_HEADROOM", 2.0)
+
+
 @pytest.mark.anyio
+@pytest.mark.usefixtures("headroom")
 async def test_deadline_stops_resumable_list_with_partial_rows() -> None:
-    with anyio.fail_after(1.3):
-        text = await list_result(
-            gen([group(1), group(2)], then_sleep=10),
-            RULES,
-            links=False,
-            cols=COLS,
-            limit=50,
-            max_bytes=65536,
-            resumable=True,
-        )
-    got = json.loads(text)
+    with anyio.fail_after(2.1):
+        got = await result([group(1), group(2)], then_sleep=10)
     assert (got["count"], got["truncated"]) == (2, "deadline")
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("headroom")
+async def test_deadline_before_first_item_times_out() -> None:
+    with pytest.raises(TimeoutError, match="before the first item"), anyio.fail_after(2.1):
+        await result([], then_sleep=10)
+
+
+@pytest.mark.anyio
+async def test_deadline_already_within_headroom_times_out_without_rows() -> None:
+    with pytest.raises(TimeoutError, match="before the first item"), anyio.fail_after(0.5):
+        await result([], then_sleep=0.1)
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("headroom")
+async def test_deadline_during_read_past_limit_is_max_items() -> None:
+    with anyio.fail_after(2.1):
+        got = await result([group(1), group(2)], then_sleep=10, limit=2)
+    assert (got["count"], got["truncated"]) == (2, "max_items")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "error",
+    [UpstreamError(500, "boom"), RateLimited("slow down"), PaginationError("off path")],
+    ids=["upstream", "rate_limited", "pagination"],
+)
+async def test_failed_read_past_limit_keeps_rows(error: Exception) -> None:
+    async def items() -> AsyncGenerator[tuple[Any, str, int]]:
+        yield group(1), "/p", 0
+        yield group(2), "/p", 1
+        raise error
+
+    text = await list_result(
+        items(), RULES, links=False, cols=COLS, limit=2, max_bytes=65536, resumable=True
+    )
+    got = json.loads(text)
+    assert (got["count"], got["truncated"]) == (2, "max_items")
 
 
 @pytest.mark.anyio

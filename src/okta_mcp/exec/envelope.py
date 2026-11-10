@@ -15,6 +15,9 @@ from typing import Any, Literal
 import anyio
 
 from okta_mcp.exec.output import ScrubRules, render
+from okta_mcp.okta.client import UpstreamError
+from okta_mcp.okta.paginate import PaginationError
+from okta_mcp.okta.ratelimit import RateLimited
 
 Truncated = Literal["max_items", "max_bytes", "deadline", "non_resumable"]
 
@@ -71,9 +74,11 @@ async def list_result(
 ) -> str:
     """A list from `paginate`'s `items`: `rows` of `cols` cells, or with `cols` `None` whole
     `items`. One item past `limit` is read to tell whether the list is complete, which can cost
-    a page fetch when `limit` ends a page. A non-resumable list is never cut by the deadline (the
-    call times out instead) and reports any other cut as `non_resumable`. Raises `ResultTooLarge`
-    if not even the first item fits, and whatever `items` raises."""
+    a page fetch when `limit` ends a page; if that read fails or runs into the deadline, the list
+    is reported cut at `max_items`. A non-resumable list is never cut by the deadline (the call
+    times out instead) and reports any other cut as `non_resumable`. Raises `ResultTooLarge` if
+    not even the first item fits, `TimeoutError` if the deadline comes before it, and whatever
+    `items` raises."""
     # Reserve the envelope at its largest, so the final text fits whatever count and reason.
     budget = max_bytes - len(_head(limit, cols)) - len(_tail(_LONGEST_REASON))
     rows: list[str] = []
@@ -82,9 +87,10 @@ async def list_result(
     deadline = anyio.current_effective_deadline() - _DEADLINE_HEADROOM if resumable else math.inf
     async with aclosing(items):
         with anyio.CancelScope(deadline=deadline) as scope:
-            async for item, _page, _index in items:
-                if len(rows) == limit:
-                    truncated = "max_items"
+            while truncated is None and len(rows) < limit:
+                try:
+                    item, _page, _index = await anext(items)
+                except StopAsyncIteration:
                     break
                 row = dumps(render(item, rules, links=links, cols=cols))
                 size = len(row) + (1 if rows else 0)
@@ -92,10 +98,21 @@ async def list_result(
                     if not rows:
                         raise ResultTooLarge(max_bytes)
                     truncated = "max_bytes"
-                    break
-                rows.append(row)
-                used += size
-        if scope.cancelled_caught:
+                else:
+                    rows.append(row)
+                    used += size
+            if truncated is None and len(rows) == limit:
+                truncated = "max_items"
+                try:
+                    await anext(items)
+                except StopAsyncIteration:
+                    truncated = None
+                except (UpstreamError, RateLimited, PaginationError):
+                    pass  # The rows asked for are in hand; a resume meets the error itself.
+        if scope.cancelled_caught and truncated is None:
+            # An empty cut page would resume at the same item forever.
+            if not rows:
+                raise TimeoutError("deadline reached before the first item")
             truncated = "deadline"
     if truncated is not None and not resumable:
         truncated = "non_resumable"

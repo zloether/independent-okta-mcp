@@ -460,6 +460,7 @@ def test_write_scope_rejected(env: dict[str, str]) -> None:
         ("MCP_PORT", "http"),
         ("MCP_MAX_ITEMS", "0"),
         ("MCP_MAX_BYTES", "-1"),
+        ("MCP_MAX_BYTES", "1023"),
         ("MCP_CALL_TIMEOUT", "inf"),
         ("MCP_CALL_TIMEOUT", "nan"),
         ("MCP_CALL_TIMEOUT", "0"),

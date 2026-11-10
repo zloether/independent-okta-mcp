@@ -126,7 +126,7 @@ class Config(BaseModel):
     dev_principal_file: Path | None = Field(None, alias="MCP_DEV_PRINCIPAL_FILE")
     default_limit: int = Field(50, gt=0, alias="MCP_DEFAULT_LIMIT")
     max_items: int = Field(1000, gt=0, alias="MCP_MAX_ITEMS")
-    max_bytes: int = Field(65536, gt=0, alias="MCP_MAX_BYTES")
+    max_bytes: int = Field(65536, ge=1024, alias="MCP_MAX_BYTES")
     max_batch: int = Field(50, gt=0, alias="MCP_MAX_BATCH")
     call_timeout: float = Field(60, gt=0, alias="MCP_CALL_TIMEOUT")
     okta_max_inflight: int = Field(10, gt=0, alias="MCP_OKTA_MAX_INFLIGHT")
