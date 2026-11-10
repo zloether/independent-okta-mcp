@@ -168,6 +168,20 @@ def test_param_and_schema_refs_are_inlined() -> None:
     assert op.response.kind == "list"
 
 
+def test_query_explode_follows_the_spec_and_defaults_to_true(pinned: SpecIndex) -> None:
+    assert not pinned.operations["getBrand"].params["expand"].explode
+    assert pinned.operations["listAuthenticatorEnrollments"].params["discloseIdentifiers"].explode
+
+
+def test_unsupported_query_style_is_an_error() -> None:
+    param = {"name": "a", "in": "query", "style": "pipeDelimited", "schema": {"type": "array"}}
+    spec = _spec(
+        {"/x": {"get": {"operationId": "getX", "parameters": [param], "responses": _ok({})}}}
+    )
+    with pytest.raises(SpecError, match="getX: a has unsupported style pipeDelimited"):
+        build_index(spec)
+
+
 def test_scope_sets_one_per_oauth2_entry_and_empty_entries_dropped() -> None:
     security = [
         {"apiToken": []},
