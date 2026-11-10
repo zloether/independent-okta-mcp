@@ -197,6 +197,23 @@ async def test_rows_that_fit_exactly_are_all_kept() -> None:
 
 
 @pytest.mark.anyio
+async def test_envelope_over_budget_is_result_too_large_before_any_read() -> None:
+    read = False
+
+    async def items() -> AsyncGenerator[tuple[Any, str, int]]:
+        nonlocal read
+        read = True
+        yield group(1), "/p", 0
+
+    cols = tuple(f"profile.attribute_{i:02d}" for i in range(60))
+    with pytest.raises(ResultTooLarge):
+        await list_result(
+            items(), RULES, links=False, cols=cols, limit=1000, max_bytes=1024, resumable=True
+        )
+    assert not read
+
+
+@pytest.mark.anyio
 async def test_first_item_over_budget_is_result_too_large() -> None:
     with pytest.raises(ResultTooLarge, match="use select"):
         await result([group(1, "x" * 500)], max_bytes=200)

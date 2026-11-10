@@ -81,6 +81,8 @@ async def list_result(
     `items` raises."""
     # Reserve the envelope at its largest, so the final text fits whatever count and reason.
     budget = max_bytes - len(_head(limit, cols)) - len(_tail(_LONGEST_REASON))
+    if budget < 0:  # A long `select` alone can fill it; fail before any Okta request.
+        raise ResultTooLarge(max_bytes)
     rows: list[str] = []
     used = 0
     truncated: Truncated | None = None

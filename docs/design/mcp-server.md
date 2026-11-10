@@ -442,7 +442,7 @@ Because the paginator is ours, the envelope builder consumes items **one at a ti
 - page size never shrinks to fit the budget (no small-page propagation into `next` links).
 
 Rules:
-- **Non-list results** (single resources, SAML metadata) over `MCP_MAX_BYTES` fail with `result_too_large` and a hint to use `select`. So does a list whose first item alone doesn't fit: an empty truncated page would resume at the same item forever.
+- **Non-list results** (single resources, SAML metadata) over `MCP_MAX_BYTES` fail with `result_too_large` and a hint to use `select`. So does a list whose first item alone doesn't fit: an empty truncated page would resume at the same item forever. A list whose envelope alone doesn't fit (a long `select` names many columns) fails before any Okta request.
 - **Deadline:** a resumable list stops 1 s before the call's deadline and returns what it has (`truncated: "deadline"`); with nothing yet, the call fails with `timeout`, for the same reason as above. A non-resumable list isn't cut; the call fails with `timeout`. Any other cut of a non-resumable list is reported as `truncated: "non_resumable"`.
 - **The executor owns `truncated`** and `warnings`.
 - **Resumability is a property of (command, args):** `resumable: true | false | {unless_args: […]}` in the registry. Simple and resolved commands are resumable. Post-v1 composite handlers default to non-resumable (`truncated: "non_resumable"`), are capped at `MCP_MAX_BATCH` (50) keys for batch results, and get their own aggregation caps when they are designed.
