@@ -18,8 +18,11 @@ def pinned(timed_load: tuple[SpecIndex, float]) -> SpecIndex:
     return timed_load[0]
 
 
-def test_load_time_under_two_seconds(timed_load: tuple[SpecIndex, float]) -> None:
-    assert timed_load[1] < 2
+def test_load_time_within_budget(timed_load: tuple[SpecIndex, float]) -> None:
+    # A guard against a load that grows with the square of the spec, not a benchmark: parsing
+    # the 3.9 MB YAML alone takes about 1.8 s on Python 3.12 (1.3 s on 3.13), and a shared CI
+    # runner is slower still, so a 2 s limit failed there without any change to the load.
+    assert timed_load[1] < 5
 
 
 def test_known_operations_resolve(pinned: SpecIndex) -> None:
