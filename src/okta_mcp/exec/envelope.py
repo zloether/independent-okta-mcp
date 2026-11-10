@@ -4,11 +4,12 @@ A list is consumed one item at a time, each rendered by `output.render`, and sto
 of: `limit` items, the next item not fitting `max_bytes`, or the deadline near (resumable commands
 only). The result is one compact JSON text whose size, envelope included, never exceeds
 `max_bytes`. Envelope fields other than `untrusted` appear only when they differ from the default.
+A cut resumable list carries `next_cursor`, which points at the last item delivered.
 """
 
 import json
 import math
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import aclosing
 from typing import Any, Literal
 
@@ -58,8 +59,16 @@ def _head(count: int, cols: tuple[str, ...] | None) -> str:
     return dumps(head)[:-1] + (',"items":[' if cols is None else ',"rows":[')
 
 
-def _tail(truncated: Truncated | None) -> str:
-    return "]}" if truncated is None else "]," + dumps({"truncated": truncated})[1:]
+def _cursor_field(cursor: str) -> str:
+    return ',"next_cursor":' + dumps(cursor)
+
+
+def _tail(truncated: Truncated | None, cursor: str | None, warnings: Sequence[str]) -> str:
+    fields: dict[str, Any] = {} if truncated is None else {"truncated": truncated}
+    if warnings:
+        fields["warnings"] = list(warnings)
+    tail = "]" if cursor is None or truncated is None else "]" + _cursor_field(cursor)
+    return tail + ("," + dumps(fields)[1:] if fields else "}")
 
 
 async def list_result(
@@ -70,39 +79,49 @@ async def list_result(
     cols: tuple[str, ...] | None,
     limit: int,
     max_bytes: int,
-    resumable: bool,
+    next_cursor: Callable[[str, int], str] | None,
+    warnings: Sequence[str] = (),
 ) -> str:
     """A list from `paginate`'s `items`: `rows` of `cols` cells, or with `cols` `None` whole
     `items`. One item past `limit` is read to tell whether the list is complete, which can cost
     a page fetch when `limit` ends a page; if that read fails or runs into the deadline, the list
-    is reported cut at `max_items`. A non-resumable list is never cut by the deadline (the call
-    times out instead) and reports any other cut as `non_resumable`. Raises `ResultTooLarge` if
-    not even the first item fits, `TimeoutError` if the deadline comes before it, and whatever
-    `items` raises."""
+    is reported cut at `max_items`.
+
+    The list is resumable if `next_cursor` is given: called with an item's page and index, it
+    returns the cursor that resumes after that item (`Cursors.issue`). A cut list then carries
+    the last delivered item's cursor as `next_cursor`, and every row is charged for its cursor,
+    so a list that only just fits may be cut where it would have been complete. A non-resumable
+    list is never cut by the deadline (the call times out instead) and reports any other cut as
+    `non_resumable`. `warnings` are added as given. Raises `ResultTooLarge` if not even the first
+    item fits, `TimeoutError` if the deadline comes before it, and whatever `items` raises."""
+    resumable = next_cursor is not None
     # Reserve the envelope at its largest, so the final text fits whatever count and reason.
-    budget = max_bytes - len(_head(limit, cols)) - len(_tail(_LONGEST_REASON))
+    budget = max_bytes - len(_head(limit, cols)) - len(_tail(_LONGEST_REASON, None, warnings))
     if budget < 0:  # A long `select` alone can fill it; fail before any Okta request.
         raise ResultTooLarge(max_bytes)
     rows: list[str] = []
     used = 0
+    cursor: str | None = None
     truncated: Truncated | None = None
     deadline = anyio.current_effective_deadline() - _DEADLINE_HEADROOM if resumable else math.inf
     async with aclosing(items):
         with anyio.CancelScope(deadline=deadline) as scope:
             while truncated is None and len(rows) < limit:
                 try:
-                    item, _page, _index = await anext(items)
+                    item, page, index = await anext(items)
                 except StopAsyncIteration:
                     break
                 row = dumps(render(item, rules, links=links, cols=cols))
                 size = len(row) + (1 if rows else 0)
-                if used + size > budget:
+                here = None if next_cursor is None else next_cursor(page, index)
+                if used + size + (0 if here is None else len(_cursor_field(here))) > budget:
                     if not rows:
                         raise ResultTooLarge(max_bytes)
                     truncated = "max_bytes"
                 else:
                     rows.append(row)
                     used += size
+                    cursor = here
             if truncated is None and len(rows) == limit:
                 truncated = "max_items"
                 try:
@@ -118,4 +137,4 @@ async def list_result(
             truncated = "deadline"
     if truncated is not None and not resumable:
         truncated = "non_resumable"
-    return _head(len(rows), cols) + ",".join(rows) + _tail(truncated)
+    return _head(len(rows), cols) + ",".join(rows) + _tail(truncated, cursor, warnings)

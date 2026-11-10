@@ -233,24 +233,25 @@ Design: §9.2, §7.2, [T1](design/t1-tool-surface.md) D4–D6 · Depends: 0.1
 
 Verify: `uv run pytest tests/exec/test_output.py`
 
-### 2.8 Envelope & budgets ◐
+### 2.8 Envelope & budgets ☑
 Design: §7.1, §7.2, [T1](design/t1-tool-surface.md) D7, D8 · Depends: 2.5, 2.7
 - [x] **(slice)** `exec/envelope.py`: consume paginator item-by-item; stop on items / post-select bytes / deadline; `truncated` (holds the reason, T1 D8), `untrusted: true`; table encoding and sparse envelope; single-resource shape; `result_too_large`. No `next_cursor` until 2.9
 - [x] **(slice)** Tests: cap mid-page, byte cap, deadline, non-list oversize
-- [ ] Cursor resume: emit `next_cursor` (page state + in-page index of the last delivered item) and reserve its size in the byte budget; `warnings` on resumed responses (with 2.9)
+- [x] Cursor resume: emit `next_cursor` (page state + in-page index of the last delivered item) and reserve its size in the byte budget; `warnings` on resumed responses (with 2.9)
 
 Verify: `uv run pytest tests/exec/test_envelope.py`
 
-### 2.9 Cursors 🔒 ☐
+### 2.9 Cursors 🔒 ☑
 Design: §7.3 · Depends: 2.8
-- [ ] `exec/cursor.py`: HMAC-signed payload (single key), `uid`/tool/cmd/`args_sha256` (original args) binding, resolved `path_params`, relative `page.rel` only (first page = initial request), 15-min expiry; resume requires resent args matching the hash, re-derives the URL from `path_params` and checks the path against the template. `page.rel` is the paginator's page state as sent, so an equivalent-encoding next link Okta returned (e.g. `%75sers`) is kept: compare paths with `paginate.normalise_path` on both sides, not literally (2.5 review)
-- [ ] Tests: tamper, wrong uid, wrong args, expired, wrong key, absolute URL in payload rejected, first-page truncation, **resume yields every item exactly once on an unchanged list** across item and byte caps
+- [x] `exec/cursor.py`: compact HMAC-signed payload (T1 D10; single key, 128-bit tag), `u`/`t`/`c`/`a` (caller, tool, command, hash of the original args) binding, resolved path params `p`, the page's query string `q` only (first page = initial request's query), 15-min expiry; resume requires resent args matching the hash and re-derives the URL from the template and `p`. No path is stored, so the 2.5 review's "compare with `normalise_path`" item no longer applies: an equivalent-encoding next link's path is dropped and the template's is used
+- [x] Tests: tamper, wrong uid, wrong args, expired, wrong key, absolute URL in payload rejected, first-page truncation, **resume yields every item exactly once on an unchanged list** across item and byte caps
 
 Verify: `uv run pytest tests/exec/test_cursor.py`; `/security-review`.
 
 ### 2.10 Executor & resolver 🔒 ☐
 Design: §5.5, §5.6 · Depends: 2.4, 2.6, 2.9
-- [ ] **(slice)** `exec/executor.py`: (principal, tool, command, args, select, links, limit, cursor) → envelope or structured error; policy check (incl. `arg_rules`) before any resolver or Okta request; deadline wrapper; maps exceptions to §5.5 codes. Cursor argument rejected until 2.9
+- [ ] **(slice)** `exec/executor.py`: (principal, tool, command, args, select, links, limit, cursor) → envelope or structured error; policy check (incl. `arg_rules`) before any resolver or Okta request; deadline wrapper; maps exceptions to §5.5 codes
+- [ ] Cursor wiring (2.9 built the parts; `call` in `tests/exec/test_cursor.py` shows the order): one `Cursors(config.cursor_key)` at startup; `resumable(command, args)` decides whether `list_result` gets `next_cursor`; with a cursor: validate the resent args, `Cursors.open`, **policy check on those args**, then `resume_url` → `paginate(client, url)` with no `params` → `after(items, skip)`, `warnings=(RESUMED_WARNING,)`, and no resolver call (the cursor's `p` is already resolved); a cursor on a non-list or non-resumable call and `CursorError` → `invalid_arguments`; `path_params` given to `issue` are the values `build_request` encoded. Test that a role change between pages is enforced on the resumed call
 - [ ] `exec/resolve.py`: `user_id` only — `00u…` ID short-circuit, else exact `getUser` lookup, `not_found` otherwise; cached per call
 - [ ] `groups list` with `q`: Okta doesn't page `q`, so the forced `limit=200` (`page_size`) cuts results with no next link and no sign of truncation (1.6 review). Don't send `limit` when `q` is passed (or mark the result truncated); needs a registry field or executor rule, test with a mocked 250-item response
 - [ ] The resolver refuses `me`: `/api/v1/users/me` is Okta's alias for the token's own user (the SSWS token's owner in dev mode), and it is not a spec path, so `Operation.reserved` doesn't list it (2026-11-10 review)
@@ -304,7 +305,7 @@ Design: §8.6 · Depends: 2.10, 3.3, 0.4
 - [ ] `auth/devmode.py`: `MCP_DEV_MODE` + principal file; refuse when `MCP_ENV=production`
 - [ ] `okta-mcp --stdio` entrypoint wiring executor + tools + policy; HTTP entrypoint refuses to start when `MCP_DEV_MODE` is set
 - [ ] Manual (after 0.5): connect Claude Code (or Inspector) to the dev org; run every pilot command
-- [ ] T1 check: give the model a few real helpdesk-style tasks on the pilot domains; record tokens per call and whether it reads tables, uses `okta_help` and `select` correctly; revise T1 decisions in the Decisions log before 2.9 and Phase 5 build on them
+- [ ] T1 check: give the model a few real helpdesk-style tasks on the pilot domains; record tokens per call and whether it reads tables, uses `okta_help` and `select` correctly; revise T1 decisions in the Decisions log before Phase 5 builds on them (2.9 was built first, 2026-11-10: if the check changes D8 or D10, `exec/cursor.py` and the envelope's `next_cursor`/`warnings` fields change with it)
 
 Verify: refusal tests pass; pilot commands return real data from the dev org; T1 check recorded; `/security-review`.
 

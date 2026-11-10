@@ -67,7 +67,7 @@ def _next_href(response: httpx2.Response, body: Any, mode: Mode) -> str | None:
 async def paginate(
     client: OktaClient,
     url: str,
-    params: Mapping[str, str] | None = None,
+    params: Mapping[str, str | list[str]] | None = None,
     *,
     mode: Mode,
     items_key: str | None = None,
