@@ -57,7 +57,7 @@ Mistakes in these paths are the hardest to undo (design §12.2). Code touching t
 
 - `src/okta_mcp/auth/` — JWT validation, Protected Resource Metadata, 401/403, dev mode
 - `src/okta_mcp/policy/`, the classification fields in `src/okta_mcp/data/registry/*.yaml`, the data-class → sensitivity table, `src/okta_mcp/data/scrub.yaml` — who may call what; what leaves the server
-- `src/okta_mcp/exec/params.py` and URL building — path-parameter injection
+- `src/okta_mcp/exec/params.py` and URL building, and the reserved path literals in `src/okta_mcp/registry/spec.py` — path-parameter injection, sibling-endpoint aliasing
 - `src/okta_mcp/exec/resolve.py` — runs Okta lookups on user input
 - `src/okta_mcp/exec/cursor.py`, `src/okta_mcp/okta/paginate.py` — token-attached URL following
 - `src/okta_mcp/okta/token.py`, `src/okta_mcp/okta/dpop.py` — service credential handling

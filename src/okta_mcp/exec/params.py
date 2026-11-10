@@ -3,7 +3,10 @@
 Okta decodes `%2F` and collapses dot segments server-side, so percent-encoding alone doesn't keep
 a value inside its path segment: a path value is restricted first, then encoded with no safe
 characters. The rule applies whatever the argument's `pattern`, so it also covers "ID or login"
-parameters that have none. Query values go out as a params mapping, never concatenated.
+parameters that have none. A value that stays inside its segment can still name another
+endpoint (`rules` as a group ID is `/api/v1/groups/rules`, the group-rules list), so the literal
+segments the spec has in the parameter's place (`Operation.reserved`) are refused as well. Query
+values go out as a params mapping, never concatenated.
 """
 
 import re
@@ -22,7 +25,7 @@ _FORBIDDEN = frozenset("/\\%?#")
 _VAR = re.compile(r"\{([^}]*)\}")
 
 
-def _path_problem(value: object) -> str | None:
+def _path_problem(value: object, reserved: frozenset[str] = frozenset()) -> str | None:
     if not isinstance(value, str):
         return "must be a string"
     if len(value) > PATH_VALUE_MAX:
@@ -34,13 +37,17 @@ def _path_problem(value: object) -> str | None:
         # Category C: control, format, surrogate, private-use and unassigned code points.
         if any(c in _FORBIDDEN or c.isspace() or unicodedata.category(c)[0] == "C" for c in form):
             return "can't contain / \\ % ? #, whitespace or control characters"
+        # Casefolded: Okta may match path literals case-insensitively.
+        if form.casefold() in reserved:
+            return "is the name of another endpoint, not an ID"
     return None
 
 
-def path_segment(arg: str, value: object) -> str:
+def path_segment(arg: str, value: object, reserved: frozenset[str] = frozenset()) -> str:
     """`value` percent-encoded with no safe characters. Raises `InvalidArguments` naming `arg`,
-    never the value, if the value breaks the §6.4 character rule."""
-    if (problem := _path_problem(value)) is not None:
+    never the value, if the value breaks the §6.4 character rule or is one of `reserved` (the
+    parameter's `Operation.reserved` entry)."""
+    if (problem := _path_problem(value, reserved)) is not None:
         raise InvalidArguments(f"arg {arg!r} {problem}")
     return quote(str(value), safe="")
 
@@ -66,12 +73,13 @@ def build_request(
     `resolve: user_id` arg must already hold the resolved user ID. The server's `page_size` goes
     out as `limit`. Raises `InvalidArguments` listing every schema and path problem at once."""
     entry = command.entry
+    reserved = command.operation.reserved
     problems = {
         f"arg {name!r} {problem}"
         for name, value in args.items()
         if name in entry.args
-        and entry.args[name].path_param is not None
-        and (problem := _path_problem(value)) is not None
+        and (param := entry.args[name].path_param) is not None
+        and (problem := _path_problem(value, reserved.get(param, frozenset()))) is not None
     }
     problems |= schema_problems(command, args)
     if problems:

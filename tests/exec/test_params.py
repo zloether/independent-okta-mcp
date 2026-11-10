@@ -294,6 +294,57 @@ def test_path_segment_rejects_independently_of_pattern() -> None:
     assert path_segment("user", "00u1abcDEFghiJKLm0h7") == "00u1abcDEFghiJKLm0h7"
 
 
+def _reserved_cases() -> list[tuple[str, str, str]]:
+    return [
+        (op.operation_id, param, literal)
+        for op in load_spec().operations.values()
+        for param, literals in op.reserved.items()
+        for literal in sorted(literals)
+    ]
+
+
+@pytest.mark.parametrize("case", _reserved_cases(), ids="-".join)
+def test_sibling_endpoint_names_are_rejected_for_every_spec_path_param(
+    case: tuple[str, str, str], spec: SpecIndex
+) -> None:
+    op_id, param, literal = case
+    reserved = spec.operations[op_id].reserved[param]
+    for value in (literal, literal.upper(), literal.title()):
+        with pytest.raises(InvalidArguments, match=f"arg '{param}' is the name of another"):
+            path_segment(param, value, reserved)
+
+
+@pytest.mark.anyio
+async def test_path_value_naming_another_endpoint_sends_no_request(spec: SpecIndex) -> None:
+    # No `pattern`, so only the reserved-literal rule keeps `export` from reaching
+    # `/api/v1/apps/export` (getApplicationsCsvExport) as an app "ID".
+    registry = build_registry(
+        {
+            "apps.yaml": {
+                "domain": "apps",
+                "description": "Apps.",
+                "commands": {
+                    "get": {
+                        "operation": "getApplication",
+                        "summary": "Get an app",
+                        "args": {"app": {"path_param": "appId"}},
+                        "data_classes": ["org-config"],
+                    }
+                },
+            }
+        },
+        spec,
+    )
+    get = registry.domains["apps"].commands["get"]
+    okta = Okta()
+    for value in ("export", "Export", "search", "types", "\N{FULLWIDTH LATIN SMALL LETTER E}xport"):
+        with pytest.raises(InvalidArguments, match="arg 'app'"):
+            await _call(okta, get, {"app": value})
+    assert okta.requests == []
+    await _call(okta, get, {"app": "0oa1emaKYZTWRYYRRTSK"})
+    assert [r.url.path for r in okta.requests] == ["/api/v1/apps/0oa1emaKYZTWRYYRRTSK"]
+
+
 def test_build_url_checks_template_and_origin() -> None:
     template = "/api/v1/groups/{groupId}/roles/{roleAssignmentId}"
     with pytest.raises(RuntimeError):
