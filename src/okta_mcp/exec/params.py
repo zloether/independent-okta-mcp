@@ -9,13 +9,13 @@ parameters that have none. Query values go out as a params mapping, never concat
 import re
 import unicodedata
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx2
 
 from okta_mcp.registry.loader import Command
-from okta_mcp.registry.schema import InvalidArguments, validate_args
+from okta_mcp.registry.schema import InvalidArguments, schema_problems
 
 PATH_VALUE_MAX = 256
 _FORBIDDEN = frozenset("/\\%?#")
@@ -25,13 +25,15 @@ _VAR = re.compile(r"\{([^}]*)\}")
 def _path_problem(value: object) -> str | None:
     if not isinstance(value, str):
         return "must be a string"
-    if value in ("", ".", ".."):
-        return "can't be empty, . or .."
     if len(value) > PATH_VALUE_MAX:
         return f"is over {PATH_VALUE_MAX} characters"
-    # Category C: control, format, surrogate, private-use and unassigned code points.
-    if any(c in _FORBIDDEN or c.isspace() or unicodedata.category(c)[0] == "C" for c in value):
-        return "can't contain / \\ % ? #, whitespace or control characters"
+    # The NFKC form too, in case Okta folds lookalikes (fullwidth `..`, `/`) after decoding.
+    for form in (value, unicodedata.normalize("NFKC", value)):
+        if form in ("", ".", ".."):
+            return "can't be empty, . or .."
+        # Category C: control, format, surrogate, private-use and unassigned code points.
+        if any(c in _FORBIDDEN or c.isspace() or unicodedata.category(c)[0] == "C" for c in form):
+            return "can't contain / \\ % ? #, whitespace or control characters"
     return None
 
 
@@ -59,34 +61,38 @@ def build_url(org_url: str, template: str, segments: Mapping[str, str]) -> str:
 
 def build_request(
     command: Command, args: Mapping[str, Any], org_url: str
-) -> tuple[str, dict[str, str]]:
-    """The URL and query params for `command` with `args`, which are validated here too. The
-    server's `page_size` goes out as `limit`. Raises `InvalidArguments` listing every problem."""
-    validate_args(command, args)
-    segments: dict[str, str] = {}
-    params: dict[str, str] = {}
-    problems: list[str] = []
-    for name, value in args.items():
-        arg = command.entry.args[name]
-        if arg.path_param is None:
-            params[arg.param] = _query_value(value)
-        elif (problem := _path_problem(value)) is not None:
-            problems.append(f"arg {name!r} {problem}")
-        else:
-            segments[arg.path_param] = path_segment(name, value)
+) -> tuple[str, dict[str, str | list[str]]]:
+    """The URL and query params for `command` with `args`, which are validated here too. A
+    `resolve: user_id` arg must already hold the resolved user ID. The server's `page_size` goes
+    out as `limit`. Raises `InvalidArguments` listing every schema and path problem at once."""
+    entry = command.entry
+    problems = {
+        f"arg {name!r} {problem}"
+        for name, value in args.items()
+        if name in entry.args
+        and entry.args[name].path_param is not None
+        and (problem := _path_problem(value)) is not None
+    }
+    problems |= schema_problems(command, args)
     if problems:
         raise InvalidArguments("; ".join(sorted(problems)))
-    if command.entry.page_size is not None:
-        params["limit"] = str(command.entry.page_size)
+    segments: dict[str, str] = {}
+    params: dict[str, str | list[str]] = {}
+    for name, value in args.items():
+        arg = entry.args[name]
+        if arg.path_param is not None:
+            segments[arg.path_param] = quote(value, safe="")
+        elif isinstance(value, list):
+            items = [_query_value(v) for v in cast(list[object], value)]
+            params[arg.param] = (
+                items if command.operation.params[arg.param].explode else ",".join(items)
+            )
+        else:
+            params[arg.param] = _query_value(value)
+    if entry.page_size is not None:
+        params["limit"] = str(entry.page_size)
     return build_url(org_url, command.operation.path, segments), params
 
 
 def _query_value(value: object) -> str:
-    match value:
-        case bool():
-            return "true" if value else "false"
-        case int() | str():
-            return str(value)
-        case _:
-            # Okta's encoding of array query params varies by endpoint (Phase 5).
-            raise TypeError("only string, integer and boolean query values are supported")
+    return ("true" if value else "false") if isinstance(value, bool) else str(value)

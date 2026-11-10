@@ -225,11 +225,15 @@ def _describe(text: str) -> str:
 def validate_args(command: "Command", args: object) -> None:
     """Raise `InvalidArguments` naming every problem and the valid options. Values the caller
     sent are never echoed back; unknown key names only shortened and capped."""
+    if messages := schema_problems(command, args):
+        raise InvalidArguments("; ".join(sorted(messages)))
+
+
+def schema_problems(command: "Command", args: object) -> set[str]:
+    """The messages `validate_args` would join, for callers that add their own."""
     props = cast(Mapping[str, Any], command.schema["properties"])
     errors = command.validator.iter_errors(cast(Any, args))
-    messages = sorted({_message(e, args, props) for e in errors})
-    if messages:
-        raise InvalidArguments("; ".join(messages))
+    return {_message(e, args, props) for e in errors}
 
 
 def _message(e: ValidationError, args: object, props: Mapping[str, Any]) -> str:

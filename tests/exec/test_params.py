@@ -32,6 +32,12 @@ PAYLOADS: list[object] = [
     "a\N{LINE SEPARATOR}b",
     "a\N{ZERO WIDTH SPACE}b",
     "00g1emaKYZTWRYYRRTSK\n",
+    # Lookalikes whose NFKC form is `..`, `/` or `\`.
+    "\N{FULLWIDTH FULL STOP}\N{FULLWIDTH FULL STOP}",
+    "\N{ONE DOT LEADER}\N{ONE DOT LEADER}",
+    "\N{TWO DOT LEADER}",
+    "a\N{FULLWIDTH SOLIDUS}b",
+    "a\N{FULLWIDTH REVERSE SOLIDUS}b",
     5,
     None,
     ["a"],
@@ -51,7 +57,7 @@ def spec() -> SpecIndex:
     return load_spec()
 
 
-def _unpatterned(spec: SpecIndex) -> list[Command]:
+def _unpatterned(spec: SpecIndex) -> dict[str, Command]:
     """Commands whose path params have no pattern, so only the character rule stands between a
     payload and the URL."""
     registry = build_registry(
@@ -65,6 +71,35 @@ def _unpatterned(spec: SpecIndex) -> list[Command]:
                         "summary": "Get a user",
                         "args": {"user": {"path_param": "id"}},
                         "data_classes": ["pii"],
+                    },
+                    "get-enrollments": {
+                        "operation": "listAuthenticatorEnrollments",
+                        "summary": "Authenticator enrollments",
+                        "args": {
+                            "user": {"path_param": "userId", "resolve": "user_id"},
+                            "disclose_identifiers": {
+                                "query": "discloseIdentifiers",
+                                "arg_rule": {"raises_sensitivity_to": "sensitive"},
+                            },
+                        },
+                        "response_override": {"kind": "list", "reason": "V8"},
+                        "view": ["id", "type", "status", "name"],
+                        "data_classes": ["mfa-state", "pii"],
+                    },
+                },
+            },
+            "brands.yaml": {
+                "domain": "brands",
+                "description": "Brands.",
+                "commands": {
+                    "get": {
+                        "operation": "getBrand",
+                        "summary": "Get a brand",
+                        "args": {
+                            "brand": {"path_param": "brandId"},
+                            "expand": {"query": "expand", "allowed_values": ["themes", "domains"]},
+                        },
+                        "data_classes": ["org-config"],
                     }
                 },
             },
@@ -90,13 +125,13 @@ def _unpatterned(spec: SpecIndex) -> list[Command]:
         },
         spec,
     )
-    return [c for d in registry.domains.values() for c in d.commands.values()]
+    return {f"{d.name} {c.name}": c for d in registry.domains.values() for c in d.commands.values()}
 
 
 def _commands(spec: SpecIndex) -> list[Command]:
     registry = load_registry(spec)
     packaged = [c for d in registry.domains.values() for c in d.commands.values()]
-    return packaged + _unpatterned(spec)
+    return packaged + list(_unpatterned(spec).values())
 
 
 def _path_args(cmd: Command) -> dict[str, Any]:
@@ -175,10 +210,12 @@ async def test_every_command_builds_its_template_path(spec: SpecIndex) -> None:
 
 
 def test_path_values_are_encoded_with_no_safe_characters(spec: SpecIndex) -> None:
-    (get, _) = _unpatterned(spec)
+    get = _unpatterned(spec)["users get"]
     cases = {
         "alice+test@example.com": "alice%2Btest%40example.com",
         "josé@example.com": "jos%C3%A9%40example.com",
+        # Lookalikes whose NFKC form passes are kept as sent.
+        "\N{FULLWIDTH LATIN SMALL LETTER A}lice": "%EF%BD%81lice",
         "a:b;c=d&e,f": "a%3Ab%3Bc%3Dd%26e%2Cf",
         "..a": "..a",
         "x" * 256: "x" * 256,
@@ -190,7 +227,7 @@ def test_path_values_are_encoded_with_no_safe_characters(spec: SpecIndex) -> Non
 
 
 def test_query_args_map_to_spec_names_with_page_size(spec: SpecIndex) -> None:
-    (_, assoc) = _unpatterned(spec)
+    assoc = _unpatterned(spec)["authorization-servers list-associated"]
     url, params = build_request(assoc, {"server": "aus1", "trusted": True, "q": "a&b=c"}, ORG)
     assert url == f"{ORG}/api/v1/authorizationServers/aus1/associatedServers"
     assert params == {"trusted": "true", "q": "a&b=c", "limit": "200"}
@@ -204,7 +241,7 @@ def test_query_args_map_to_spec_names_with_page_size(spec: SpecIndex) -> None:
 
 @pytest.mark.anyio
 async def test_query_values_are_sent_as_params(spec: SpecIndex) -> None:
-    (_, assoc) = _unpatterned(spec)
+    assoc = _unpatterned(spec)["authorization-servers list-associated"]
     okta = Okta()
     await _call(okta, assoc, {"server": "aus1", "q": "a&b=c#d"})
     (request,) = okta.requests
@@ -212,10 +249,34 @@ async def test_query_values_are_sent_as_params(spec: SpecIndex) -> None:
     assert request.url.params == httpx2.QueryParams({"q": "a&b=c#d", "limit": "200"})
 
 
-def test_schema_problems_are_reported_before_path_checks(spec: SpecIndex) -> None:
-    (get, _) = _unpatterned(spec)
-    with pytest.raises(InvalidArguments, match="unknown arg 'nope'"):
+@pytest.mark.anyio
+async def test_array_query_values_follow_the_spec_explode(spec: SpecIndex) -> None:
+    cmds = _unpatterned(spec)
+    # getBrand's `expand` is `explode: false`: one comma-joined value.
+    okta = Okta()
+    await _call(okta, cmds["brands get"], {"brand": "bnd1", "expand": ["themes", "domains"]})
+    assert okta.requests[0].url.raw_path == b"/api/v1/brands/bnd1?expand=themes%2Cdomains"
+    # discloseIdentifiers takes the OpenAPI default: one key per item.
+    okta = Okta()
+    args = {"user": "00u1", "disclose_identifiers": ["phone", "phone"]}
+    await _call(okta, cmds["users get-enrollments"], args)
+    query = okta.requests[0].url.params
+    assert query.get_list("discloseIdentifiers") == ["phone", "phone"]
+
+
+def test_schema_and_path_problems_are_reported_together(spec: SpecIndex) -> None:
+    get = _unpatterned(spec)["users get"]
+    with pytest.raises(InvalidArguments) as e:
         build_request(get, {"user": "a/b", "nope": 1}, ORG)
+    # The unknown-arg message keeps its own `; valid: …` part next to it.
+    assert str(e.value) == (
+        "arg 'user' can't contain / \\ % ? #, whitespace or control characters; "
+        "unknown arg 'nope'; valid: user"
+    )
+    # A non-string path value is one problem, not two.
+    with pytest.raises(InvalidArguments) as e:
+        build_request(get, {"user": 5}, ORG)
+    assert str(e.value) == "arg 'user' must be a string"
 
 
 def test_every_path_problem_is_reported_without_values(spec: SpecIndex) -> None:

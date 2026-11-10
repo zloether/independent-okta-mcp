@@ -77,9 +77,11 @@ class OktaClient:
         self._max_wait = rate_limit_max_wait
         self._on_request = on_request
 
-    async def get(self, url: str, params: Mapping[str, str] | None = None) -> httpx2.Response:
+    async def get(
+        self, url: str, params: Mapping[str, str | list[str]] | None = None
+    ) -> httpx2.Response:
         """A 2xx response for `url` (absolute, on the org) with `params` merged into its query
-        (a key in both takes the `params` value)."""
+        (a key in both takes the `params` value; a list is sent as repeated keys)."""
         try:
             target = httpx2.URL(url)
         except httpx2.InvalidURL:

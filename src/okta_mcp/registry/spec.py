@@ -32,6 +32,8 @@ class Param:
     required: bool
     description: str
     schema: Mapping[str, Any]
+    explode: bool = True
+    """For an array query param: repeated keys (`a=1&a=2`), else one comma-joined value."""
 
 
 @dataclass(frozen=True)
@@ -179,6 +181,10 @@ def _params(
             continue
         if name in params:
             raise SpecError(f"{op['operationId']}: {name} is both a path and a query parameter")
+        # OpenAPI's default query style is `form`, which explodes unless told not to.
+        style = p.get("style", "form")
+        if location == "query" and style != "form":
+            raise SpecError(f"{op['operationId']}: {name} has unsupported style {style}")
         params[name] = Param(
             name=name,
             location=location,
@@ -186,6 +192,7 @@ def _params(
             required=location == "path" or bool(p.get("required", False)),
             description=str(p.get("description", "")),
             schema=MappingProxyType(r.inline(p.get("schema", {}))),
+            explode=bool(p.get("explode", True)),
         )
     template_vars = set(re.findall(r"\{([^}]*)\}", path))
     path_params = {n for n, p in params.items() if p.location == "path"}
