@@ -207,8 +207,8 @@ Tool name = `okta_<domain>`: `okta_users`, `okta_groups`, `okta_apps`, `okta_pol
 {
   "command": "get-groups",                     // enum — per-principal filtered
   "args":    { "user": "jane@example.com" },   // validated against the command's JSON Schema
-  "select":  "id,profile.name",                // optional — dotted field paths to keep
-  "strip_links": true,                         // optional — drop all "_links"
+  "select":  "id,profile.name",                // optional — dotted field paths; omitted → the command's view, "*" → whole object
+  "links":   false,                            // optional, default false — keep "_links"
   "limit":   50,                               // optional — output budget (§7), never sent to Okta
   "cursor":  "eyJ2Ijox…"                       // optional — resume a truncated list; args must be resent unchanged
 }
@@ -436,7 +436,7 @@ Single-resource commands return `{ "untrusted": true, "item": { … } }`. Defaul
 
 ### 7.2 Budget enforcement
 
-Because the paginator is ours, the envelope builder consumes items **one at a time** and applies, per item: secret scrub → `strip_links` → `select` → serialized size. It stops at the first of: item limit reached, next item would exceed the byte budget, deadline near. The cursor records the page state of the *last delivered item* and its index in that page, so:
+Because the paginator is ours, the envelope builder consumes items **one at a time** and applies, per item: secret scrub → drop `_links` at every depth unless `links` → `select`/view (a row of cells; `null` cells kept) or, for the whole object (`select: "*"`, or no view), prune `null`/`{}`/`[]` members → serialized size (`exec/output.py`). `select` paths aren't checked against the schema; an array on a path maps the rest of the path over its elements (`gateways.value`). It stops at the first of: item limit reached, next item would exceed the byte budget, deadline near. The cursor records the page state of the *last delivered item* and its index in that page, so:
 
 - the byte budget is measured on post-`select` output;
 - items dropped by any budget are re-delivered on resume, exactly once **if the list is unchanged** between calls;
@@ -552,7 +552,7 @@ Okta group(s) ──(groups claim: IDs)──► role(s) ──► allow/deny of
 - A command is `sensitive` if any of its `data_classes` maps to `sensitive` (§6.2): MFA factors/enrollments, risk, API token metadata, app secrets/keys/JWKs/CSRs, IdP keys/CSRs, AS signing keys, System Log queries, role/permission assignments, session lookups, org contacts/support cases.
 - Known secret-bearing "normal-looking" endpoints get `credential-material` until confirmed otherwise (V14): `identity-providers list/get` (`protocol.credentials.client.client_secret`), `security get-ssf-streams` (`delivery.authorization_header`).
 - **Per-argument rules** (`forbidden`, `raises_sensitivity_to`, `allowed_values`) for `expand`, `discloseIdentifiers`, free-form `filter`/`search`. Unknown `expand` values rejected.
-- **Secret scrubbing** (defence in depth): `scrub.yaml` lists field paths (`protocol.credentials.client.client_secret`, `delivery.authorization_header`, `credentials.oauthClient.client_secret`, `*.privateKey`, `*.secret`, `*.sharedSecret`, …) replaced with `"[redacted]"` in every result regardless of role. Fixture tests cover each path.
+- **Secret scrubbing** (defence in depth): `scrub.yaml` lists field paths (`protocol.credentials.client.client_secret`, `delivery.authorization_header`, `credentials.oauthClient.client_secret`, `privateKey`, `secret`, `sharedSecret`, …) whose values are replaced with `"[redacted]"` in every result regardless of role. A path is a chain of keys matched at any depth (inside `_embedded` and arrays), case-insensitively, so a single key matches everywhere; no wildcards. A missing, malformed or empty file stops the server. Fixture tests cover each path.
 - **Wildcards match only `normal` commands**; sensitive commands need an explicit name or `include_sensitive`.
 
 ### 9.3 Policy file

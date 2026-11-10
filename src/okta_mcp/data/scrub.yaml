@@ -1,0 +1,36 @@
+# Secret field paths replaced with "[redacted]" in every result, whatever the caller's role
+# (design §9.2). Defence in depth: commands that return secrets are classified
+# `credential-material` as well.
+#
+# A path is a dotted chain of object keys. It matches wherever that chain appears in a result,
+# at any depth (inside `_embedded`, inside arrays), and keys compare case-insensitively. So a
+# single key such as `privateKey` matches that key everywhere. No wildcards.
+#
+# Add a path when a "normal" endpoint is found to return a secret (V14). Every path is covered
+# by tests/exec/test_output.py.
+paths:
+  # Named in design §9.2.
+  - protocol.credentials.client.client_secret  # identity-providers list/get
+  - delivery.authorization_header              # security get-ssf-streams
+  - credentials.oauthClient.client_secret      # apps, groups get-apps (spec: create/update only)
+  # Secret-valued keys from the pinned spec's schemas.
+  - client_secret
+  - clientSecret
+  - secret_hash
+  - privateKey
+  - secret
+  - sharedSecret
+  - secretKey
+  - secretValue
+  - device_secret
+  - credentials.password.value
+  - credentials.password.hash
+  - activationToken
+  - recoveryToken
+  - sessionToken
+  - SSWSToken
+  - providerAuthToken
+  - access_token
+  - id_token
+  # Not `refresh_token`: in GET results it names objects (OIDC app rotation settings, `{jti}` in
+  # token hook events); the token string only appears in token-endpoint responses.

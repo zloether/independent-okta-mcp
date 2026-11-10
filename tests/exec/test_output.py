@@ -1,0 +1,258 @@
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from okta_mcp.exec.output import (
+    REDACTED,
+    ScrubError,
+    ScrubRules,
+    columns,
+    load_scrub,
+    pick,
+    prune,
+    render,
+    scrub,
+    strip_links,
+)
+from okta_mcp.registry.schema import InvalidArguments
+
+RULES = load_scrub()
+SECRET = "s3cr3t-value"  # noqa: S105
+PATHS = [".".join(p) for p in RULES.paths]
+
+
+def nest(path: str, value: Any) -> dict[str, Any]:
+    out: Any = value
+    for key in reversed(path.split(".")):
+        out = {key: out}
+    return out
+
+
+def assert_no_secret(item: Any) -> None:
+    for cols in (None, ("_embedded",), tuple(item)):
+        for links in (False, True):
+            assert SECRET not in json.dumps(render(item, RULES, links=links, cols=cols))
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_every_scrub_path_is_redacted_at_root(path: str) -> None:
+    item = {"id": "0oa1", **nest(path, SECRET)}
+    out = render(item, RULES, links=False, cols=None)
+    assert pick(out, path) == REDACTED
+    assert out["id"] == "0oa1"
+    assert_no_secret(item)
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_every_scrub_path_is_redacted_nested_in_embedded_arrays(path: str) -> None:
+    item = {"_embedded": {"apps": [{"id": "0oa1"}, nest(path, SECRET)]}}
+    assert_no_secret(item)
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_every_scrub_path_matches_case_insensitively(path: str) -> None:
+    assert_no_secret(nest(path.upper(), SECRET))
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_scrub_replaces_object_and_array_values(path: str) -> None:
+    for value in ({"a": SECRET}, [SECRET], None):
+        out = scrub(nest(path, value), RULES)
+        assert pick(out, path) == REDACTED
+
+
+def test_design_named_fixtures() -> None:
+    idp = {
+        "id": "0oa1",
+        "protocol": {
+            "type": "OIDC",
+            "credentials": {"client": {"client_id": "abc", "client_secret": SECRET}},
+        },
+    }
+    stream = {"id": "esc1", "delivery": {"method": "push", "authorization_header": SECRET}}
+    app = {
+        "id": "0oa2",
+        "credentials": {"oauthClient": {"client_id": "abc", "client_secret": SECRET}},
+        "settings": {"app": {"sharedSecret": SECRET}},
+        "keys": [{"kid": "k1", "privateKey": SECRET}],
+    }
+    for item in (idp, stream, app):
+        out = render(item, RULES, links=False, cols=None)
+        assert SECRET not in json.dumps(out)
+        assert out["id"] == item["id"]
+    assert pick(render(idp, RULES, links=False, cols=None), "protocol.credentials.client") == {
+        "client_id": "abc",
+        "client_secret": REDACTED,
+    }
+
+
+def test_select_cannot_reach_under_a_scrubbed_value() -> None:
+    item = nest("credentials.oauthClient.client_secret", {"inner": SECRET})
+    assert render(
+        item, RULES, links=False, cols=("credentials.oauthClient.client_secret.inner",)
+    ) == [None]
+    assert render(item, RULES, links=False, cols=("credentials",)) == [
+        {"oauthClient": {"client_secret": REDACTED}}
+    ]
+
+
+def test_partial_chain_does_not_redact() -> None:
+    item = {"delivery": {"method": "push"}, "authorization_header": "keep", "password": {"x": 1}}
+    assert scrub(item, RULES) == item
+
+
+def test_oidc_refresh_token_settings_kept() -> None:
+    item = {
+        "settings": {"oauthClient": {"refresh_token": {"rotation_type": "ROTATE", "leeway": 30}}}
+    }
+    assert scrub(item, RULES) == item
+
+
+def test_chain_breaks_on_an_intermediate_key() -> None:
+    rules = ScrubRules((("a", "b"),))
+    assert scrub({"a": {"x": {"b": 1}}}, rules) == {"a": {"x": {"b": 1}}}
+    assert scrub({"a": [{"b": 1}]}, rules) == {"a": [{"b": REDACTED}]}
+
+
+def test_scrub_does_not_mutate_input() -> None:
+    item = {"secret": SECRET, "x": [{"secret": SECRET}]}
+    scrub(item, RULES)
+    assert item == {"secret": SECRET, "x": [{"secret": SECRET}]}
+
+
+def test_redacted_survives_pruning() -> None:
+    assert render({"secret": None}, RULES, links=False, cols=None) == {"secret": REDACTED}
+
+
+def test_strip_links_nested() -> None:
+    item = {
+        "id": "00g1",
+        "_links": {"self": {"href": "https://example.okta.com/api/v1/groups/00g1"}},
+        "_embedded": {
+            "stats": {"usersCount": 3, "_links": {"self": {}}},
+            "apps": [{"id": "0oa1", "_links": {"logo": []}}],
+        },
+    }
+    assert strip_links(item) == {
+        "id": "00g1",
+        "_embedded": {"stats": {"usersCount": 3}, "apps": [{"id": "0oa1"}]},
+    }
+
+
+def test_links_kept_when_asked() -> None:
+    item = {"id": "00g1", "_links": {"self": {"href": "https://example.okta.com/x"}}}
+    assert render(item, RULES, links=True, cols=None) == item
+    assert render(item, RULES, links=True, cols=("_links.self.href",)) == [
+        "https://example.okta.com/x"
+    ]
+    assert render(item, RULES, links=False, cols=("_links.self.href",)) == [None]
+
+
+def test_prune() -> None:
+    item = {
+        "a": None,
+        "b": {},
+        "c": [],
+        "d": "",
+        "e": {"f": None, "g": {"h": []}},
+        "i": [None, {}, {"j": None}, 0],
+        "k": False,
+        "l": 0,
+    }
+    assert prune(item) == {"d": "", "i": [None, {}, {}, 0], "k": False, "l": 0}
+
+
+def test_columns() -> None:
+    view = ("id", "profile.name")
+    assert columns(None, view) == view
+    assert columns(None, None) is None
+    assert columns("*", view) is None
+    assert columns(" * ", view) is None
+    assert columns("id, profile.login ,status", view) == ("id", "profile.login", "status")
+
+
+@pytest.mark.parametrize("select", ["", "id,", "id,,x", "*,id", "a..b", ".a", "a."])
+def test_bad_select(select: str) -> None:
+    with pytest.raises(InvalidArguments, match="select"):
+        columns(select, None)
+
+
+def test_pick_dotted_and_arrays() -> None:
+    zone = {
+        "id": "nzo1",
+        "profile": {"name": "HQ", "custom": {"x": 1}},
+        "gateways": [{"type": "CIDR", "value": "192.0.2.0/24"}, {"type": "RANGE"}],
+    }
+    assert pick(zone, "profile.name") == "HQ"
+    assert pick(zone, "profile.custom") == {"x": 1}
+    assert pick(zone, "gateways.value") == ["192.0.2.0/24", None]
+    assert pick(zone, "gateways") == zone["gateways"]
+    assert pick(zone, "missing.path") is None
+    assert pick(zone, "id.length") is None
+
+
+def test_render_row_keeps_null_cells() -> None:
+    item = {"id": "00u1", "profile": {"login": "a@example.com"}, "lastLogin": None}
+    assert render(item, RULES, links=False, cols=("id", "lastLogin", "profile.login")) == [
+        "00u1",
+        None,
+        "a@example.com",
+    ]
+
+
+def test_render_non_object_items() -> None:
+    assert render("<EntityDescriptor/>", RULES, links=False, cols=None) == "<EntityDescriptor/>"
+    assert render(["a", None], RULES, links=False, cols=None) == ["a", None]
+
+
+def scrub_file(tmp_path: Path, text: str) -> Path:
+    p = tmp_path / "scrub.yaml"
+    p.write_text(text)
+    return p
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "paths: []\n",
+        "paths: secret\n",
+        "paths: [a, '']\n",
+        "paths: ['*.secret']\n",
+        "paths: [a..b]\n",
+        "paths: [.a]\n",
+        "paths: ['a b']\n",
+        'paths: ["a\\n"]\n',
+        "paths: [1]\n",
+        "paths: [a]\nextra: 1\n",
+        "paths: [a]\npaths: [b]\n",
+        "paths: [a\n",
+    ],
+)
+def test_load_scrub_rejects(tmp_path: Path, text: str) -> None:
+    with pytest.raises(ScrubError):
+        load_scrub(scrub_file(tmp_path, text))
+
+
+def test_load_scrub_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(ScrubError):
+        load_scrub(tmp_path / "nope.yaml")
+
+
+def test_load_scrub_lowercases(tmp_path: Path) -> None:
+    rules = load_scrub(scrub_file(tmp_path, "paths: [Delivery.Authorization_Header, x]\n"))
+    assert rules.paths == (("delivery", "authorization_header"), ("x",))
+
+
+def test_shipped_scrub_has_design_paths() -> None:
+    for path in (
+        "protocol.credentials.client.client_secret",
+        "delivery.authorization_header",
+        "credentials.oauthClient.client_secret",
+        "privateKey",
+        "secret",
+        "sharedSecret",
+    ):
+        assert tuple(path.lower().split(".")) in RULES.paths
