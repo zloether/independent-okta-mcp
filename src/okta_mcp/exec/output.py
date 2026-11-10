@@ -4,6 +4,7 @@ Scrubbing always runs first, on the whole item, so no later option can expose a 
 """
 
 from dataclasses import dataclass
+from functools import cached_property
 from importlib.resources import files
 from importlib.resources.abc import Traversable
 from typing import Annotated, Any, cast
@@ -41,6 +42,20 @@ class ScrubRules:
     strings: tuple[tuple[str, ...], ...] = ()
     """Lower-cased key chains; the value is redacted only if it is a string."""
 
+    @cached_property
+    def chains(self) -> tuple[tuple[tuple[str, ...], bool], ...]:
+        """(key chain, strings only) for every rule."""
+        return tuple((p, False) for p in self.paths) + tuple((p, True) for p in self.strings)
+
+    @cached_property
+    def starts(self) -> dict[str, tuple[int, ...]]:
+        """First key → indices into `chains` starting with it, so a key isn't tested against
+        every rule."""
+        starts: dict[str, list[int]] = {}
+        for c, (chain, _) in enumerate(self.chains):
+            starts.setdefault(chain[0], []).append(c)
+        return {k: tuple(v) for k, v in starts.items()}
+
 
 def load_scrub(path: Traversable = SCRUB) -> ScrubRules:
     """Raises `ScrubError` on a missing, malformed or empty file: the server must not start."""
@@ -57,33 +72,27 @@ def load_scrub(path: Traversable = SCRUB) -> ScrubRules:
 
 def scrub(value: Any, rules: ScrubRules) -> Any:
     """A copy of `value` with every value at a `rules` path replaced by `REDACTED`."""
-    chains = [(p, False) for p in rules.paths] + [(p, True) for p in rules.strings]
-    return _scrub(value, tuple(chains), ())
+    return _scrub(value, rules, ())
 
 
-def _scrub(
-    value: Any,
-    chains: tuple[tuple[tuple[str, ...], bool], ...],
-    partial: tuple[tuple[int, int], ...],
-) -> Any:
-    # `chains` holds (key chain, strings only); `partial` holds (chain index, keys matched so far)
-    # for chains that are under way here.
+def _scrub(value: Any, rules: ScrubRules, partial: tuple[tuple[int, int], ...]) -> Any:
+    # `partial` holds (index into `rules.chains`, keys matched so far) for chains that are under
+    # way here.
     if isinstance(value, list):
-        return [_scrub(v, chains, partial) for v in cast(list[Any], value)]
+        return [_scrub(v, rules, partial) for v in cast(list[Any], value)]
     if not isinstance(value, dict):
         return value
+    chains, starts = rules.chains, rules.starts
     out: dict[str, Any] = {}
     for key, v in cast(dict[str, Any], value).items():
         k = key.lower()
         advanced = [(c, n + 1) for c, n in partial if chains[c][0][n] == k]
-        advanced += [(c, 1) for c, (chain, _) in enumerate(chains) if chain[0] == k]
+        advanced += [(c, 1) for c in starts.get(k, ())]
         complete = [chains[c][1] for c, n in advanced if n == len(chains[c][0])]
         if any(not strings_only or isinstance(v, str) for strings_only in complete):
             out[key] = REDACTED
         else:
-            out[key] = _scrub(
-                v, chains, tuple((c, n) for c, n in advanced if n < len(chains[c][0]))
-            )
+            out[key] = _scrub(v, rules, tuple((c, n) for c, n in advanced if n < len(chains[c][0])))
     return out
 
 

@@ -91,6 +91,17 @@ def test_chained_paths_match_alone() -> None:
     assert scrub({"b": {"c": SECRET}, "c": SECRET}, rules) == {"b": {"c": SECRET}, "c": SECRET}
 
 
+def test_chains_sharing_a_first_key_each_match() -> None:
+    rules = ScrubRules((("a", "b"), ("a", "c")), (("a",),))
+    assert scrub({"a": {"b": SECRET, "c": SECRET, "d": 1}}, rules) == {
+        "a": {"b": REDACTED, "c": REDACTED, "d": 1}
+    }
+    assert scrub({"a": SECRET, "x": {"A": {"C": SECRET}}}, rules) == {
+        "a": REDACTED,
+        "x": {"A": {"C": REDACTED}},
+    }
+
+
 def test_design_named_fixtures() -> None:
     idp = {
         "id": "0oa1",
