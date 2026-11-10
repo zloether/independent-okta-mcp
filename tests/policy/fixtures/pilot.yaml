@@ -1,0 +1,31 @@
+# Example policy for the pilot domains (groups, network-zones). The full example,
+# docker/policy.example.yaml, lands with step 5.7. Group IDs are placeholders: use your org's
+# role-group IDs and keep the names in comments.
+version: 1
+
+roles:
+  directory-reader:
+    groups: ["00g1readers000000000"]      # mcp-okta-readers
+    allow:
+      groups: ["*"]
+
+  helpdesk:
+    groups: ["00g1helpdsk000000000"]      # mcp-okta-helpdesk
+    allow:
+      groups: ["*", list-roles, get-role]
+      network-zones: [list, get]
+
+  security-analyst:
+    groups: ["00g1secanalyst000000"]      # mcp-okta-security
+    allow:
+      groups: ["*"]
+      network-zones: ["*"]
+    include_sensitive: [groups]
+    deny:
+      groups: [get-apps]
+
+  platform-admin:
+    groups: ["00g1abc2defGHI3jkL45"]      # mcp-okta-admins
+    allow:
+      "*": ["*"]
+    include_sensitive: [groups]
