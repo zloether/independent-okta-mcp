@@ -276,6 +276,7 @@ GOOD: dict[str, Any] = {
         GOOD | {"v": 1.0},
         GOOD | {"u": 1},
         GOOD | {"a": None},
+        b"[" * 100_000,
         GOOD | {"p": []},
         GOOD | {"p": {"groupId": 1}},
         GOOD | {"p": {"groupId": ["a"]}},
@@ -292,6 +293,11 @@ def test_signed_but_malformed_payload_is_rejected(cursors: Cursors, payload: Any
     # Only reachable with the key (an older version's cursor); still fails closed.
     with pytest.raises(CursorError, match="not valid"):
         cursors.open(sign(payload), **BOUND)
+
+
+def test_signed_payload_with_lone_surrogate_hash_is_a_cursor_error(cursors: Cursors) -> None:
+    with pytest.raises(CursorError, match="other args"):
+        cursors.open(sign(GOOD | {"a": "\ud800"}), **BOUND)
 
 
 def test_messages_never_echo_the_cursor(cursors: Cursors) -> None:

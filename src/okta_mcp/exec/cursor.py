@@ -75,7 +75,7 @@ def _payload(body: str) -> dict[str, Any] | None:
     """The payload of an authentic cursor, or None if it isn't this version's shape."""
     try:
         payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-    except (binascii.Error, ValueError):
+    except (binascii.Error, ValueError, RecursionError):
         return None
     if not isinstance(payload, dict):
         return None
@@ -158,7 +158,7 @@ class Cursors:
             raise CursorError(_INVALID)
         if self._clock() >= payload["e"]:
             raise CursorError(_EXPIRED)
-        if not hmac.compare_digest(payload["a"].encode(), _args_hash(args).encode("ascii")):
+        if payload["a"] != _args_hash(args):  # authentic and the caller's own: no secret here
             raise CursorError(_OTHER_ARGS)
         return Resume(payload["p"], payload["q"], payload["s"])
 
