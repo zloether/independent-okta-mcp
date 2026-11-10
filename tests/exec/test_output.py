@@ -237,6 +237,7 @@ def test_columns() -> None:
     assert columns("*", view) is None
     assert columns(" * ", view) is None
     assert columns("id, profile.login ,status", view) == ("id", "profile.login", "status")
+    assert columns("status,id, status,id", view) == ("status", "id")
 
 
 @pytest.mark.parametrize(

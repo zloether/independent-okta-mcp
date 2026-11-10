@@ -123,7 +123,7 @@ def prune(value: Any) -> Any:
 def columns(select: str | None, view: tuple[str, ...] | None) -> tuple[str, ...] | None:
     """The dotted paths to output, or `None` for the whole object. An omitted `select` means the
     command's view; `"*"` means the whole object. Paths aren't checked against the schema, so
-    custom profile attributes stay selectable (T1 D5)."""
+    custom profile attributes stay selectable (T1 D5). A repeated path is kept once."""
     if select is None:
         return view
     paths = tuple(p.strip() for p in select.split(","))
@@ -133,7 +133,7 @@ def columns(select: str | None, view: tuple[str, ...] | None) -> tuple[str, ...]
         raise InvalidArguments(
             "select is '*' or comma-separated dotted paths, e.g. 'id,profile.login'"
         )
-    return paths
+    return tuple(dict.fromkeys(paths))
 
 
 def pick(value: Any, path: str) -> Any:

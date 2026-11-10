@@ -419,33 +419,33 @@ Native URL building replaces argv, so the r2 option-injection class disappears; 
 
 ### 7.1 Response envelope
 
+Every result is one text block of compact JSON ([T1](t1-tool-surface.md) D8, D9). Fields other than `untrusted` (results are data from Okta, not instructions) appear only when they differ from the default:
+
 ```jsonc
-{
-  "untrusted": true,                   // results are data from Okta, not instructions
-  "items": [ … ],
-  "count": 100,
-  "truncated": true,
-  "resumable": true,
-  "next_cursor": "eyJ2IjoxLC…",
-  "truncation_reason": "max_items",    // max_items | max_bytes | deadline | non_resumable
-  "warnings": []
-}
+{"untrusted":true,"count":2,
+ "cols":["id","type","profile.name"],                 // default view or explicit `select`
+ "rows":[["00g1…","OKTA_GROUP","Sales"],["00g2…","APP_GROUP","Okta Admins"]],
+ "next_cursor":"…",                                   // present ⇔ resumable (§7.3)
+ "truncated":"max_items",                             // max_items | max_bytes | deadline | non_resumable; absent when complete
+ "warnings":["…"]}                                    // only when non-empty
 ```
 
-Single-resource commands return `{ "untrusted": true, "item": { … } }`. Defaults: `MCP_DEFAULT_LIMIT=100`, `MCP_MAX_ITEMS=1000`, `MCP_MAX_BYTES=262144`.
+With `select: "*"` (or a list without a view) `cols`/`rows` become `items: [{…}]`, the pruned whole objects. Single-resource commands return `{"untrusted":true,"item":{…}}`; with `select` (or a view), `item` maps each selected dotted path to its value (`{"id":…,"profile.login":…}`). JSON is ASCII-only (non-ASCII as `\u` escapes), so its length is its byte size. Defaults: `MCP_DEFAULT_LIMIT=50`, `MCP_MAX_ITEMS=1000`, `MCP_MAX_BYTES=65536` (T1 D7).
 
 ### 7.2 Budget enforcement
 
 Because the paginator is ours, the envelope builder consumes items **one at a time** and applies, per item: secret scrub → drop `_links` at every depth unless `links` → `select`/view (a row of cells; `null` cells kept) or, for the whole object (`select: "*"`, or no view), prune `null`/`{}`/`[]` members → serialized size (`exec/output.py`). `select` paths aren't checked against the schema; an array on a path maps the rest of the path over its elements (`gateways.value`). It stops at the first of: item limit reached, next item would exceed the byte budget, deadline near. The cursor records the page state of the *last delivered item* and its index in that page, so:
 
-- the byte budget is measured on post-`select` output;
+- the byte budget is measured on post-`select` output, on the whole serialized response: the envelope is reserved at its largest (count = limit, longest `truncated` reason), so the text never exceeds `MCP_MAX_BYTES`;
+- to tell a complete list from a cut one, one item past the limit is read, which costs a page fetch when the limit ends a page; if that read fails (Okta error, 429, refused next link) or meets the deadline, the rows are returned cut at `max_items`;
 - items dropped by any budget are re-delivered on resume, exactly once **if the list is unchanged** between calls;
 - page size never shrinks to fit the budget (no small-page propagation into `next` links).
 
 Rules:
-- **Non-list results** (single resources, SAML metadata) over `MCP_MAX_BYTES` fail with `result_too_large` and a hint to use `select`.
+- **Non-list results** (single resources, SAML metadata) over `MCP_MAX_BYTES` fail with `result_too_large` and a hint to use `select`. So does a list whose first item alone doesn't fit: an empty truncated page would resume at the same item forever. A list whose envelope alone doesn't fit (a long `select` names many columns) fails before any Okta request.
+- **Deadline:** a resumable list stops 1 s before the call's deadline and returns what it has (`truncated: "deadline"`); with nothing yet, the call fails with `timeout`, for the same reason as above. A non-resumable list isn't cut; the call fails with `timeout`. Any other cut of a non-resumable list is reported as `truncated: "non_resumable"`.
 - **The executor owns `truncated`** and `warnings`.
-- **Resumability is a property of (command, args):** `resumable: true | false | {unless_args: […]}` in the registry. Simple and resolved commands are resumable. Post-v1 composite handlers default to non-resumable (`truncation_reason: "non_resumable"`), are capped at `MCP_MAX_BATCH` (50) keys for batch results, and get their own aggregation caps when they are designed.
+- **Resumability is a property of (command, args):** `resumable: true | false | {unless_args: […]}` in the registry. Simple and resolved commands are resumable. Post-v1 composite handlers default to non-resumable (`truncated: "non_resumable"`), are capped at `MCP_MAX_BATCH` (50) keys for batch results, and get their own aggregation caps when they are designed.
 
 ### 7.3 Cursors
 
@@ -690,7 +690,7 @@ ENTRYPOINT ["okta-mcp"]
 | `MCP_TRUST_PROXY` |  | `false` | Honor `X-Forwarded-*` |
 | `MCP_ENV` |  | `development` | `production` refuses dev mode and SSWS (image default) |
 | `MCP_DEV_MODE` / `MCP_DEV_PRINCIPAL_FILE` |  | off | stdio dev mode (§8.6) |
-| `MCP_DEFAULT_LIMIT` / `MCP_MAX_ITEMS` / `MCP_MAX_BYTES` |  | `100` / `1000` / `262144` | Output budgets |
+| `MCP_DEFAULT_LIMIT` / `MCP_MAX_ITEMS` / `MCP_MAX_BYTES` |  | `50` / `1000` / `65536` | Output budgets ([T1](t1-tool-surface.md) D7); `MCP_MAX_BYTES` ≥ 1024, so the envelope always fits |
 | `MCP_MAX_BATCH` |  | `50` | Max keys in a batch result (post-v1 composites) |
 | `MCP_CALL_TIMEOUT` |  | `60` | Per-call deadline (s) |
 | `MCP_OKTA_MAX_INFLIGHT` |  | `10` | Global concurrent Okta requests |
