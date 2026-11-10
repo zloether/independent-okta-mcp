@@ -16,6 +16,7 @@ from okta_mcp.exec.cursor import (
     Cursors,
     Resume,
     after,
+    path_params,
     resumable,
     resume_url,
 )
@@ -419,6 +420,45 @@ def test_absolute_url_in_forged_payload_never_leaves_the_org(
     assert (url.host, url.path) == ("example.okta.com", MEMBERS)
 
 
+def test_path_params_are_keyed_by_spec_parameter(registry: Registry, members: Command) -> None:
+    assert path_params(members, {"group": GROUP, "search": "x"}) == {"groupId": GROUP}
+    assert path_params(registry.domains["groups"].commands["list"], {"search": "x"}) == {}
+
+
+def test_issuer_matches_issue(cursors: Cursors) -> None:
+    assert cursors.issuer(**ISSUED)(PAGE, 36) == cursors.issue(PAGE, 36, **ISSUED)
+
+
+@pytest.mark.parametrize(
+    "search",
+    [
+        "profile.lastName eq \"Brock\" and status eq 'ACTIVE'",
+        "a+b c&d=e;f",
+        "Zo\u00eb \u65e5\u672c",
+        "100% %zz %41",
+        "a#b?c/d\\e",
+        "".join(chr(i) for i in range(32, 127)),
+        "[x]{y}|^`<>",
+    ],
+)
+def test_query_of_a_real_request_survives_resume_url(members: Command, search: str) -> None:
+    # The check in `resume_url` relies on httpx2 parsing its own output back unchanged.
+    url, params = build_request(members, {"group": GROUP, "search": search}, ORG)
+    sent = httpx2.URL(url).copy_merge_params(params)
+    query = sent.raw_path.decode().partition("?")[2]
+    assert resume_url(members, Resume({"groupId": GROUP}, query, 1), ORG) == str(sent)
+
+
+@pytest.mark.parametrize(
+    "href",
+    ['?after=x&search=a%20eq%20"b"', "?after=a b", "?after=\u00e9", "?a=b'c(d)*!~", "?a=%7e%2F%zz"],
+)
+def test_query_of_a_followed_next_link_survives_resume_url(members: Command, href: str) -> None:
+    followed = httpx2.URL(str(httpx2.URL(ORG + MEMBERS + "?limit=200").join(href)))
+    query = followed.raw_path.decode().partition("?")[2]
+    assert resume_url(members, Resume({"groupId": GROUP}, query, 1), ORG) == str(followed)
+
+
 # --- resumable ---
 
 
@@ -498,8 +538,7 @@ async def call(
         items = after(paginate(client, resume_url(command, resume, ORG), mode="link"), resume.skip)
         warnings = (RESUMED_WARNING,)
 
-    def issue(page: str, index: int) -> str:
-        return cursors.issue(page, index, path_params={"groupId": GROUP}, **bound)
+    issue = cursors.issuer(path_params=path_params(command, bound["args"]), **bound)
 
     text = await list_result(
         items,

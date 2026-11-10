@@ -112,6 +112,39 @@ class Cursors:
     def _tag(self, body: str) -> str:
         return _b64(hmac.digest(self._key, body.encode("ascii"), "sha256")[:_TAG_BYTES])
 
+    def issuer(
+        self,
+        *,
+        uid: str,
+        tool: str,
+        command: str,
+        args: Mapping[str, Any],
+        path_params: Mapping[str, str],
+    ) -> Callable[[str, int], str]:
+        """For one call, the function `list_result` takes as `next_cursor`: given a `page` and
+        an item's `index` in it (as `paginate` yields them), the cursor that resumes after that
+        item. `args` are the caller's original args; `path_params` (see `path_params`) the
+        resolved values the first request was built from. Only the query of `page` is kept."""
+        bound: dict[str, Any] = {
+            "v": _VERSION,
+            "u": uid,
+            "t": tool,
+            "c": command,
+            "a": _args_hash(args),
+            "p": dict(path_params),
+        }
+
+        def issue(page: str, index: int) -> str:
+            payload = bound | {
+                "q": page.partition("?")[2],
+                "s": index + 1,
+                "e": int(self._clock()) + CURSOR_TTL,
+            }
+            body = _b64(json.dumps(payload, separators=(",", ":")).encode("ascii"))
+            return f"{body}.{self._tag(body)}"
+
+        return issue
+
     def issue(
         self,
         page: str,
@@ -123,22 +156,10 @@ class Cursors:
         args: Mapping[str, Any],
         path_params: Mapping[str, str],
     ) -> str:
-        """A cursor that resumes after item `index` of `page` (both as `paginate` yields them).
-        `args` are the caller's original args; `path_params` the resolved values the first
-        request was built from. Only the query of `page` is kept."""
-        payload = {
-            "v": _VERSION,
-            "u": uid,
-            "t": tool,
-            "c": command,
-            "a": _args_hash(args),
-            "p": dict(path_params),
-            "q": page.partition("?")[2],
-            "s": index + 1,
-            "e": int(self._clock()) + CURSOR_TTL,
-        }
-        body = _b64(json.dumps(payload, separators=(",", ":")).encode("ascii"))
-        return f"{body}.{self._tag(body)}"
+        """One cursor; `issuer(...)(page, index)`."""
+        return self.issuer(uid=uid, tool=tool, command=command, args=args, path_params=path_params)(
+            page, index
+        )
 
     def open(
         self, cursor: str, *, uid: str, tool: str, command: str, args: Mapping[str, Any]
@@ -161,6 +182,17 @@ class Cursors:
         if payload["a"] != _args_hash(args):  # authentic and the caller's own: no secret here
             raise CursorError(_OTHER_ARGS)
         return Resume(payload["p"], payload["q"], payload["s"])
+
+
+def path_params(command: Command, args: Mapping[str, Any]) -> dict[str, str]:
+    """The cursor's `path_params` for `command` called with `args`: spec path parameter → value.
+    `args` are the ones the request was built from, so a `resolve: user_id` arg must hold the
+    resolved ID, as for `build_request`."""
+    return {
+        param: args[name]
+        for name, arg in command.entry.args.items()
+        if (param := arg.path_param) is not None and name in args
+    }
 
 
 def resumable(command: Command, args: Mapping[str, Any]) -> bool:
