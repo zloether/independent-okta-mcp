@@ -62,6 +62,7 @@ def build_policy(doc: Any, registry: Registry) -> Policy:
             name,
             frozenset(entry.groups),
             _allowed(entry, frozenset(entry.include_sensitive), registry),
+            _expand(entry.allow, registry, frozenset(entry.include_sensitive), plain=False),
             _expand(entry.deny, registry, frozenset({WILDCARD})),
         )
         for name, entry in parsed.roles.items()
@@ -86,9 +87,12 @@ def _unknown(where: str, patterns: Patterns, registry: Registry) -> list[str]:
     return errors
 
 
-def _expand(patterns: Patterns, registry: Registry, sensitive: frozenset[str]) -> frozenset[Grant]:
+def _expand(
+    patterns: Patterns, registry: Registry, sensitive: frozenset[str], *, plain: bool = True
+) -> frozenset[Grant]:
     """A wildcard matches a sensitive command only in the domains in `sensitive` (`*`: all);
-    a command named outright is matched whatever its sensitivity."""
+    a command named outright is matched whatever its sensitivity. With `plain` false, a
+    wildcard matches nothing outside those domains (`Role.allow_raised`)."""
     grants: set[Grant] = set()
     for domain, commands in patterns.items():
         for pattern in commands:
@@ -102,7 +106,9 @@ def _expand(patterns: Patterns, registry: Registry, sensitive: frozenset[str]) -
                 (d.name, c.name)
                 for d in domains
                 for c in d.commands.values()
-                if c.sensitivity == "normal" or WILDCARD in sensitive or d.name in sensitive
+                if (plain and c.sensitivity == "normal")
+                or WILDCARD in sensitive
+                or d.name in sensitive
             )
     return frozenset(grants)
 

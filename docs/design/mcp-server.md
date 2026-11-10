@@ -19,6 +19,9 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 | Client apps' sign-in strength not mentioned | Client apps need an authentication policy with MFA (§8.2, Appendix C) | A password-only sign-in would be the only factor in front of an org-wide read |
 | Service app shares the org's Okta rate limits unbounded | Cap the service app's share of each rate limit in Okta (§10, V16) | MCP use must not starve provisioning and sign-in integrations |
 | Global in-flight cap only (§6.5) | A per-principal share of the in-flight slots is planned with the limiter (plan 6.2) | A few slow calls (System Log) from one user can hold all 10 slots well inside the request limit |
+| Policy file had `groups_claim` and `unknown_group_behavior` (§9.3) | Both **removed**; a file that has them fails to load (step 3.1) | The claim name was set twice (`MCP_GROUPS_CLAIM`, §11.3), and a mismatch would mean zero roles for everyone or, worse, roles read from a different claim; config owns it. `unknown_group_behavior` had one value, `ignore`, which is what default deny already does |
+| Command "patterns" unspecified (§9.1) | A pattern is a command name or `"*"`; no partial globs. Under domain `"*"` only `["*"]` (§9.3) | `get-*` would grant commands by how they are named, and `"*": [get]` a different command per domain |
+| Wildcard-vs-sensitive rule covered commands only (§9.2) | The same rule covers calls an `arg_rule` raises to sensitive (§9.3) | Otherwise a plain wildcard reaches sensitive data through an argument |
 
 ### 0.1 Changes from r3
 
@@ -574,7 +577,6 @@ Okta group(s) ──(groups claim: IDs)──► role(s) ──► allow/deny of
 
 ```yaml
 version: 1
-groups_claim: groups
 
 roles:
   helpdesk:
@@ -609,17 +611,23 @@ roles:
     allow:
       "*": ["*"]
     include_sensitive: ["*"]
-
-unknown_group_behavior: ignore
 ```
 
-`include_sensitive` is per role: within that role's `allow`, a wildcard on a listed domain also matches its sensitive commands; it never widens other roles and never overrides `deny`.
+A pattern is a command name or `"*"`; there are no partial globs (`get-*`). Domain `"*"` takes only `["*"]`. The wildcard must be quoted (a bare `*` is a YAML alias and fails the load). A principal in any of a role's groups holds the role; a group ID the policy doesn't name grants nothing. The claim's name is `MCP_GROUPS_CLAIM` (§11.3), not a policy field.
+
+`include_sensitive` is per role: within that role's `allow`, a wildcard on a listed domain also matches its sensitive commands; it never widens other roles and never overrides `deny`. A `deny` wildcard always covers sensitive commands.
+
+A call that an `arg_rule` raises to sensitive (§9.2) follows the same rule as a sensitive command: the role must name the command outright, or reach it by a wildcard in a domain in its `include_sensitive`. The loader compiles this per role (`Role.allow_raised`); the engine (§9.4) applies it per call.
 
 Validation at load (startup fails):
 - Every group entry matches `^00g[A-Za-z0-9]{17}$`; names belong in comments.
-- Every domain/command exists in the registry.
-- No role without groups; no duplicate role names.
-- Warn on `include_sensitive: ["*"]`, on `deny` entries matching nothing, and on `allow` wildcards that grant nothing.
+- Every domain/command exists in the registry (in `allow`, `deny` and `include_sensitive`).
+- No role without groups or without `allow`; no domain with an empty command list; role names are kebab-case.
+- No duplicates: role names and any other repeated key (YAML keeps the last, so a second `deny` would replace the first), groups within a role, commands within a list.
+- No unknown keys (a misspelt `deny` would otherwise be dropped); `version` is `1`; names and IDs are YAML strings.
+- Warn (the policy loads; startup logs them) on `include_sensitive: ["*"]`, on an `include_sensitive` entry with no effect, on `deny` entries matching nothing any role allows, on `allow` wildcards that grant nothing, and on a role whose `deny` covers all of its `allow`.
+
+All errors are reported at once. Patterns are expanded once, at load, against the registry the server runs with.
 
 Policy changes take effect on restart (stateless, seconds). Mount the file read-only.
 

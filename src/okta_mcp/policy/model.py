@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 
 from okta_mcp.registry.model import NAME, ecma_pattern
 
@@ -20,10 +20,12 @@ GROUP_ID = re.compile(r"00g[A-Za-z0-9]{17}")
 
 Grant = tuple[str, str]
 """(domain, command), both registry names."""
-Patterns = Mapping[str, tuple[str, ...]]
+Patterns = Mapping[StrictStr, tuple[StrictStr, ...]]
 """Domain or `*` → command names or `*`. There are no partial globs (`get-*`)."""
 
 
+# Strings are `StrictStr`: pydantic would otherwise decode a YAML `!!binary` scalar into one,
+# and `b"deny"` beside `"deny"` gets past the duplicate-key check.
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -49,11 +51,11 @@ def _patterns(v: Patterns) -> Patterns:
 
 
 class RoleEntry(_Model):
-    groups: tuple[str, ...] = Field(min_length=1)
+    groups: tuple[StrictStr, ...] = Field(min_length=1)
     """A principal in any of these groups holds the role."""
     allow: Patterns = Field(min_length=1)
     deny: Patterns = Field(default_factory=lambda: MappingProxyType({}))
-    include_sensitive: tuple[str, ...] = ()
+    include_sensitive: tuple[StrictStr, ...] = ()
     """Domains (or `*`) where this role's `allow` wildcards also match sensitive commands."""
 
     @field_validator("groups")
@@ -80,7 +82,7 @@ class RoleEntry(_Model):
 
 class PolicyFile(_Model):
     version: Literal[1]
-    roles: Mapping[str, RoleEntry] = Field(min_length=1)
+    roles: Mapping[StrictStr, RoleEntry] = Field(min_length=1)
 
     @field_validator("version", mode="before")
     @classmethod
@@ -108,6 +110,11 @@ class Role:
     name: str
     groups: frozenset[str]
     allow: frozenset[Grant]
+    allow_raised: frozenset[Grant]
+    """The part of `allow` the role may also call with an argument that raises the call to
+    sensitive (`arg_rule: raises_sensitivity_to`): commands it names outright, and those a
+    wildcard reaches in a domain in its `include_sensitive`. The same rule as for sensitive
+    commands, so a plain wildcard never reaches sensitive data through an argument."""
     deny: frozenset[Grant]
 
 

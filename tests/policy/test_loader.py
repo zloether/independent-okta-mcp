@@ -136,6 +136,36 @@ def test_include_sensitive_without_a_wildcard_grants_nothing_more(registry: Regi
     assert build_policy(doc, registry).roles["r"].allow == _groups("list")
 
 
+@pytest.mark.parametrize(
+    ("allow", "include", "raised"),
+    [
+        # A plain wildcard: no call raised to sensitive by an argument.
+        ({"groups": ["*"]}, [], set()),
+        ({"*": ["*"]}, [], set()),
+        # Named outright.
+        ({"groups": ["*", "list"]}, [], {("groups", "list")}),
+        ({"groups": ["list", "get-role"]}, [], {("groups", "list"), ("groups", "get-role")}),
+        # A wildcard in an included domain: every command there, and only there.
+        ({"groups": ["*"]}, ["groups"], _groups(*GROUPS_NORMAL, *GROUPS_SENSITIVE)),
+        ({"*": ["*"]}, ["network-zones"], ZONES),
+        ({"groups": ["*"], "network-zones": ["list"]}, ["vault"], {("network-zones", "list")}),
+        ({"groups": ["list"]}, ["groups"], {("groups", "list")}),
+    ],
+)
+def test_allow_raised(
+    registry: Registry, allow: dict[str, list[str]], include: list[str], raised: set[Any]
+) -> None:
+    role = build_policy(_doc(r=_role(allow=allow, include_sensitive=include)), registry).roles["r"]
+    assert role.allow_raised == raised
+    assert role.allow_raised <= role.allow
+
+
+def test_allow_raised_with_include_star_is_all_of_allow(registry: Registry) -> None:
+    doc = _doc(r=_role(allow={"*": ["*"]}, include_sensitive=["*"]))
+    role = build_policy(doc, registry).roles["r"]
+    assert role.allow_raised == role.allow
+
+
 def test_deny_wildcard_covers_sensitive_commands(registry: Registry) -> None:
     doc = _doc(r=_role(allow={"*": ["*"]}, deny={"groups": ["*"]}))
     role = build_policy(doc, registry).roles["r"]
@@ -532,6 +562,22 @@ def test_empty_or_malformed_file(tmp_path: Path, registry: Registry, text: bytes
 def test_duplicate_keys(tmp_path: Path, registry: Registry, text: str) -> None:
     (error,) = _file_errors(_write(tmp_path, text), registry)
     assert "duplicate key" in error
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # pydantic's lax mode would decode these into the strings they spell.
+        "version: 1\nroles:\n  r:\n    groups: [!!binary MDBnMXJlYWRlcnMwMDAwMDAwMDA=]\n"
+        "    allow: {groups: [list]}\n",
+        f"version: 1\nroles:\n  r:\n    groups: [{G1}]\n    allow: {{groups: ['*']}}\n"
+        "    deny: {groups: [get]}\n    !!binary ZGVueQ==: {groups: [list]}\n",
+        f"version: 1\nroles:\n  r:\n    groups: [{G1}]\n"
+        "    allow: {groups: [!!binary bGlzdA==]}\n",
+    ],
+)
+def test_binary_scalars_are_not_strings(tmp_path: Path, registry: Registry, text: str) -> None:
+    assert _file_errors(_write(tmp_path, text), registry)
 
 
 def test_python_tags_are_not_constructed(tmp_path: Path, registry: Registry) -> None:
