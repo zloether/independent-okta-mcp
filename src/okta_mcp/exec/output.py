@@ -23,19 +23,23 @@ class ScrubError(Exception):
     pass
 
 
+# Dotted keys, no wildcards: a `*` segment would be a literal key and silently match nothing.
+# `\s` is excluded, so `$` can't let a trailing newline through.
+_Path = Annotated[str, Field(pattern=r"^[^.\s*]+(\.[^.\s*]+)*$")]
+
+
 class _ScrubFile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    # Dotted keys, no wildcards: a `*` segment would be a literal key and silently match nothing.
-    # `\s` is excluded, so `$` can't let a trailing newline through.
-    paths: tuple[Annotated[str, Field(pattern=r"^[^.\s*]+(\.[^.\s*]+)*$")], ...] = Field(
-        min_length=1
-    )
+    paths: tuple[_Path, ...] = Field(min_length=1)
+    strings: tuple[_Path, ...] = ()
 
 
 @dataclass(frozen=True)
 class ScrubRules:
     paths: tuple[tuple[str, ...], ...]
-    """Lower-cased key chains."""
+    """Lower-cased key chains; the value is redacted whatever its type."""
+    strings: tuple[tuple[str, ...], ...] = ()
+    """Lower-cased key chains; the value is redacted only if it is a string."""
 
 
 def load_scrub(path: Traversable = SCRUB) -> ScrubRules:
@@ -45,31 +49,41 @@ def load_scrub(path: Traversable = SCRUB) -> ScrubRules:
         parsed = _ScrubFile.model_validate(doc)
     except (OSError, yaml.YAMLError, ValidationError) as e:
         raise ScrubError(f"{path.name}: {e}") from e
-    return ScrubRules(tuple(tuple(p.lower().split(".")) for p in parsed.paths))
+    return ScrubRules(
+        tuple(tuple(p.lower().split(".")) for p in parsed.paths),
+        tuple(tuple(p.lower().split(".")) for p in parsed.strings),
+    )
 
 
 def scrub(value: Any, rules: ScrubRules) -> Any:
     """A copy of `value` with every value at a `rules` path replaced by `REDACTED`."""
-    return _scrub(value, rules.paths, ())
+    chains = [(p, False) for p in rules.paths] + [(p, True) for p in rules.strings]
+    return _scrub(value, tuple(chains), ())
 
 
 def _scrub(
-    value: Any, paths: tuple[tuple[str, ...], ...], partial: tuple[tuple[int, int], ...]
+    value: Any,
+    chains: tuple[tuple[tuple[str, ...], bool], ...],
+    partial: tuple[tuple[int, int], ...],
 ) -> Any:
-    # `partial` holds (path index, keys matched so far) for chains that are under way here.
+    # `chains` holds (key chain, strings only); `partial` holds (chain index, keys matched so far)
+    # for chains that are under way here.
     if isinstance(value, list):
-        return [_scrub(v, paths, partial) for v in cast(list[Any], value)]
+        return [_scrub(v, chains, partial) for v in cast(list[Any], value)]
     if not isinstance(value, dict):
         return value
     out: dict[str, Any] = {}
     for key, v in cast(dict[str, Any], value).items():
         k = key.lower()
-        advanced = [(p, n + 1) for p, n in partial if paths[p][n] == k]
-        advanced += [(p, 1) for p, path in enumerate(paths) if path[0] == k]
-        if any(n == len(paths[p]) for p, n in advanced):
+        advanced = [(c, n + 1) for c, n in partial if chains[c][0][n] == k]
+        advanced += [(c, 1) for c, (chain, _) in enumerate(chains) if chain[0] == k]
+        complete = [chains[c][1] for c, n in advanced if n == len(chains[c][0])]
+        if any(not strings_only or isinstance(v, str) for strings_only in complete):
             out[key] = REDACTED
         else:
-            out[key] = _scrub(v, paths, tuple(advanced))
+            out[key] = _scrub(
+                v, chains, tuple((c, n) for c, n in advanced if n < len(chains[c][0]))
+            )
     return out
 
 
@@ -106,7 +120,7 @@ def columns(select: str | None, view: tuple[str, ...] | None) -> tuple[str, ...]
     paths = tuple(p.strip() for p in select.split(","))
     if paths == (WHOLE,):
         return None
-    if any(p in ("", WHOLE) or "" in p.split(".") for p in paths):
+    if any(p == WHOLE or any(not s or s != s.strip() for s in p.split(".")) for p in paths):
         raise InvalidArguments(
             "select is '*' or comma-separated dotted paths, e.g. 'id,profile.login'"
         )

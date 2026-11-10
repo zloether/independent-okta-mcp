@@ -6,8 +6,11 @@
 # at any depth (inside `_embedded`, inside arrays), and keys compare case-insensitively. So a
 # single key such as `privateKey` matches that key everywhere. No wildcards.
 #
-# Add a path when a "normal" endpoint is found to return a secret (V14). Every path is covered
-# by tests/exec/test_output.py.
+# `paths` are redacted whatever the value. `strings` are redacted only when the value is a
+# string: for keys that hold a secret as a string but name config objects elsewhere.
+#
+# Add a path when a "normal" endpoint is found to return a secret (V14). Each path is tested
+# on its own in tests/exec/test_output.py.
 paths:
   # Named in design §9.2.
   - protocol.credentials.client.client_secret  # identity-providers list/get
@@ -32,5 +35,14 @@ paths:
   - providerAuthToken
   - access_token
   - id_token
-  # Not `refresh_token`: in GET results it names objects (OIDC app rotation settings, `{jti}` in
-  # token hook events); the token string only appears in token-endpoint responses.
+  - adminPassword                              # Office 365 provisioning connection settings
+  - tokenEncrypted                             # Org2Org app settings.app
+  - apiKey                                     # Persona IdP protocol.credentials.bearer
+  # Event and inline hook headers are `{key, value}` pairs; any of them may carry a credential.
+  - channel.config.headers.value
+strings:
+  # Objects elsewhere: password policy `settings.password`, OIDC app
+  # `settings.oauthClient.refresh_token` rotation settings, `{jti}` in token hook events.
+  - password                                   # SMTP servers, app service accounts
+  - token                                      # Org2Org app settings.app, app tokens
+  - refresh_token                              # token-endpoint responses

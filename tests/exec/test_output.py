@@ -20,7 +20,12 @@ from okta_mcp.registry.schema import InvalidArguments
 
 RULES = load_scrub()
 SECRET = "s3cr3t-value"  # noqa: S105
-PATHS = [".".join(p) for p in RULES.paths]
+# Each shipped entry alone, so an entry another one also covers (`client_secret` covers both
+# `…client_secret` chains) is still tested on its own.
+ENTRIES = [pytest.param(ScrubRules((p,)), ".".join(p), id=".".join(p)) for p in RULES.paths] + [
+    pytest.param(ScrubRules((), (p,)), ".".join(p), id="strings:" + ".".join(p))
+    for p in RULES.strings
+]
 
 
 def nest(path: str, value: Any) -> dict[str, Any]:
@@ -30,37 +35,60 @@ def nest(path: str, value: Any) -> dict[str, Any]:
     return out
 
 
-def assert_no_secret(item: Any) -> None:
+def assert_no_secret(item: Any, rules: ScrubRules) -> None:
     for cols in (None, ("_embedded",), tuple(item)):
         for links in (False, True):
-            assert SECRET not in json.dumps(render(item, RULES, links=links, cols=cols))
+            assert SECRET not in json.dumps(render(item, rules, links=links, cols=cols))
 
 
-@pytest.mark.parametrize("path", PATHS)
-def test_every_scrub_path_is_redacted_at_root(path: str) -> None:
+@pytest.mark.parametrize(("rules", "path"), ENTRIES)
+def test_every_scrub_entry_is_redacted_at_root(rules: ScrubRules, path: str) -> None:
     item = {"id": "0oa1", **nest(path, SECRET)}
-    out = render(item, RULES, links=False, cols=None)
+    out = render(item, rules, links=False, cols=None)
     assert pick(out, path) == REDACTED
     assert out["id"] == "0oa1"
-    assert_no_secret(item)
+    assert_no_secret(item, rules)
 
 
-@pytest.mark.parametrize("path", PATHS)
-def test_every_scrub_path_is_redacted_nested_in_embedded_arrays(path: str) -> None:
+@pytest.mark.parametrize(("rules", "path"), ENTRIES)
+def test_every_scrub_entry_is_redacted_nested_in_embedded_arrays(
+    rules: ScrubRules, path: str
+) -> None:
     item = {"_embedded": {"apps": [{"id": "0oa1"}, nest(path, SECRET)]}}
-    assert_no_secret(item)
+    assert_no_secret(item, rules)
 
 
-@pytest.mark.parametrize("path", PATHS)
-def test_every_scrub_path_matches_case_insensitively(path: str) -> None:
-    assert_no_secret(nest(path.upper(), SECRET))
+@pytest.mark.parametrize(("rules", "path"), ENTRIES)
+def test_every_scrub_entry_matches_case_insensitively(rules: ScrubRules, path: str) -> None:
+    assert_no_secret(nest(path.upper(), SECRET), rules)
 
 
-@pytest.mark.parametrize("path", PATHS)
-def test_scrub_replaces_object_and_array_values(path: str) -> None:
+@pytest.mark.parametrize("path", [".".join(p) for p in RULES.paths])
+def test_scrub_paths_replace_object_and_array_values(path: str) -> None:
     for value in ({"a": SECRET}, [SECRET], None):
         out = scrub(nest(path, value), RULES)
         assert pick(out, path) == REDACTED
+
+
+@pytest.mark.parametrize("path", [".".join(p) for p in RULES.strings])
+def test_scrub_strings_keep_non_string_values(path: str) -> None:
+    for value in ({"rotation_type": "ROTATE"}, [1], None, 30, True):
+        assert scrub(nest(path, value), ScrubRules((), RULES.strings)) == nest(path, value)
+
+
+def test_strings_rule_still_scrubs_inside_a_kept_object() -> None:
+    rules = ScrubRules((("secret",),), (("password",),))
+    item = {"settings": {"password": {"secret": SECRET, "minLength": 8}}}
+    assert scrub(item, rules) == {"settings": {"password": {"secret": REDACTED, "minLength": 8}}}
+
+
+def test_chained_paths_match_alone() -> None:
+    rules = ScrubRules((("a", "b", "c"),))
+    assert scrub({"x": {"a": {"b": {"c": SECRET, "d": 1}}}}, rules) == {
+        "x": {"a": {"b": {"c": REDACTED, "d": 1}}}
+    }
+    assert scrub({"a": {"a": {"b": {"c": SECRET}}}}, rules) == {"a": {"a": {"b": {"c": REDACTED}}}}
+    assert scrub({"b": {"c": SECRET}, "c": SECRET}, rules) == {"b": {"c": SECRET}, "c": SECRET}
 
 
 def test_design_named_fixtures() -> None:
@@ -78,7 +106,30 @@ def test_design_named_fixtures() -> None:
         "settings": {"app": {"sharedSecret": SECRET}},
         "keys": [{"kid": "k1", "privateKey": SECRET}],
     }
-    for item in (idp, stream, app):
+    office365 = {
+        "id": "0oa3",
+        "settings": {"app": {"domain": "example.com", "adminPassword": SECRET}},
+    }
+    org2org = {
+        "id": "0oa4",
+        "settings": {"app": {"baseUrl": "https://example.okta.com", "token": SECRET}},
+    }
+    org2org_encrypted = {"id": "0oa5", "settings": {"app": {"tokenEncrypted": SECRET}}}
+    persona = {
+        "id": "0oa6",
+        "protocol": {"type": "ID_PROOFING", "credentials": {"bearer": {"apiKey": SECRET}}},
+    }
+    smtp = {"id": "smtp1", "authType": "BASIC_SMTP_AUTH", "username": "a", "password": SECRET}
+    hook = {
+        "id": "who1",
+        "channel": {
+            "config": {
+                "uri": "https://hooks.example.com",
+                "headers": [{"key": "x-api-key", "value": SECRET}],
+            }
+        },
+    }
+    for item in (idp, stream, app, office365, org2org, org2org_encrypted, persona, smtp, hook):
         out = render(item, RULES, links=False, cols=None)
         assert SECRET not in json.dumps(out)
         assert out["id"] == item["id"]
@@ -99,13 +150,17 @@ def test_select_cannot_reach_under_a_scrubbed_value() -> None:
 
 
 def test_partial_chain_does_not_redact() -> None:
-    item = {"delivery": {"method": "push"}, "authorization_header": "keep", "password": {"x": 1}}
+    item = {"delivery": {"method": "push"}, "authorization_header": "keep", "value": "keep"}
     assert scrub(item, RULES) == item
 
 
-def test_oidc_refresh_token_settings_kept() -> None:
+def test_config_objects_named_like_secrets_kept() -> None:
     item = {
-        "settings": {"oauthClient": {"refresh_token": {"rotation_type": "ROTATE", "leeway": 30}}}
+        "settings": {
+            "oauthClient": {"refresh_token": {"rotation_type": "ROTATE", "leeway": 30}},
+            "password": {"complexity": {"minLength": 8}},
+        },
+        "events": [{"token": {"jti": "oar1"}}],
     }
     assert scrub(item, RULES) == item
 
@@ -173,7 +228,9 @@ def test_columns() -> None:
     assert columns("id, profile.login ,status", view) == ("id", "profile.login", "status")
 
 
-@pytest.mark.parametrize("select", ["", "id,", "id,,x", "*,id", "a..b", ".a", "a."])
+@pytest.mark.parametrize(
+    "select", ["", "id,", "id,,x", "*,id", "a..b", ".a", "a.", "profile. login", "profile .login"]
+)
 def test_bad_select(select: str) -> None:
     with pytest.raises(InvalidArguments, match="select"):
         columns(select, None)
@@ -229,6 +286,9 @@ def scrub_file(tmp_path: Path, text: str) -> Path:
         "paths: [a]\nextra: 1\n",
         "paths: [a]\npaths: [b]\n",
         "paths: [a\n",
+        "strings: [a]\n",
+        "paths: [a]\nstrings: ['*.b']\n",
+        "paths: [a]\nstrings: b\n",
     ],
 )
 def test_load_scrub_rejects(tmp_path: Path, text: str) -> None:
@@ -242,8 +302,10 @@ def test_load_scrub_missing_file(tmp_path: Path) -> None:
 
 
 def test_load_scrub_lowercases(tmp_path: Path) -> None:
-    rules = load_scrub(scrub_file(tmp_path, "paths: [Delivery.Authorization_Header, x]\n"))
+    text = "paths: [Delivery.Authorization_Header, x]\nstrings: [Password]\n"
+    rules = load_scrub(scrub_file(tmp_path, text))
     assert rules.paths == (("delivery", "authorization_header"), ("x",))
+    assert rules.strings == (("password",),)
 
 
 def test_shipped_scrub_has_design_paths() -> None:
