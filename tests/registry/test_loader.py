@@ -430,7 +430,11 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
     ),
     "reviewed-empty": (
         _with(GET, args={"user": {"path_param": "id", "arg_rule": {"reviewed": ""}}}),
-        "at least 1 character",
+        "should match pattern",
+    ),
+    "reviewed-blank": (
+        _with(GET, args={"user": {"path_param": "id", "arg_rule": {"reviewed": " \t"}}}),
+        "should match pattern",
     ),
     "reviewed-not-a-string": (
         _with(GET, args={"user": {"path_param": "id", "arg_rule": {"reviewed": True}}}),

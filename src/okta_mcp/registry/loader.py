@@ -194,7 +194,7 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
         if arg.param in _WIDENING and arg.arg_rule is None and arg.allowed_values is None:
             errors.append(f"arg {arg_name}: {arg.param} needs an arg_rule or allowed_values")
         # `reviewed` records that a filter was looked at; it can't wave through anything else.
-        if arg.arg_rule is not None and arg.arg_rule.reviewed and arg.param not in _FILTERS:
+        if arg.arg_rule is not None and arg.arg_rule.reviewed and arg.query not in _FILTERS:
             errors.append(
                 f"arg {arg_name}: arg_rule reviewed is only for free-form filters "
                 f"({', '.join(sorted(_FILTERS))}), not {arg.param}"

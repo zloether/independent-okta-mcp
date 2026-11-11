@@ -70,19 +70,28 @@ def test_sensitivity(registry: Registry) -> None:
     }
 
 
-def test_free_form_filters_are_reviewed(registry: Registry) -> None:
-    # Step 3.2 decision: a filter narrows a list the caller may read in full, so it leaves
-    # sensitivity alone, but each one carries the reason it was judged so.
-    seen = 0
-    for domain in PILOTS:
-        for cmd in registry.domains[domain].commands.values():
-            for arg in cmd.entry.args.values():
-                if arg.param in ("filter", "search", "q"):
-                    seen += 1
-                    assert arg.arg_rule is not None
-                    assert arg.arg_rule.reviewed
-                    assert arg.arg_rule.raises_sensitivity_to is None
-    assert seen == 7
+def test_free_form_filter_rules(registry: Registry) -> None:
+    # Step 3.2 decision: a filter over a closed set of returned fields leaves sensitivity
+    # alone and says why. A `search` that matches any profile attribute stays raising: it can
+    # match a custom attribute scrub.yaml redacts by key name (3.2 security review).
+    rules = {
+        (domain, cmd.name, name): arg.arg_rule
+        for domain in PILOTS
+        for cmd in registry.domains[domain].commands.values()
+        for name, arg in cmd.entry.args.items()
+        if arg.param in ("filter", "search", "q")
+    }
+    reviewed = {k for k, r in rules.items() if r is not None and r.reviewed}
+    raising = {k for k, r in rules.items() if r is not None and r.raises_sensitivity_to}
+    assert reviewed == {
+        ("groups", "list", "q"),
+        ("groups", "list", "filter"),
+        ("groups", "get-owners", "filter"),
+        ("groups", "list-rules", "search"),
+        ("network-zones", "list", "filter"),
+    }
+    assert raising == {("groups", "list", "search"), ("groups", "get-members", "search")}
+    assert reviewed | raising == set(rules)
 
 
 def test_only_filters_are_reviewed(registry: Registry) -> None:

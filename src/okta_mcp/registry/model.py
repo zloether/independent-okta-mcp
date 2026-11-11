@@ -78,9 +78,10 @@ class ArgRule(_Model):
     """No caller may pass the argument."""
     raises_sensitivity_to: Literal["sensitive"] | None = None
     """A call that passes it is sensitive, whatever the command's data classes."""
-    reviewed: str | None = Field(default=None, min_length=1)
-    """The argument leaves the call's sensitivity as it is; the value says why. Only for
-    free-form filters (`filter`, `search`, `q`), which the loader enforces."""
+    reviewed: str | None = Field(default=None, pattern=r"\S")
+    """The argument leaves the call's sensitivity as it is; the value says why: every field
+    the filter can match is one the command returns unredacted (design §6.2 check 6). Only
+    for free-form filters (`filter`, `search`, `q`), which the loader enforces."""
 
     @model_validator(mode="after")
     def _exactly_one(self) -> Self:

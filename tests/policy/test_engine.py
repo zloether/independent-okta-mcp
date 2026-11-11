@@ -108,15 +108,12 @@ def test_every_permitted_command_is_callable_without_args_and_no_other(
             assert engine.check(who, domain, command, {}) is expected
 
 
-def test_helpdesk_and_readers_can_search(engine: Engine) -> None:
-    # The 3.2 decision: `groups: ["*"]` used to list but not search.
+def test_wildcard_roles_can_use_reviewed_filters(engine: Engine) -> None:
+    # The 3.2 decision: `groups: ["*"]` used to list but not filter at all.
     for group in (READERS, HELPDESK):
         who = _who(group)
-        for arg in ("q", "filter", "search"):
+        for arg in ("q", "filter"):
             assert engine.check(who, "groups", "list", {arg: "x"}) is ALLOWED
-        assert engine.check(who, "groups", "get-members", {"group": GROUP, "search": "x"}) is (
-            ALLOWED
-        )
         assert engine.check(who, "groups", "get-owners", {"group": GROUP, "filter": "x"}) is (
             ALLOWED
         )
@@ -124,13 +121,25 @@ def test_helpdesk_and_readers_can_search(engine: Engine) -> None:
     assert engine.check(_who(HELPDESK), "network-zones", "list", {"filter": "x"}) is ALLOWED
 
 
+def test_profile_search_stays_out_of_reach_of_a_plain_wildcard(engine: Engine) -> None:
+    # `search` matches any profile attribute, so it can probe one scrub.yaml redacts.
+    for group in (READERS, HELPDESK):
+        who = _who(group)
+        assert engine.check(who, "groups", "list", {"search": "x"}) is FORBIDDEN
+        assert engine.check(who, "groups", "list", {"q": "x", "search": "x"}) is FORBIDDEN
+        assert engine.check(who, "groups", "get-members", {"group": GROUP, "search": "x"}) is (
+            FORBIDDEN
+        )
+    for group in (ANALYSTS, ADMINS):
+        assert engine.check(_who(group), "groups", "list", {"search": "x"}) is ALLOWED
+
+
 def test_plain_wildcard_does_not_reach_a_raising_arg(engine: Engine) -> None:
     # `expand=stats` carries admin-role data; both roles reach `list` by wildcard only.
     for group in (READERS, HELPDESK):
         assert engine.check(_who(group), "groups", "list", {"expand": "stats"}) is FORBIDDEN
         assert (
-            engine.check(_who(group), "groups", "list", {"search": "x", "expand": "stats"})
-            is FORBIDDEN
+            engine.check(_who(group), "groups", "list", {"q": "x", "expand": "stats"}) is FORBIDDEN
         )
 
 
