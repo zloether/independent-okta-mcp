@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from okta_mcp.auth.principal import Principal
+from okta_mcp.exec.output import ScrubRules
 from okta_mcp.policy.expression import ExpressionError, attribute, attributes, scrubbed
 from okta_mcp.policy.model import WILDCARD, Grant, Policy
 from okta_mcp.registry.loader import Command, Registry
@@ -65,6 +66,12 @@ class Engine:
         )
         """Commands the service app can't run, whoever asks."""
         self._by_roles: dict[frozenset[str], _Effective] = {}
+
+    @property
+    def scrub(self) -> ScrubRules:
+        """The rules the policy was checked against (`Policy.scrub`). The executor scrubs
+        results with these, so load-time checks, call-time checks and output agree."""
+        return self._policy.scrub
 
     def roles(self, principal: Principal) -> frozenset[str]:
         """Names of the roles the principal holds: those naming any of its groups."""
