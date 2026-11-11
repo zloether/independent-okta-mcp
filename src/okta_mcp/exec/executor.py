@@ -28,6 +28,7 @@ import traceback
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
+from urllib.parse import quote
 
 import anyio
 import httpx2
@@ -76,6 +77,10 @@ EXPRESSION = (
     "parentheses, single spaces and double-quoted values without backslashes; a sort takes one "
     "attribute name"
 )
+CURSOR_MAX = 90_000
+"""Longest cursor read, in characters. A cursor holds one page's query string, which httpx2's
+64 KiB URL limit bounds, base64-encoded (x 4/3) with a small header; anything longer can't be
+one of ours, and is refused before the tag is computed over it."""
 _ATTRIBUTES_SHOWN = 20
 _LOGGED_NAME = 64
 """Characters of a caller-sent domain or command name a log line may carry."""
@@ -129,6 +134,31 @@ class Call:
     links: object = False
     limit: object = None
     cursor: object = None
+
+
+def expression_args(command: Command) -> list[str]:
+    """The command's `attribute_expression` args, the ones `search_attributes` govern."""
+    return [
+        name
+        for name, arg in command.entry.args.items()
+        if arg.arg_rule is not None and arg.arg_rule.attribute_expression
+    ]
+
+
+def searchable(engine: Engine, principal: Principal, command: Command) -> str:
+    """What the principal's roles let them name in an expression on this command (§5.5). Also
+    `okta_help`'s line for a command with expression args. Only those args are role-checked:
+    a `reviewed` filter is not, so the message names the args it is about."""
+    names = engine.search_attributes(principal, command.domain, command.name)
+    if not names:
+        args = " or ".join(expression_args(command)) or "an expression"
+        return f"your roles allow no {args} on this command"
+    if "*" in names:
+        return "expressions may name any attribute that results don't redact"
+    shown = sorted(names)
+    more = len(shown) - _ATTRIBUTES_SHOWN
+    listed = ", ".join(shown[:_ATTRIBUTES_SHOWN]) + (f" (+{more})" if more > 0 else "")
+    return f"expressions may name only: {listed}"
 
 
 def tool_name(domain: str) -> str:
@@ -263,7 +293,7 @@ class Executor:
             case Verdict.FORBIDDEN:
                 return Failure(Code.FORBIDDEN_BY_POLICY, self._forbidden(call, command, options))
             case Verdict.INVALID:
-                return Failure(Code.INVALID_ARGUMENTS, self._unreadable(call))
+                return Failure(Code.INVALID_ARGUMENTS, self._unreadable(call, command))
             case Verdict.UNAVAILABLE:
                 return Failure(Code.UNAVAILABLE, UNAVAILABLE)
             case _:  # pyright: ignore[reportUnnecessaryComparison]
@@ -283,12 +313,18 @@ class Executor:
         if call.select is not None and not isinstance(call.select, str):
             raise InvalidArguments("select must be a string")
         cols = columns(call.select, command.entry.view)
+        if command.is_list and resumable(command, args):
+            self._query_fits(command, args)
         if not isinstance(call.links, bool):
             raise InvalidArguments("links must be true or false")
         limit = self._limit(call.limit)
         resume = None
         if call.cursor is not None:
-            if not isinstance(call.cursor, str) or not resumable(command, args):
+            if (
+                not isinstance(call.cursor, str)
+                or len(call.cursor) > CURSOR_MAX
+                or not resumable(command, args)
+            ):
                 # Not a cursor, or a single resource or a list that is never resumed with
                 # these args: no cursor of this call's could exist.
                 raise CursorError(NOT_VALID)
@@ -300,6 +336,25 @@ class Executor:
                 args=args,
             )
         return _Options(args, cols, call.links, limit, resume)
+
+    def _query_fits(self, command: Command, args: Mapping[str, Any]) -> None:
+        """A resumable list's cursor carries the page's query string, and every row is charged
+        for it, so long query args (each within its own bound) can fill `max_bytes` with cursor
+        and fail as `result_too_large` after an Okta request (2.10 F3). Refused here instead,
+        before any request, at a quarter of `max_bytes` once URL-encoded (the cursor is ~4/3 of
+        it). The real encoding may differ by a little; the byte budget still backs this up."""
+        size = 0
+        for name, value in args.items():
+            if command.entry.args[name].query is None:
+                continue
+            values = cast(list[object], value) if isinstance(value, list) else [value]
+            size += sum(len(quote(str(v), safe="")) for v in values)
+        budget = self._max_bytes // 4
+        if size > budget:
+            raise InvalidArguments(
+                f"the query args are too long for a list: at most {budget} characters together "
+                "once URL-encoded; shorten them"
+            )
 
     def _limit(self, limit: object) -> int:
         if limit is None:
@@ -329,21 +384,10 @@ class Executor:
         rest = {k: v for k, v in options.args.items() if k not in expressions}
         if self._engine.check(call.principal, call.domain, call.command, rest) is Verdict.FORBIDDEN:
             return FORBIDDEN
-        return f"{FORBIDDEN}; {self._searchable(call)}"
+        return f"{FORBIDDEN}; {searchable(self._engine, call.principal, command)}"
 
-    def _unreadable(self, call: Call) -> str:
-        return f"{EXPRESSION}; {self._searchable(call)}"
-
-    def _searchable(self, call: Call) -> str:
-        names = self._engine.search_attributes(call.principal, call.domain, call.command)
-        if not names:
-            return "your roles allow no search, filter or sort expression on this command"
-        if "*" in names:
-            return "expressions may name any attribute that results don't redact"
-        shown = sorted(names)
-        more = len(shown) - _ATTRIBUTES_SHOWN
-        listed = ", ".join(shown[:_ATTRIBUTES_SHOWN]) + (f" (+{more})" if more > 0 else "")
-        return f"expressions may name only: {listed}"
+    def _unreadable(self, call: Call, command: Command) -> str:
+        return f"{EXPRESSION}; {searchable(self._engine, call.principal, command)}"
 
     async def _resolved(self, command: Command, args: dict[str, Any]) -> dict[str, Any]:
         if not any(a.resolve is not None for a in command.entry.args.values()):

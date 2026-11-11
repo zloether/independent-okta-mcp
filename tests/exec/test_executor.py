@@ -17,6 +17,7 @@ from okta_mcp.auth.principal import Principal
 from okta_mcp.exec.cursor import RESUMED_WARNING, Cursors
 from okta_mcp.exec.envelope import UNPAGED_WARNING
 from okta_mcp.exec.executor import (
+    CURSOR_MAX,
     EXPRESSION,
     FORBIDDEN,
     INTERNAL,
@@ -517,7 +518,8 @@ async def test_forbidden_attribute_says_what_may_be_named(ex: Executor, okta: Ok
     # No search_attributes at all (admin role).
     args = {"search": 'profile.name sw "a"'}
     out = failed(await run(ex, who(ADMINS), "groups", "list", args=args), Code.FORBIDDEN_BY_POLICY)
-    assert out.message.endswith("no search, filter or sort expression on this command")
+    # Names the role-checked args only: `filter` and `q` on this command are still allowed.
+    assert out.message.endswith("your roles allow no search or sort_by on this command")
     # A refusal with no expression arg is the one fixed sentence.
     out = await run(ex, who(READERS), "groups", "list", args={"expand": "stats"})
     assert failed(out, Code.FORBIDDEN_BY_POLICY).message == FORBIDDEN
@@ -1186,3 +1188,27 @@ async def test_hint_when_only_the_expression_is_refused(ex: Executor, okta: Okta
     args = {"filter": 'type eq "OKTA_GROUP"', "search": 'profile.description sw "G"'}
     out = failed(await run(ex, who(READERS), "groups", "list", args=args), Code.FORBIDDEN_BY_POLICY)
     assert out.message == f"{FORBIDDEN}; expressions may name only: profile.name, type"
+
+
+@pytest.mark.anyio
+async def test_long_query_args_refused_before_any_request(ex: Executor, okta: Okta) -> None:
+    # 2.10 F3: each arg within its bound, but the cursor that carries them would fill the byte
+    # budget, so the call failed as result_too_large after one request. Now refused up front.
+    args = {"search": f'profile.name sw "{"é" * 4000}"', "filter": f'type eq "{"é" * 4000}"'}
+    out = failed(await run(ex, who(ANALYSTS), "groups", "list", args=args), Code.INVALID_ARGUMENTS)
+    assert "too long for a list" in out.message
+    assert okta.requests == []
+
+
+@pytest.mark.anyio
+async def test_unpaged_query_args_not_charged_for_a_cursor(ex: Executor, okta: Okta) -> None:
+    # `q` is never resumed, so it carries no cursor and the budget doesn't apply to it.
+    out = await run(ex, who(READERS), "groups", "list", args={"q": "é" * 4000})
+    assert not isinstance(out, Failure)
+
+
+@pytest.mark.anyio
+async def test_overlong_cursor_refused(ex: Executor, okta: Okta) -> None:
+    out = await run(ex, who(READERS), "groups", "list", cursor="A" * (CURSOR_MAX + 1))
+    failed(out, Code.INVALID_ARGUMENTS)
+    assert okta.requests == []
