@@ -23,6 +23,8 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 | Command "patterns" unspecified (§9.1) | A pattern is a command name or `"*"`; no partial globs. Under domain `"*"` only `["*"]` (§9.3) | `get-*` would grant commands by how they are named, and `"*": [get]` a different command per domain |
 | Cursor held `page.rel`, a relative path and query, checked against the template on resume (§7.3) | Compact cursor ([T1](t1-tool-surface.md) D10, step 2.9): short keys, 128-bit args hash and tag, and the page's **query string only**; the path is always the template expanded with the cursor's path params | A cursor is echoed by the model as output tokens (516 → 285 characters for the §7.3 example), and a cursor that can't hold a path needs no path check |
 | Wildcard-vs-sensitive rule covered commands only (§9.2) | The same rule covers calls an `arg_rule` raises to sensitive (§9.3) | Otherwise a plain wildcard reaches sensitive data through an argument |
+| Free-form `filter`/`search`/`q` each raised the call to sensitive (§6.2, §9.2) | A third `arg_rule` form, `{reviewed: "<reason>"}`, leaves sensitivity unchanged; only filters may use it. `expand` and `discloseIdentifiers` still raise (step 3.2) | A filter narrows a list the caller may already read in full. With the raise, `users: ["*"]` and `groups: ["*"]` could list but not search, which is what the help-desk and directory-reader roles are for |
+| `.manage ⇒ .read` implication to be modeled in the capability gate (§9.4, V4) | **No implication.** The gate is a plain subset test (step 3.2) | `OKTA_SCOPES` accepts only `.read` scopes (§10, config), so no held scope could imply another. 2 of the spec's 319 GET operations accept only a `.manage` scope (`getAerialConsent`, `previewPolicyBranchPromotion`); they stay unavailable |
 
 ### 0.1 Changes from r3
 
@@ -178,7 +180,7 @@ independent-okta-mcp/
 │   ├── __main__.py              # entrypoint: config, policy, registry; HTTP (uvicorn) or --stdio
 │   ├── config.py                # env parsing + validation (fail fast)
 │   ├── app.py                   # ASGI: /mcp, PRM endpoints, /healthz, /readyz
-│   ├── auth/{verifier,metadata,devmode}.py
+│   ├── auth/{principal,verifier,metadata,devmode}.py
 │   ├── policy/{model,engine,loader}.py
 │   ├── registry/{model,loader,spec}.py   # load YAML, resolve against spec, build JSON Schemas
 │   ├── okta/{client,token,dpop,paginate,ratelimit}.py
@@ -377,7 +379,7 @@ commands:
     data_classes: [admin-roles]
 ```
 
-**Sensitivity is derived, not declared.** A reviewed table maps data classes to sensitivity: `pii`, `org-config` → `normal`; `mfa-state`, `credential-material`, `audit-log`, `admin-roles`, `session`, `risk` → `sensitive`. A command is `sensitive` if any of its classes is. `arg_rule: {raises_sensitivity_to: sensitive}` raises it for calls that pass that argument.
+**Sensitivity is derived, not declared.** A reviewed table maps data classes to sensitivity: `pii`, `org-config` → `normal`; `mfa-state`, `credential-material`, `audit-log`, `admin-roles`, `session`, `risk` → `sensitive`. A command is `sensitive` if any of its classes is. `arg_rule: {raises_sensitivity_to: sensitive}` raises it for calls that pass that argument. An `arg_rule` has exactly one of three forms: `forbidden: true` (no caller may pass the argument), `raises_sensitivity_to: sensitive`, or `reviewed: "<reason>"` (the argument leaves sensitivity as it is, and the reason says why).
 
 Load-time and CI checks (startup fails on any error):
 
@@ -386,7 +388,7 @@ Load-time and CI checks (startup fails on any error):
 3. Derived scope sets = the operation's `security.oauth2` entries, each an alternative (any one granted set suffices; scopes within an entry are all required), each combined with `getUser`'s scopes for `resolve: user_id`. Empty `oauth2` entries are dropped. **No scope set at all is an error** unless the entry carries `okta_scopes_override: {scopes: […], reason: "…"}`. The override is rejected on operations that do declare scopes, so it can never replace a spec requirement.
 4. Every command has a non-empty `data_classes` list using known classes.
 5. Commands that use the same `operationId` have the same derived base sensitivity (differences must come from `arg_rule`s). There is one command per operation; a second is allowed only when its classification (data classes or `arg_rule`s) differs. Variants such as list vs search are arguments of one command.
-6. Every argument that can widen results (`expand`, `discloseIdentifiers`, free-form `filter`/`search`/`q`) has an explicit `arg_rule` or `allowed_values`.
+6. Every argument that can widen results (`expand`, `discloseIdentifiers`, free-form `filter`/`search`/`q`) has an explicit `arg_rule` or `allowed_values`. `reviewed` is accepted only on the free-form filters: they narrow a list, while `expand` and `discloseIdentifiers` add data to it. The reason must hold for that operation: the filter matches only fields the command returns to the same caller. A filter that can match a field the result omits or `scrub.yaml` redacts is an oracle for it and takes `raises_sensitivity_to` or `forbidden`.
 7. Every resource guide's command references exist.
 8. A command without classification fails CI; there is no "default exposed". Unknown fields are errors, so a misspelled field (e.g. `arg_rules`) cannot silently drop a rule.
 9. `items_key`, when set, names an array-of-objects property of the operation's success response (single resources have such properties too, e.g. `getDevice` → `registrationGrants`, so the spec alone can't say which object responses wrap a list; the registry declares it). Where the spec declares one object but Okta returns a list of it (V8), `response_override: {kind: list, reason: "…"}` says so. An operation that defines `after` is a list command; if it returns an object, `items_key` names the list, which may hold plain values (`getIdentitySourceGroupMemberships` → `memberExternalIds`). `paginate` is set on list commands whose operation defines `after` or returns `_links.next`, and only on list commands; `_links.next` on a single resource is ignored.
@@ -575,7 +577,7 @@ Okta group(s) ──(groups claim: IDs)──► role(s) ──► allow/deny of
 
 - A command is `sensitive` if any of its `data_classes` maps to `sensitive` (§6.2): MFA factors/enrollments, risk, API token metadata, app secrets/keys/JWKs/CSRs, IdP keys/CSRs, AS signing keys, System Log queries, role/permission assignments, session lookups, org contacts/support cases.
 - Known secret-bearing "normal-looking" endpoints get `credential-material` until confirmed otherwise (V14): `identity-providers list/get` (`protocol.credentials.client.client_secret`), `security get-ssf-streams` (`delivery.authorization_header`).
-- **Per-argument rules** (`forbidden`, `raises_sensitivity_to`, `allowed_values`) for `expand`, `discloseIdentifiers`, free-form `filter`/`search`. Unknown `expand` values rejected.
+- **Per-argument rules** (`forbidden`, `raises_sensitivity_to`, `reviewed`, `allowed_values`) for `expand`, `discloseIdentifiers`, free-form `filter`/`search`/`q` (§6.2 check 6). An argument counts as passed when its key is present, whatever its value. Unknown `expand` values rejected.
 - **Secret scrubbing** (defence in depth): `scrub.yaml` lists field paths (`protocol.credentials.client.client_secret`, `delivery.authorization_header`, `credentials.oauthClient.client_secret`, `privateKey`, `secret`, `sharedSecret`, …) whose values are replaced with `"[redacted]"` in every result regardless of role. A path is a chain of keys matched at any depth (inside `_embedded` and arrays), case-insensitively, so a single key matches everywhere; no wildcards. A second list, `strings`, redacts only string values, for keys that hold a secret as a string but name config objects elsewhere (`password`, `token`, `refresh_token`). Secrets in `{key, value}` pairs (hook headers) are covered by a chain to `value`. A missing, malformed or empty file stops the server. Fixture tests cover each path.
 - **Wildcards match only `normal` commands**; sensitive commands need an explicit name or `include_sensitive`.
 
@@ -640,8 +642,10 @@ Policy changes take effect on restart (stateless, seconds). Mount the file read-
 ### 9.4 Enforcement points
 
 1. **`tools/list`** — `permitted(principal)` (memoized by frozenset of matched roles); only domains with ≥1 permitted command, enum and synopsis restricted; `cacheScope: "private"`.
-2. **`tools/call`** — re-evaluates against the policy and the call's args (`arg_rules`); never trusts the client's view. Runs before any resolver or Okta request.
-3. **Service-app capability gate** — command unavailable when none of its derived scope sets ⊆ `OKTA_SCOPES`. `.manage ⇒ .read` implication modeled explicitly (V4).
+2. **`tools/call`** — re-evaluates against the policy and the call's args (`arg_rules`); never trusts the client's view. Runs before any resolver or Okta request. An unknown command, an unknown argument name and an `arg_rule` form the engine doesn't know are all `forbidden_by_policy`.
+3. **Service-app capability gate** — command unavailable when none of its derived scope sets ⊆ `OKTA_SCOPES`; a command with no scope sets is unavailable. Scope names are compared exactly: there is no `.manage ⇒ .read` implication, because `OKTA_SCOPES` holds only `.read` scopes (V4). The gate is applied after the policy decision, so a caller who lacks the grant gets `forbidden_by_policy` and learns nothing about the service app's scopes.
+
+`policy/engine.py`: `Engine(policy, registry, okta_scopes)` with `roles(principal)`, `permitted(principal)` (policy only; `Engine.unavailable` is the set the gate removes, kept apart so `okta_help` can say why a permitted command won't run) and `check(principal, domain, command, args) -> ALLOWED | FORBIDDEN | UNAVAILABLE`. It reads the sets the loader compiled and never expands a pattern itself.
 
 ### 9.5 Group claim limits
 
@@ -876,7 +880,7 @@ M3 is the least certain line. The step 1.5 inventory (`docs/coverage/report.md`)
 | V1 | `groups` claim (IDs) present on access tokens; behavior past 100 groups | Core authz | **Verified 0.5:** IDs of the user's `mcp-okta-*` Okta groups only. Past 100 untested; fallback (service-app group lookup) designed only if needed |
 | V2 | Okta configuration for a self-hosted resource server as ID-JAG audience | Path B (future) | Deferred with Path B |
 | V3 | Client registration: pre-registered vs DCR vs CIMD | Onboarding | Start with pre-registered public clients; check each target client in spike 0.6 and record in the compatibility matrix |
-| V4 | `.manage ⇒ .read` scope implication | Capability gate | Verify; encode explicitly |
+| V4 | `.manage ⇒ .read` scope implication | Capability gate | **Closed (step 3.2): not modeled.** `OKTA_SCOPES` can't hold `.manage`, so nothing held implies anything; GET operations that accept only `.manage` are unavailable |
 | V5 | MCP SDK v2 and revision 2026-07-28: stateless per-request principal in low-level `on_*` handlers, `cacheScope`/`ttlMs` on list results, back-compat with 2025-11-25 clients, built-in resource-server auth helpers, `httpx` vs `httpx2` and the matching test mock. Facts from the r3 review post-date the author's knowledge and are unconfirmed | Implementation shape | Spike 0.4; pin SDK exact |
 | V6 | Endpoints that succeed under Read-only Administrator | Service-app role | Per-domain smoke in dev org |
 | V8 | Spec accuracy: wrong/missing `security` scopes (empty scopes are now a load error), operationIds that change between spec releases, parameters undocumented in the spec | Registry correctness | `okta_scopes_override` with comments; spec-update diff review; dev-org smoke |

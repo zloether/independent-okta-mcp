@@ -72,13 +72,23 @@ class _Model(BaseModel):
 
 
 class ArgRule(_Model):
+    """What passing the argument does to the call (design §9.2). Exactly one field is set."""
+
     forbidden: bool = False
+    """No caller may pass the argument."""
     raises_sensitivity_to: Literal["sensitive"] | None = None
+    """A call that passes it is sensitive, whatever the command's data classes."""
+    reviewed: str | None = Field(default=None, min_length=1)
+    """The argument leaves the call's sensitivity as it is; the value says why. Only for
+    free-form filters (`filter`, `search`, `q`), which the loader enforces."""
 
     @model_validator(mode="after")
-    def _not_empty(self) -> Self:
-        if not self.forbidden and self.raises_sensitivity_to is None:
-            raise ValueError("arg_rule must set forbidden or raises_sensitivity_to")
+    def _exactly_one(self) -> Self:
+        chosen = (self.forbidden, self.raises_sensitivity_to is not None, self.reviewed is not None)
+        if sum(chosen) != 1:
+            raise ValueError(
+                "arg_rule must set exactly one of forbidden, raises_sensitivity_to or reviewed"
+            )
         return self
 
 

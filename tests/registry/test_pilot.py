@@ -70,13 +70,27 @@ def test_sensitivity(registry: Registry) -> None:
     }
 
 
-def test_free_form_args_raise_sensitivity(registry: Registry) -> None:
+def test_free_form_filters_are_reviewed(registry: Registry) -> None:
+    # Step 3.2 decision: a filter narrows a list the caller may read in full, so it leaves
+    # sensitivity alone, but each one carries the reason it was judged so.
+    seen = 0
     for domain in PILOTS:
         for cmd in registry.domains[domain].commands.values():
             for arg in cmd.entry.args.values():
                 if arg.param in ("filter", "search", "q"):
+                    seen += 1
                     assert arg.arg_rule is not None
-                    assert arg.arg_rule.raises_sensitivity_to == "sensitive"
+                    assert arg.arg_rule.reviewed
+                    assert arg.arg_rule.raises_sensitivity_to is None
+    assert seen == 7
+
+
+def test_only_filters_are_reviewed(registry: Registry) -> None:
+    for domain in PILOTS:
+        for cmd in registry.domains[domain].commands.values():
+            for arg in cmd.entry.args.values():
+                if arg.arg_rule is not None and arg.arg_rule.reviewed:
+                    assert arg.param in ("filter", "search", "q")
 
 
 def test_group_stats_expand_raises_sensitivity(registry: Registry) -> None:

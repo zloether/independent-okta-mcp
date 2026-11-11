@@ -21,7 +21,9 @@ from okta_mcp.registry.schema import build_schema, make_validator, synopsis
 from okta_mcp.registry.spec import Operation, SpecIndex
 
 REGISTRY = files("okta_mcp") / "data" / "registry"
-_WIDENING = frozenset({"expand", "discloseIdentifiers", "filter", "search", "q"})
+# Free-form filters narrow a list; the other widening params add data to it.
+_FILTERS = frozenset({"filter", "search", "q"})
+_WIDENING = _FILTERS | {"expand", "discloseIdentifiers"}
 # Pagination and page size belong to the server (design §7.2), never to the caller.
 _RESERVED_QUERY = frozenset({"after", "limit"})
 
@@ -191,6 +193,12 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
         # Check 6: arguments that can widen results need a rule.
         if arg.param in _WIDENING and arg.arg_rule is None and arg.allowed_values is None:
             errors.append(f"arg {arg_name}: {arg.param} needs an arg_rule or allowed_values")
+        # `reviewed` records that a filter was looked at; it can't wave through anything else.
+        if arg.arg_rule is not None and arg.arg_rule.reviewed and arg.param not in _FILTERS:
+            errors.append(
+                f"arg {arg_name}: arg_rule reviewed is only for free-form filters "
+                f"({', '.join(sorted(_FILTERS))}), not {arg.param}"
+            )
     for p in op.params.values():
         if p.required and p.name not in used and not (p.name == "limit" and entry.page_size):
             errors.append(f"required {p.location} param {p.name} has no arg")

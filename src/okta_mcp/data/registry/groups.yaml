@@ -5,9 +5,10 @@ commands:
     operation: listGroups
     summary: List or search groups
     args:
-      q: {query: q, arg_rule: {raises_sensitivity_to: sensitive}}
-      filter: {query: filter, arg_rule: {raises_sensitivity_to: sensitive}}
-      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      # The filters match group fields this command returns (name, type, id, profile, dates).
+      q: {query: q, arg_rule: {reviewed: "matches the group name, which is returned"}}
+      filter: {query: filter, arg_rule: {reviewed: "matches returned group fields only"}}
+      search: {query: search, arg_rule: {reviewed: "matches returned group fields only"}}
       # `stats` includes `hasAdminPrivlege`, admin-role data.
       expand:
         query: expand
@@ -34,7 +35,7 @@ commands:
     summary: Users in a group
     args:
       group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
-      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      search: {query: search, arg_rule: {reviewed: "matches returned user fields only"}}
       expand: {query: expand, allowed_values: [group-rules, login-status-info]}
     paginate: link
     page_size: 200
@@ -56,7 +57,7 @@ commands:
     summary: Owners of a group
     args:
       group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
-      filter: {query: filter, arg_rule: {raises_sensitivity_to: sensitive}}
+      filter: {query: filter, arg_rule: {reviewed: "matches returned owner fields only"}}
     paginate: link
     page_size: 200
     view: [id, type, displayName, resolved]
@@ -66,7 +67,7 @@ commands:
     operation: listGroupRules
     summary: List group rules
     args:
-      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      search: {query: search, arg_rule: {reviewed: "matches the rule name, which is returned"}}
       expand: {query: expand, allowed_values: [groupIdToGroupNameMap]}
     paginate: link
     page_size: 200

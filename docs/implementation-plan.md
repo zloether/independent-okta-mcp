@@ -251,6 +251,7 @@ Verify: `uv run pytest tests/exec/test_cursor.py`; `/security-review`.
 ### 2.10 Executor & resolver 🔒 ☐
 Design: §5.5, §5.6 · Depends: 2.4, 2.6, 2.9
 - [ ] **(slice)** `exec/executor.py`: (principal, tool, command, args, select, links, limit, cursor) → envelope or structured error; policy check (incl. `arg_rules`) before any resolver or Okta request; deadline wrapper; maps exceptions to §5.5 codes
+- [ ] Order with the 3.2 engine: `(domain, command) in engine.permitted(principal)` first (else `forbidden_by_policy`, before schema validation, so a forbidden command's arg names don't leak through `invalid_arguments`), then validate args, then `engine.check(...)` on the validated args → `FORBIDDEN` / `UNAVAILABLE` / proceed. `check` returns `FORBIDDEN` for an unknown arg name, so calling it before validation would turn a typo into `forbidden_by_policy`
 - [ ] Cursor wiring (2.9 built the parts; `call` in `tests/exec/test_cursor.py` shows the order): one `Cursors(config.cursor_key)` at startup; `resumable(command, args)` decides whether `list_result` gets `next_cursor`; with a cursor: validate the resent args, `Cursors.open`, **policy check on those args**, then `resume_url` → `paginate(client, url)` with no `params` → `after(items, skip)`, `warnings=(RESUMED_WARNING,)`, and no resolver call (the cursor's `p` is already resolved); a cursor on a non-list or non-resumable call and `CursorError` → `invalid_arguments`; `Cursors.issuer(...)` once per call with `cursor.path_params(command, resolved_args)`. Test that a role change between pages is enforced on the resumed call
 - [ ] `exec/resolve.py`: `user_id` only — `00u…` ID short-circuit, else exact `getUser` lookup, `not_found` otherwise; cached per call
 - [ ] `groups list` with `q`: Okta doesn't page `q`, so the forced `limit=200` (`page_size`) cuts results with no next link and no sign of truncation (1.6 review). Don't send `limit` when `q` is passed (or mark the result truncated); needs a registry field or executor rule, test with a mocked 250-item response
@@ -273,11 +274,11 @@ Design: §9.3 · Depends: 1.3
 
 Verify: `uv run pytest tests/policy/test_loader.py`; `/security-review`.
 
-### 3.2 Policy engine 🔒 ☐
+### 3.2 Policy engine 🔒 ☑
 Design: §9.1, §9.4 · Depends: 3.1
-- [ ] `policy/engine.py`: `permitted(principal) -> frozenset[(domain, command)]`, memoized by matched-role set, from the compiled `Role.allow`/`deny` sets (3.1; the loader already applied wildcard-vs-sensitive, so the engine must not re-expand patterns); a call whose args raise it to sensitive needs the grant in a matched role's `allow_raised`; wildcard excludes sensitive unless `include_sensitive`; deny wins; per-call check applies `arg_rules`; capability gate vs `OKTA_SCOPES` with explicit `.manage ⇒ .read` table (V4)
-- [ ] Decide the free-form `filter`/`search`/`q` rule before the engine is built on it (1.6 decision, 2026-11-10 review). Today each `raises_sensitivity_to: sensitive`, so the §9.3 `helpdesk` and `directory-reader` roles (`users: ["*"]`, `groups: ["*"]`) can list but not search, which is their main use. Recommended: a third `arg_rule` form, `{reviewed: "<reason>"}`, that leaves sensitivity unchanged and records why (a filter narrows a list the caller may already read in full; it only becomes an oracle once per-role field redaction exists, §12.4). Check 6 still requires a rule on every widening arg; `expand` and `discloseIdentifiers` keep `raises_sensitivity_to`
-- [ ] Property tests: "deny always wins", "no role ⇒ nothing", "wildcard never yields sensitive without include_sensitive"
+- [x] `policy/engine.py`: `permitted(principal) -> frozenset[(domain, command)]`, memoized by matched-role set, from the compiled `Role.allow`/`deny` sets (3.1; the loader already applied wildcard-vs-sensitive, so the engine must not re-expand patterns); a call whose args raise it to sensitive needs the grant in a matched role's `allow_raised`; wildcard excludes sensitive unless `include_sensitive`; deny wins; per-call check applies `arg_rules`; capability gate vs `OKTA_SCOPES` (V4: no `.manage ⇒ .read` table, see Decisions log)
+- [x] Free-form `filter`/`search`/`q` rule decided as recommended: a third `arg_rule` form, `{reviewed: "<reason>"}`, that leaves sensitivity unchanged and records why. The loader accepts it only on those three params; `expand` and `discloseIdentifiers` keep `raises_sensitivity_to`. The seven pilot filters are reclassified
+- [x] Property tests: "deny always wins", "no role ⇒ nothing", "wildcard never yields sensitive without include_sensitive" (seeded `random`, 300 generated policies × 8 principals; no new dependency)
 
 Verify: `uv run pytest tests/policy/test_engine.py`; `/security-review`.
 
@@ -468,7 +469,7 @@ Verify: all phases ☑; CI green on tag.
 |---|---|---|---|
 | V1 | `groups` claim (IDs) on access tokens; >100 groups | 3.2, 4.3 | 0.5 ☑ (>100 untested) |
 | V3 | Client registration: pre-registered vs DCR vs CIMD | 0.6 | 0.6 ◐ |
-| V4 | `.manage ⇒ .read` implication | 3.2 | 3.2 (Okta docs) |
+| V4 | `.manage ⇒ .read` implication | 3.2 | 3.2 ☑ (not needed: `OKTA_SCOPES` is `.read` only) |
 | V5 | SDK v2 / 2026-07-28: stateless per-request principal, `cacheScope`, back-compat, auth helpers, `httpx` vs `httpx2` | 0.1 deps, 2.3, 4.2 | 0.4 ☑ (see Decisions log) |
 | V6 | Read-only Admin sufficiency per domain | 5.x | 5.x |
 | V8 | Spec accuracy (scopes, operationIds, params) | 1.3, 5.x | 1.5 ◐ (5 gotchas catalogued) / 5.x |

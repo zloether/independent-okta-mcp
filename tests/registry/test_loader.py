@@ -390,6 +390,76 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
         },
         "search needs an arg_rule",
     ),
+    "reviewed-on-expand": (
+        {
+            "operation": "listUsers",
+            "summary": "Users",
+            "args": {"expand": {"query": "expand", "arg_rule": {"reviewed": "looked at"}}},
+            "paginate": "link",
+            "view": ["id"],
+            "data_classes": ["pii"],
+        },
+        "arg expand: arg_rule reviewed is only for free-form filters (filter, q, search)",
+    ),
+    "reviewed-on-disclose-identifiers": (
+        {
+            "operation": "listAuthenticatorEnrollments",
+            "summary": "Enrollments",
+            "args": {
+                "user": {"path_param": "userId"},
+                "disclose": {"query": "discloseIdentifiers", "arg_rule": {"reviewed": "x"}},
+            },
+            "data_classes": ["mfa-state"],
+        },
+        "arg disclose: arg_rule reviewed is only for free-form filters",
+    ),
+    "reviewed-on-plain-query": (
+        {
+            "operation": "listUsers",
+            "summary": "Users",
+            "args": {"sort_by": {"query": "sortBy", "arg_rule": {"reviewed": "x"}}},
+            "paginate": "link",
+            "view": ["id"],
+            "data_classes": ["pii"],
+        },
+        "arg sort_by: arg_rule reviewed is only for free-form filters",
+    ),
+    "reviewed-on-path-param": (
+        _with(GET, args={"user": {"path_param": "id", "arg_rule": {"reviewed": "x"}}}),
+        "arg user: arg_rule reviewed is only for free-form filters",
+    ),
+    "reviewed-empty": (
+        _with(GET, args={"user": {"path_param": "id", "arg_rule": {"reviewed": ""}}}),
+        "at least 1 character",
+    ),
+    "reviewed-not-a-string": (
+        _with(GET, args={"user": {"path_param": "id", "arg_rule": {"reviewed": True}}}),
+        "valid string",
+    ),
+    "arg-rule-forbidden-and-raises": (
+        _with(
+            GET,
+            args={
+                "user": {
+                    "path_param": "id",
+                    "arg_rule": {"forbidden": True, "raises_sensitivity_to": "sensitive"},
+                }
+            },
+        ),
+        "exactly one of",
+    ),
+    "arg-rule-raises-and-reviewed": (
+        _with(
+            GET,
+            args={
+                "user": {
+                    "path_param": "id",
+                    "arg_rule": {"raises_sensitivity_to": "sensitive", "reviewed": "x"},
+                }
+            },
+        ),
+        "exactly one of",
+    ),
     # Check 9
     "items-key-not-object-array": (_with(GET, items_key="profile"), "items_key profile"),
     "items-key-scalar-array": (
@@ -448,6 +518,26 @@ def test_failure_modes(spec: SpecIndex, cmd: dict[str, Any], message: str) -> No
     with pytest.raises(RegistryError) as e:
         _build(spec, cmd=cmd)
     assert message in str(e.value)
+
+
+def test_reviewed_filter_loads_and_satisfies_check_6(spec: SpecIndex) -> None:
+    cmd = {
+        "operation": "listUsers",
+        "summary": "Users",
+        "args": {
+            "search": {"query": "search", "arg_rule": {"reviewed": "matches returned fields"}}
+        },
+        "paginate": "link",
+        "view": ["id"],
+        "data_classes": ["pii"],
+    }
+    rule = _build(spec, list=cmd).domains["users"].commands["list"].entry.args["search"].arg_rule
+    assert rule is not None
+    assert (rule.reviewed, rule.raises_sensitivity_to, rule.forbidden) == (
+        "matches returned fields",
+        None,
+        False,
+    )
 
 
 def test_same_operation_sensitivity_mismatch(spec: SpecIndex) -> None:
