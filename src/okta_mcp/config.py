@@ -128,7 +128,9 @@ class Config(BaseModel):
     max_items: int = Field(1000, gt=0, alias="MCP_MAX_ITEMS")
     max_bytes: int = Field(65536, ge=1024, alias="MCP_MAX_BYTES")
     max_batch: int = Field(50, gt=0, alias="MCP_MAX_BATCH")
-    call_timeout: float = Field(60, gt=0, alias="MCP_CALL_TIMEOUT")
+    # At least twice the list's 1 s deadline headroom (`exec.envelope.DEADLINE_HEADROOM`); the
+    # executor checks it too.
+    call_timeout: float = Field(60, ge=2, alias="MCP_CALL_TIMEOUT")
     okta_max_inflight: int = Field(10, gt=0, alias="MCP_OKTA_MAX_INFLIGHT")
     requests_per_minute: int = Field(600, gt=0, alias="MCP_REQUESTS_PER_MINUTE")
     audit_log: str = Field("stdout", alias="MCP_AUDIT_LOG")

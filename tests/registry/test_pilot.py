@@ -166,7 +166,7 @@ def test_schema_snapshots(registry: Registry) -> None:
         "type": "object",
         "properties": {
             "group": {"type": "string", "pattern": "^00g[A-Za-z0-9]{17}$"},
-            "search": {"type": "string"},
+            "search": {"type": "string", "maxLength": 4096},
             "expand": {"type": "string", "enum": ["group-rules", "login-status-info"]},
         },
         "additionalProperties": False,

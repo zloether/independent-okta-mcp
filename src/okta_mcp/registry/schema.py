@@ -41,6 +41,13 @@ _Validator = cast(
 SYNOPSIS_MAX = 60
 """Cap on `usage + "  " + summary` (T1 D1); column padding in the tool description is extra."""
 _OPTIONS_MAX = 20
+QUERY_LENGTH_MAX = 4096
+"""Longest string query value, or array item, in characters. Okta filter expressions and names
+fit in far less, so a runaway arg is `invalid_arguments` from validation (and the bound is shown
+by `okta_help`). It keeps one ASCII arg well under httpx2's 64 KiB URL limit, but not every
+call: percent-encoding grows non-ASCII up to 12 times, and args add up, so for combined or
+non-ASCII args the executor's `InvalidURL` catch (also `invalid_arguments`) is the expected
+path."""
 # Spec schema keywords that constrain a value; descriptions, examples, defaults and the spec's
 # prose `format`s are dropped.
 _KEEP = ("type", "enum", "pattern", "minimum", "maximum", "minLength", "maxLength", "maxItems")
@@ -87,6 +94,9 @@ def build_schema(entry: CommandEntry, op: Operation, errors: list[str]) -> dict[
             elif extra:
                 errors.append(f"arg {name}: allowed_values {extra} are not in the spec enum")
             target["enum"] = list(arg.allowed_values)
+        # Query strings only: the §6.4 rule caps path values at 256; an enum bounds itself.
+        if param.location == "query" and target.get("type") == "string" and "enum" not in target:
+            target["maxLength"] = min(target.get("maxLength", QUERY_LENGTH_MAX), QUERY_LENGTH_MAX)
         if arg.max_items is not None:
             if s.get("type") != "array":
                 errors.append(f"arg {name}: maxItems needs an array")
@@ -236,14 +246,22 @@ def schema_problems(command: "Command", args: object) -> set[str]:
     return {_message(e, args, props) for e in errors}
 
 
+def _key_name(key: object) -> str:
+    """An unknown key as shown to the caller: quoted, cut to 40 characters. A key that isn't a
+    string (args built by code, not JSON) is named by its type."""
+    if not isinstance(key, str):
+        return f"<{type(key).__name__} key>"
+    return repr(key if len(key) <= 40 else key[:39] + "…")
+
+
 def _message(e: ValidationError, args: object, props: Mapping[str, Any]) -> str:
     where = f"arg {e.path[0]!r}" if e.path else "args"
     value = cast(Any, e.validator_value)
     match e.validator:
         case "additionalProperties":
-            extra = sorted(set(cast(Mapping[str, Any], args)) - set(props))
+            extra = sorted(set(cast(Mapping[object, Any], args)) - set(props), key=_key_name)
             noun = "arg" if len(extra) == 1 else "args"
-            names = _options(repr(k if len(k) <= 40 else k[:39] + "…") for k in extra)
+            names = _options(_key_name(k) for k in extra)
             return f"unknown {noun} {names}; valid: {_options(props)}"
         case "required":
             present = cast(Mapping[str, Any], args)

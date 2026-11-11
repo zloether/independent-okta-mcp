@@ -25,6 +25,7 @@ from typing import Any, cast
 import httpx2
 
 from okta_mcp.exec.params import build_url, path_segment
+from okta_mcp.okta.client import on_origin
 from okta_mcp.registry.loader import Command
 from okta_mcp.registry.schema import InvalidArguments
 
@@ -37,6 +38,8 @@ _VERSION = 1
 _TAG_BYTES = 16
 _KEYS = frozenset("vutcapqse")
 _INVALID = "cursor is not valid for this call; run the command again without it"
+NOT_VALID = _INVALID
+"""The message for a cursor that can't be used for this call, whatever the reason."""
 _EXPIRED = "cursor has expired; run the command again without it"
 _OTHER_ARGS = "cursor was issued for other args; resend the same args, or drop the cursor"
 
@@ -196,11 +199,15 @@ def path_params(command: Command, args: Mapping[str, Any]) -> dict[str, str]:
 
 
 def resumable(command: Command, args: Mapping[str, Any]) -> bool:
-    """Whether a cut of this list command, called with `args`, gets a cursor (design §7.2)."""
-    rule = command.entry.resumable
+    """Whether a cut of this list command, called with `args`, gets a cursor (design §7.2). Never
+    with an `unpaged_args` arg: Okta doesn't page that call, so there is no page to go back to."""
+    entry = command.entry
+    if not command.is_list or any(a in args for a in entry.unpaged_args):
+        return False
+    rule = entry.resumable
     if isinstance(rule, bool):
-        return command.is_list and rule
-    return command.is_list and not any(a in args for a in rule.unless_args)
+        return rule
+    return not any(a in args for a in rule.unless_args)
 
 
 def resume_url(command: Command, resume: Resume, org_url: str) -> str:
@@ -223,7 +230,7 @@ def resume_url(command: Command, resume: Resume, org_url: str) -> str:
         return url
     # `paginate` took the query from a URL httpx2 had parsed, so parsing it again changes
     # nothing; a query that does change (`#`, a space, a control character) didn't come from it.
-    base = httpx2.URL(url)
+    base = httpx2.URL(org_url)
     full = f"{url}?{resume.query}"
     try:
         parsed = httpx2.URL(full)
@@ -232,9 +239,8 @@ def resume_url(command: Command, resume: Resume, org_url: str) -> str:
     if (
         parsed is None
         or not resume.query.isascii()
-        or (parsed.scheme, parsed.host, parsed.port, parsed.userinfo)
-        != (base.scheme, base.host, base.port, b"")
-        or parsed.raw_path != base.raw_path + b"?" + resume.query.encode("ascii")
+        or not on_origin(parsed, base)
+        or parsed.raw_path != httpx2.URL(url).raw_path + b"?" + resume.query.encode("ascii")
     ):
         raise CursorError(_INVALID)
     return full

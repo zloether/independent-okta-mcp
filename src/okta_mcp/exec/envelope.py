@@ -22,9 +22,12 @@ from okta_mcp.okta.ratelimit import RateLimited
 
 Truncated = Literal["max_items", "max_bytes", "deadline", "non_resumable"]
 
-_DEADLINE_HEADROOM = 1.0
-"""Time left before the call's deadline when a resumable list stops, to build the response."""
+DEADLINE_HEADROOM = 1.0
+"""Time left before the call's deadline when a resumable list stops, to build the response.
+The executor refuses a call timeout under twice this."""
 _LONGEST_REASON: Truncated = "non_resumable"
+UNPAGED_WARNING = "Okta doesn't page this query and returned a full page; narrow it to see the rest"
+"""For `warnings` when an unpaged query (`unpaged_args`) may have been cut by Okta."""
 
 
 class ResultTooLarge(Exception):
@@ -71,6 +74,18 @@ def _tail(truncated: Truncated | None, cursor: str | None, warnings: Sequence[st
     return tail + ("," + dumps(fields)[1:] if fields else "}")
 
 
+def list_budget(
+    *, cols: tuple[str, ...] | None, limit: int, max_bytes: int, warnings: Sequence[str]
+) -> int:
+    """Bytes left for rows once the envelope is reserved at its largest (count = `limit`, the
+    longest `truncated` reason, `warnings`). Raises `ResultTooLarge` if the envelope alone
+    doesn't fit, which a long `select` can cause: callers check this before any Okta request."""
+    budget = max_bytes - len(_head(limit, cols)) - len(_tail(_LONGEST_REASON, None, warnings))
+    if budget < 0:
+        raise ResultTooLarge(max_bytes)
+    return budget
+
+
 async def list_result(
     items: AsyncGenerator[tuple[Any, str, int]],
     rules: ScrubRules,
@@ -81,6 +96,7 @@ async def list_result(
     max_bytes: int,
     next_cursor: Callable[[str, int], str] | None,
     warnings: Sequence[str] = (),
+    cut_by_okta: bool = False,
 ) -> str:
     """A list from `paginate`'s `items`: `rows` of `cols` cells, or with `cols` `None` whole
     `items`. One item past `limit` is read to tell whether the list is complete, which can cost
@@ -92,18 +108,26 @@ async def list_result(
     the last delivered item's cursor as `next_cursor`, and every row is charged for its cursor,
     so a list that only just fits may be cut where it would have been complete. A non-resumable
     list is never cut by the deadline (the call times out instead) and reports any other cut as
-    `non_resumable`. `warnings` are added as given. Raises `ResultTooLarge` if not even the first
-    item fits, `TimeoutError` if the deadline comes before it, and whatever `items` raises."""
+    `non_resumable`. `warnings` are added as given.
+
+    `cut_by_okta` says Okta's list is itself known to be cut (an unpaged query, `unpaged_args`,
+    that filled its page; the call must not be resumable): the result is reported
+    `non_resumable` with `UNPAGED_WARNING` however much of it was delivered.
+
+    Raises `ResultTooLarge` if not even the first item fits, `TimeoutError` if the deadline
+    comes before it, and whatever `items` raises."""
     resumable = next_cursor is not None
+    if resumable and cut_by_okta:
+        raise ValueError("a list Okta cut can't be resumable")
+    if cut_by_okta:
+        warnings = (*warnings, UNPAGED_WARNING)
     # Reserve the envelope at its largest, so the final text fits whatever count and reason.
-    budget = max_bytes - len(_head(limit, cols)) - len(_tail(_LONGEST_REASON, None, warnings))
-    if budget < 0:  # A long `select` alone can fill it; fail before any Okta request.
-        raise ResultTooLarge(max_bytes)
+    budget = list_budget(cols=cols, limit=limit, max_bytes=max_bytes, warnings=warnings)
     rows: list[str] = []
     used = 0
     cursor: str | None = None
     truncated: Truncated | None = None
-    deadline = anyio.current_effective_deadline() - _DEADLINE_HEADROOM if resumable else math.inf
+    deadline = anyio.current_effective_deadline() - DEADLINE_HEADROOM if resumable else math.inf
     async with aclosing(items):
         with anyio.CancelScope(deadline=deadline) as scope:
             while truncated is None and len(rows) < limit:
@@ -135,6 +159,6 @@ async def list_result(
             if not rows:
                 raise TimeoutError("deadline reached before the first item")
             truncated = "deadline"
-    if truncated is not None and not resumable:
+    if cut_by_okta or (truncated is not None and not resumable):
         truncated = "non_resumable"
     return _head(len(rows), cols) + ",".join(rows) + _tail(truncated, cursor, warnings)

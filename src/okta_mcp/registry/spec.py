@@ -70,7 +70,7 @@ class Operation:
     """Path parameter → the literal segments (casefolded) that any spec path, of any method, has
     in that parameter's place under a compatible prefix. Sent as the value, one would reach
     another endpoint: `rules` for `{groupId}` in `/api/v1/groups/{groupId}` is `listGroupRules`
-    (design §6.4)."""
+    (design §6.4). Also holds `ROUTED_ALIASES`, names Okta routes there that no spec path lists."""
 
 
 @dataclass(frozen=True)
@@ -247,6 +247,12 @@ def _response(r: _Resolver, op: dict[str, Any]) -> Response:
     )
 
 
+ROUTED_ALIASES: Mapping[str, frozenset[str]] = MappingProxyType({"users": frozenset({"me"})})
+"""Literal segment → names Okta routes in the segment right after it that no spec path lists.
+`/api/v1/users/me` is the token's own user (the SSWS token's owner in dev mode), so `me` as a
+user ID would read the service identity, not the user asked for. Part of `Operation.reserved`."""
+
+
 def _segments(path: str) -> tuple[str, ...]:
     return tuple(path.strip("/").split("/"))
 
@@ -258,14 +264,15 @@ def _is_var(segment: str) -> bool:
 def _reserved(path: str, paths: list[tuple[str, ...]]) -> dict[str, frozenset[str]]:
     """See `Operation.reserved`. A prefix is compatible when each segment before the parameter
     is equal in both paths or a variable in either, so the set errs on the large side: it also
-    holds literals of longer paths and of paths with only non-GET operations (`me` for
-    `/api/v1/users/{id}`)."""
+    holds literals of longer paths and of paths with only non-GET operations. Names Okta routes
+    that no spec path lists (`ROUTED_ALIASES`) are added, so this set is complete."""
     template = _segments(path)
     reserved: dict[str, frozenset[str]] = {}
     for i, segment in enumerate(template):
         if not _is_var(segment):
             continue
-        reserved[segment[1:-1]] = frozenset(
+        aliases = ROUTED_ALIASES.get(template[i - 1], frozenset[str]()) if i else frozenset[str]()
+        reserved[segment[1:-1]] = aliases | frozenset(
             other[i].casefold()
             for other in paths
             if len(other) > i

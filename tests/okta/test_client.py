@@ -14,7 +14,13 @@ from _fakes import FakeTokenProvider
 from jwt.algorithms import ECAlgorithm
 
 from okta_mcp.okta import ratelimit
-from okta_mcp.okta.client import OktaClient, OriginError, UpstreamError, new_http_client
+from okta_mcp.okta.client import (
+    OktaClient,
+    OriginError,
+    UpstreamError,
+    new_http_client,
+    on_origin,
+)
 from okta_mcp.okta.dpop import DPoP
 from okta_mcp.okta.ratelimit import RateLimited, RequestLimiter
 from okta_mcp.okta.token import ServiceToken, TokenError
@@ -445,3 +451,29 @@ async def test_deadline_cancels_in_flight_request() -> None:
     assert cancelled.is_set()
     with anyio.fail_after(1):  # the slot was released
         await c.get(USERS)
+
+
+@pytest.mark.parametrize(
+    ("url", "ok"),
+    [
+        ("https://example.okta.com/x", True),
+        ("https://EXAMPLE.okta.com:443/x?y", True),
+        ("http://example.okta.com/x", False),
+        ("https://example.okta.com:8443/x", False),
+        ("https://evil.example.com/x", False),
+        ("https://u@example.okta.com/x", False),
+        ("https://u:p@example.okta.com/x", False),
+        ("https://:@example.okta.com/x", False),
+    ],
+)
+def test_on_origin(url: str, ok: bool) -> None:
+    # The one origin check behind the client, `paginate`, `build_url` and `resume_url`.
+    assert on_origin(httpx2.URL(url), httpx2.URL("https://example.okta.com")) is ok
+
+
+def test_empty_userinfo_is_dropped_by_the_parser() -> None:
+    # S4: `https://@host` parses to no userinfo and is sent without the `@`, so it is the org
+    # URL itself; `:@` keeps a userinfo and is refused.
+    url = httpx2.URL("https://@example.okta.com/x")
+    assert url.userinfo == b"" and str(url) == "https://example.okta.com/x"
+    assert not on_origin(httpx2.URL("https://:@example.okta.com/x"), httpx2.URL(ORG))

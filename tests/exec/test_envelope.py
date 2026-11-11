@@ -338,7 +338,7 @@ async def test_first_item_over_budget_is_result_too_large() -> None:
 @pytest.fixture
 def headroom(monkeypatch: pytest.MonkeyPatch) -> None:
     # The list stops 0.1 s into a 2.1 s call, leaving 2 s before `fail_after` would fire.
-    monkeypatch.setattr(envelope, "_DEADLINE_HEADROOM", 2.0)
+    monkeypatch.setattr(envelope, "DEADLINE_HEADROOM", 2.0)
 
 
 @pytest.mark.anyio
@@ -488,3 +488,40 @@ def test_item_result_over_max_bytes() -> None:
     assert item_result(body, RULES, links=False, cols=None, max_bytes=size)
     with pytest.raises(ResultTooLarge, match="over 99 bytes"):
         item_result(body, RULES, links=False, cols=None, max_bytes=99)
+
+
+# --- a list Okta itself cut (an unpaged query that filled its page) ---
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("limit", [3, 5, 50])
+async def test_cut_by_okta_is_reported_wherever_reading_stops(limit: int) -> None:
+    out = await result(
+        [group(i) for i in range(5)], next_cursor=None, cut_by_okta=True, limit=limit
+    )
+    assert out["count"] == min(limit, 5)
+    assert out["truncated"] == "non_resumable"
+    assert out["warnings"] == [envelope.UNPAGED_WARNING]
+
+
+@pytest.mark.anyio
+async def test_not_cut_by_okta_has_no_warning() -> None:
+    out = await result([group(i) for i in range(4)], next_cursor=None)
+    assert out["count"] == 4 and "truncated" not in out and "warnings" not in out
+
+
+@pytest.mark.anyio
+async def test_cut_by_okta_warning_keeps_other_warnings_and_fits_the_budget() -> None:
+    items = [group(i, "x" * 30) for i in range(40)]
+    for max_bytes in range(1024, 3000, 97):
+        out = await result(
+            items, next_cursor=None, cut_by_okta=True, max_bytes=max_bytes, warnings=["first"]
+        )
+        assert out["warnings"] == ["first", envelope.UNPAGED_WARNING]
+        assert out["truncated"] == "non_resumable"
+
+
+@pytest.mark.anyio
+async def test_cut_by_okta_cant_be_resumable() -> None:
+    with pytest.raises(ValueError, match="resumable"):
+        await result([group(1)], cut_by_okta=True)

@@ -111,9 +111,9 @@ def test_schema_snapshots(spec: SpecIndex) -> None:
     assert cmds["list"].schema == {
         "type": "object",
         "properties": {
-            "filter": {"type": "string"},
-            "search": {"type": "string"},
-            "sort_by": {"type": "string"},
+            "filter": {"type": "string", "maxLength": 4096},
+            "search": {"type": "string", "maxLength": 4096},
+            "sort_by": {"type": "string", "maxLength": 4096},
             "sort_order": {"type": "string", "enum": ["asc", "desc"]},
         },
         "additionalProperties": False,
@@ -126,7 +126,7 @@ def test_schema_snapshots(spec: SpecIndex) -> None:
     }
     assert cmds["list-zones"].schema == {
         "type": "object",
-        "properties": {"filter": {"type": "string"}},
+        "properties": {"filter": {"type": "string", "maxLength": 4096}},
         "additionalProperties": False,
     }
     assert cmds["enrollments"].schema == {
@@ -238,7 +238,10 @@ def test_type_overlay() -> None:
         "data_classes": ["pii"],
     }
     props = _one(index, cmd).schema["properties"]
-    assert props == {"x": {"type": "string"}, "ids": {"type": "array", "items": {"type": "string"}}}
+    assert props == {
+        "x": {"type": "string"},
+        "ids": {"type": "array", "items": {"type": "string", "maxLength": 4096}},
+    }
 
 
 def test_one_of_required(spec: SpecIndex) -> None:

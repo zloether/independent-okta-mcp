@@ -11,6 +11,7 @@ caller's (`anyio.fail_after`); cancelling one aborts the request in flight and f
 
 import logging
 from collections.abc import Callable, Mapping
+from typing import Any
 
 import anyio
 import httpx2
@@ -37,6 +38,14 @@ class UpstreamError(Exception):
         self.status = status
 
 
+def json_body(response: httpx2.Response) -> Any:
+    """The response's JSON, or `None` if it isn't JSON."""
+    try:
+        return response.json()
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
 def new_http_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx2.AsyncClient:
     """The one `AsyncClient` for Okta, shared with the token provider. TLS is verified against the
     system trust store, and redirects are never followed: a followed redirect would replay the
@@ -49,8 +58,16 @@ def new_http_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx
     )
 
 
-def _origin(url: httpx2.URL) -> tuple[str, str, int | None, str]:
-    return url.scheme, url.host, url.port, url.userinfo.decode()
+def on_origin(url: httpx2.URL, origin: httpx2.URL) -> bool:
+    """`url` has `origin`'s scheme, host and port, and no userinfo. The one origin check, used
+    by the client before a token is attached, by `paginate` on next links, and by
+    `exec.params.build_url` and `exec.cursor.resume_url` on the URLs they build (design §6.4,
+    §6.5). httpx2 has already lower-cased the host and dropped a default port."""
+    return (url.scheme, url.host, url.port) == (
+        origin.scheme,
+        origin.host,
+        origin.port,
+    ) and not url.userinfo
 
 
 class OktaClient:
@@ -70,7 +87,7 @@ class OktaClient:
         to Okta, nonce and 429 retries included: before the slot and the token are taken, and
         for a 429 retry before the wait. What it raises propagates."""
         self._http = http
-        self._origin = _origin(httpx2.URL(org_url))
+        self._origin = httpx2.URL(org_url)
         self._tokens = tokens
         self._dpop = dpop
         self._slots = anyio.Semaphore(max_inflight)
@@ -86,7 +103,7 @@ class OktaClient:
             target = httpx2.URL(url)
         except httpx2.InvalidURL:
             target = None
-        if target is None or _origin(target) != self._origin:
+        if target is None or not on_origin(target, self._origin):
             raise OriginError("URL is not on the Okta org")
         if params:
             target = target.copy_merge_params(params)
@@ -156,11 +173,7 @@ class OktaClient:
             return UpstreamError(
                 status, f"Okta refused the request (HTTP {status}); contact the MCP administrator"
             )
-        try:
-            body = response.json()
-        except (ValueError, UnicodeDecodeError):
-            body = None
-        match body:
+        match json_body(response):
             case {"errorSummary": str(summary)} if summary:
                 return UpstreamError(
                     status, f"Okta returned HTTP {status}: {summary[:_SUMMARY_MAX]}"

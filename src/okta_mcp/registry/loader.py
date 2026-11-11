@@ -235,11 +235,28 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
             errors.append(f"required {p.location} param {p.name} has no arg")
     if entry.page_size is not None and "limit" not in op.params:
         errors.append(f"page_size set but {op.operation_id} has no limit param")
+    for a in entry.unpaged_args:
+        if a not in entry.args:
+            errors.append(f"unpaged_args: unknown arg {a}")
+    if entry.unpaged_args and entry.page_size is None:
+        # Without a page size sent, a full page can't be told from a complete one.
+        errors.append("unpaged_args needs page_size")
+    if len(set(entry.unpaged_args)) != len(entry.unpaged_args):
+        errors.append("unpaged_args has duplicates")
+    for name, arg in entry.args.items():
+        # The resolved value (`00u…`) goes through the arg's schema again when the request is
+        # built, so a constraint written for the login would refuse it, after a lookup.
+        # `allowed_values: []` hides the arg instead, which the schema refuses on a path param.
+        if arg.resolve is not None and (arg.pattern is not None or arg.allowed_values):
+            errors.append(f"arg {name}: resolve: user_id takes no pattern or allowed_values")
     if isinstance(entry.resumable, bool):
         return
     for a in entry.resumable.unless_args:
         if a not in entry.args:
             errors.append(f"resumable.unless_args: unknown arg {a}")
+        if a in entry.unpaged_args:
+            # One rule in one place: `resumable()` already never resumes an unpaged call.
+            errors.append(f"unpaged_args are never resumed; drop {a} from resumable.unless_args")
 
 
 def _has_profile(op: Operation) -> bool:
@@ -316,6 +333,8 @@ def _check_shape(entry: CommandEntry, op: Operation, errors: list[str]) -> bool:
         errors.append(f"{op.operation_id} paginates (after or _links.next); set paginate")
     if not is_list and entry.paginate != "none":
         errors.append("paginate set on a single-resource command")
+    if not is_list and entry.unpaged_args:
+        errors.append("unpaged_args set on a single-resource command")
 
     # Items with no declared properties have nothing to view.
     if is_list and entry.view is None and item_fields:

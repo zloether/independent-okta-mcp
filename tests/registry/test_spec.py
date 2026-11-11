@@ -346,7 +346,9 @@ def test_reserved_path_literals_from_the_pinned_spec(pinned: SpecIndex) -> None:
     assert {"export", "search", "types"} <= pinned.operations["getApplication"].reserved["appId"]
     assert {"catalog", "questions"} <= pinned.operations["getFactor"].reserved["factorId"]
     assert pinned.operations["getNetworkZone"].reserved == {}
-    assert "userId" not in pinned.operations["getFactor"].reserved
+    # Not in the spec, but Okta routes it (`ROUTED_ALIASES`).
+    assert pinned.operations["getFactor"].reserved["userId"] == frozenset({"me"})
+    assert pinned.operations["getUser"].reserved == {"id": frozenset({"me"})}
 
 
 def test_reserved_path_literals() -> None:

@@ -23,8 +23,9 @@ commands:
       sort_order: {query: sortOrder, allowed_values: [asc, desc]}
     paginate: link
     page_size: 200
-    # `q` is unpaged (at most 300 results); a re-fetch need not return the same page.
-    resumable: {unless_args: [q]}
+    # Okta doesn't page `q` (at most 300 results): one page, never resumed, and with the 200
+    # sent as `limit`, a full page is reported cut.
+    unpaged_args: [q]
     view: [id, type, profile.name]
     data_classes: [org-config]
 
