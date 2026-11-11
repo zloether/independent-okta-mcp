@@ -131,6 +131,20 @@ class Call:
     cursor: object = None
 
 
+def searchable(engine: Engine, principal: Principal, domain: str, command: str) -> str:
+    """What the principal's roles let them name in an expression on this command (§5.5). Also
+    `okta_help`'s line for a command with expression args."""
+    names = engine.search_attributes(principal, domain, command)
+    if not names:
+        return "your roles allow no search, filter or sort expression on this command"
+    if "*" in names:
+        return "expressions may name any attribute that results don't redact"
+    shown = sorted(names)
+    more = len(shown) - _ATTRIBUTES_SHOWN
+    listed = ", ".join(shown[:_ATTRIBUTES_SHOWN]) + (f" (+{more})" if more > 0 else "")
+    return f"expressions may name only: {listed}"
+
+
 def tool_name(domain: str) -> str:
     """The MCP tool for a registry domain (§5.1): `network-zones` → `okta_network_zones`.
     Domain names are kebab-case, so this is one-to-one. Cursors are bound to it."""
@@ -335,15 +349,7 @@ class Executor:
         return f"{EXPRESSION}; {self._searchable(call)}"
 
     def _searchable(self, call: Call) -> str:
-        names = self._engine.search_attributes(call.principal, call.domain, call.command)
-        if not names:
-            return "your roles allow no search, filter or sort expression on this command"
-        if "*" in names:
-            return "expressions may name any attribute that results don't redact"
-        shown = sorted(names)
-        more = len(shown) - _ATTRIBUTES_SHOWN
-        listed = ", ".join(shown[:_ATTRIBUTES_SHOWN]) + (f" (+{more})" if more > 0 else "")
-        return f"expressions may name only: {listed}"
+        return searchable(self._engine, call.principal, call.domain, call.command)
 
     async def _resolved(self, command: Command, args: dict[str, Any]) -> dict[str, Any]:
         if not any(a.resolve is not None for a in command.entry.args.values()):

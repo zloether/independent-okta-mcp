@@ -219,6 +219,8 @@ Tool name = `okta_<domain>`: `okta_users`, `okta_groups`, `okta_apps`, `okta_pol
 - `okta_help` — compact text help (every argument and constraint, the default view) for one command the caller may use (§5.3).
 - `okta_status` — the caller's effective roles/domains and, for commands their role permits but the server cannot execute, why (e.g. service app lacks a scope). No data about other users.
 
+Per principal (`tools.py`, step 3.3): a domain tool is listed when the caller has at least one command in it that the service app can run, and its `command` enum and synopsis list exactly those, in registry order. Commands the roles permit but the service app can't run are left out of the list; `okta_help` still answers for them and says so, and `okta_status` names the scopes the service app lacks. `okta_help` is listed when any command is permitted; `okta_status` always, so a caller whose groups map to no role can find out why. The caller's own role names appear only in `okta_status`. A call to a tool the caller has no command in, or that doesn't exist, is `forbidden_by_policy` before its arguments are read, and `okta_help` answers a command outside the caller's permitted set the same way whether it exists or not. The list is advice to the model, not enforcement: every domain-tool call goes through the executor's checks (§5.5).
+
 ### 5.2 Input/output contract
 
 ```jsonc
