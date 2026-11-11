@@ -5,15 +5,21 @@ commands:
     operation: listGroups
     summary: List or search groups
     args:
-      q: {query: q, arg_rule: {raises_sensitivity_to: sensitive}}
-      filter: {query: filter, arg_rule: {raises_sensitivity_to: sensitive}}
-      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      q: {query: q, arg_rule: {reviewed: "matches the group name, which is returned"}}
+      filter:
+        query: filter
+        arg_rule: {reviewed: "closed set (id, type, lastUpdated, lastMembershipUpdated), all returned"}
+      # `search` matches any profile attribute, custom ones too, and `sw` reads a value back
+      # a character at a time. The engine checks the attributes named: never one scrub.yaml
+      # redacts, and only those in the caller's roles' `search_attributes`.
+      search: {query: search, arg_rule: {attribute_expression: true}}
       # `stats` includes `hasAdminPrivlege`, admin-role data.
       expand:
         query: expand
         allowed_values: [stats, app]
         arg_rule: {raises_sensitivity_to: sensitive}
-      sort_by: {query: sortBy}
+      # Any single property: ordering by one is a slower way to read it.
+      sort_by: {query: sortBy, arg_rule: {attribute_expression: true}}
       sort_order: {query: sortOrder, allowed_values: [asc, desc]}
     paginate: link
     page_size: 200
@@ -34,7 +40,8 @@ commands:
     summary: Users in a group
     args:
       group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
-      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      # Any user profile attribute, checked as for `list` above.
+      search: {query: search, arg_rule: {attribute_expression: true}}
       expand: {query: expand, allowed_values: [group-rules, login-status-info]}
     paginate: link
     page_size: 200
@@ -56,6 +63,7 @@ commands:
     summary: Owners of a group
     args:
       group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+      # `resolved eq false` adds owners the default call leaves out, so this one widens.
       filter: {query: filter, arg_rule: {raises_sensitivity_to: sensitive}}
     paginate: link
     page_size: 200
@@ -66,7 +74,7 @@ commands:
     operation: listGroupRules
     summary: List group rules
     args:
-      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      search: {query: search, arg_rule: {reviewed: "matches the rule name, which is returned"}}
       expand: {query: expand, allowed_values: [groupIdToGroupNameMap]}
     paginate: link
     page_size: 200

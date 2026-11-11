@@ -11,6 +11,10 @@ Instructions for agents and contributors working in this repo.
 
 Follow the plan's "How to work a step" section: branch `step/<id>-<slug>`, tests first, update the plan's status and decisions log, update the design doc in the same PR if the step changes it.
 
+## Before a pull request
+
+Every change gets **`/code-review`** before a PR is opened or, on a branch that already has one, before the work is called done. Fix what it finds or say in the decisions log why not, then re-run the standard checks. A change to a trust boundary (below) also gets **`/security-review`**; one does not replace the other, since the security review looks only for exploitable flaws and skips correctness. Re-run both on commits that fix review findings when those commits touch a trust boundary. Record each review's outcome in the plan's decisions log.
+
 ## Layout
 
 ```
@@ -36,7 +40,7 @@ uv run pyright                            # strict on src/
 uv lock --check                           # lockfile is committed and must be current
 ```
 
-A step is done only when all of these pass:
+A step is done only when all of these pass, and it has been through the reviews in "Before a pull request":
 
 ```
 uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run pytest

@@ -21,7 +21,12 @@ from okta_mcp.registry.schema import build_schema, make_validator, synopsis
 from okta_mcp.registry.spec import Operation, SpecIndex
 
 REGISTRY = files("okta_mcp") / "data" / "registry"
-_WIDENING = frozenset({"expand", "discloseIdentifiers", "filter", "search", "q"})
+# Free-form filters narrow a list; the other widening params add data to it.
+_FILTERS = frozenset({"filter", "search", "q"})
+# `sortBy` takes any property: ordering by a redacted one leaks it more slowly than `sw` does.
+_WIDENING = _FILTERS | {"expand", "discloseIdentifiers", "sortBy"}
+# Params whose value names attributes, so `arg_rule: attribute_expression` can check them.
+_EXPRESSIONS = frozenset({"filter", "search", "sortBy"})
 # Pagination and page size belong to the server (design §7.2), never to the caller.
 _RESERVED_QUERY = frozenset({"after", "limit"})
 
@@ -191,6 +196,40 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
         # Check 6: arguments that can widen results need a rule.
         if arg.param in _WIDENING and arg.arg_rule is None and arg.allowed_values is None:
             errors.append(f"arg {arg_name}: {arg.param} needs an arg_rule or allowed_values")
+        # `reviewed` records that a filter was looked at; it can't wave through anything else.
+        if arg.arg_rule is not None and arg.arg_rule.reviewed:
+            if arg.query not in _FILTERS:
+                errors.append(
+                    f"arg {arg_name}: arg_rule reviewed is only for free-form filters "
+                    f"({', '.join(sorted(_FILTERS))}), not {arg.param}"
+                )
+            elif arg.query == "search" and _has_profile(op):
+                # Okta's `search` on such resources matches any profile attribute, custom
+                # ones included, and scrub.yaml redacts by key name: an oracle for those.
+                errors.append(
+                    f"arg {arg_name}: search on {op.operation_id} matches any profile "
+                    "attribute, so it can't be reviewed; use attribute_expression"
+                )
+        if (
+            arg.query in ("search", "sortBy")
+            and arg.arg_rule is not None
+            and arg.arg_rule.raises_sensitivity_to
+            and _has_profile(op)
+        ):
+            # Redaction holds for every role, so a raise would only pick who gets the oracle.
+            errors.append(
+                f"arg {arg_name}: {arg.query} on {op.operation_id} can name any profile "
+                "attribute, so raises_sensitivity_to doesn't cover it; use attribute_expression"
+            )
+        if (
+            arg.arg_rule is not None
+            and arg.arg_rule.attribute_expression
+            and arg.query not in _EXPRESSIONS
+        ):
+            errors.append(
+                f"arg {arg_name}: arg_rule attribute_expression is only for "
+                f"{', '.join(sorted(_EXPRESSIONS))}, not {arg.param}"
+            )
     for p in op.params.values():
         if p.required and p.name not in used and not (p.name == "limit" and entry.page_size):
             errors.append(f"required {p.location} param {p.name} has no arg")
@@ -201,6 +240,16 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
     for a in entry.resumable.unless_args:
         if a not in entry.args:
             errors.append(f"resumable.unless_args: unknown arg {a}")
+
+
+def _has_profile(op: Operation) -> bool:
+    """The response, or the items of a list inside it, carry a `profile` object."""
+    response = op.response
+    return any(
+        path.split(".")[0] == "profile"
+        for fields in (response.fields, *response.item_fields.values())
+        for path in fields
+    )
 
 
 def _scope_sets(
@@ -302,5 +351,10 @@ def _check_shared_operations(domains: Mapping[str, Domain]) -> list[str]:
 
 
 def _classification(c: Command) -> tuple[frozenset[str], frozenset[tuple[str, Any]]]:
-    rules = frozenset((a.param, a.arg_rule) for a in c.entry.args.values() if a.arg_rule)
+    # The rule's form, not the wording of a `reviewed` reason.
+    rules = frozenset(
+        (a.param, a.arg_rule.model_copy(update={"reviewed": a.arg_rule.reviewed and "-"}))
+        for a in c.entry.args.values()
+        if a.arg_rule
+    )
     return frozenset(c.entry.data_classes), rules

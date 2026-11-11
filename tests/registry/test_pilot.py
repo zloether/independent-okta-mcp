@@ -70,13 +70,44 @@ def test_sensitivity(registry: Registry) -> None:
     }
 
 
-def test_free_form_args_raise_sensitivity(registry: Registry) -> None:
+def test_free_form_filter_rules(registry: Registry) -> None:
+    # Step 3.2 decision: a filter over a closed set of returned fields leaves sensitivity
+    # alone and says why. A `search` that matches any profile attribute is checked per call:
+    # it can match a custom attribute scrub.yaml redacts by key name (3.2 reviews).
+    rules = {
+        (domain, cmd.name, name): arg.arg_rule
+        for domain in PILOTS
+        for cmd in registry.domains[domain].commands.values()
+        for name, arg in cmd.entry.args.items()
+        if arg.param in ("filter", "search", "q")
+    }
+    reviewed = {k for k, r in rules.items() if r is not None and r.reviewed}
+    raising = {k for k, r in rules.items() if r is not None and r.raises_sensitivity_to}
+    forbidden = {k for k, r in rules.items() if r is not None and r.forbidden}
+    assert reviewed == {
+        ("groups", "list", "q"),
+        ("groups", "list", "filter"),
+        ("groups", "list-rules", "search"),
+        ("network-zones", "list", "filter"),
+    }
+    # `resolved eq false` returns owners the default call leaves out.
+    assert raising == {("groups", "get-owners", "filter")}
+    assert forbidden == set()
+    # Any profile attribute: the engine checks the names against the redaction list and
+    # the caller's roles' `search_attributes`.
+    checked = {k for k, r in rules.items() if r is not None and r.attribute_expression}
+    assert checked == {("groups", "list", "search"), ("groups", "get-members", "search")}
+    assert reviewed | raising | checked == set(rules)
+    sort_by = registry.domains["groups"].commands["list"].entry.args["sort_by"].arg_rule
+    assert sort_by is not None and sort_by.attribute_expression
+
+
+def test_only_filters_are_reviewed(registry: Registry) -> None:
     for domain in PILOTS:
         for cmd in registry.domains[domain].commands.values():
             for arg in cmd.entry.args.values():
-                if arg.param in ("filter", "search", "q"):
-                    assert arg.arg_rule is not None
-                    assert arg.arg_rule.raises_sensitivity_to == "sensitive"
+                if arg.arg_rule is not None and arg.arg_rule.reviewed:
+                    assert arg.param in ("filter", "search", "q")
 
 
 def test_group_stats_expand_raises_sensitivity(registry: Registry) -> None:

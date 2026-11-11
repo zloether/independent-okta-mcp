@@ -25,9 +25,9 @@ LIST_GROUPS = {
     "summary": "List groups",
     "args": {
         "filter": {"query": "filter", "arg_rule": {"raises_sensitivity_to": "sensitive"}},
-        "search": {"query": "search", "arg_rule": {"raises_sensitivity_to": "sensitive"}},
+        "search": {"query": "search", "arg_rule": {"attribute_expression": True}},
         "expand": {"query": "expand", "allowed_values": []},
-        "sort_by": {"query": "sortBy"},
+        "sort_by": {"query": "sortBy", "arg_rule": {"attribute_expression": True}},
         "sort_order": {"query": "sortOrder", "allowed_values": ["asc", "desc"]},
     },
     "paginate": "link",
@@ -188,7 +188,10 @@ def test_overlay_errors(spec: SpecIndex) -> None:
         return _with(LIST_GROUPS, args=a)
 
     cases = [
-        (args(limit_q={"query": "sortBy", "maxItems": 2}), "maxItems needs an array"),
+        (
+            args(limit_q={"query": "sortBy", "maxItems": 2, "allowed_values": ["a"]}),
+            "maxItems needs an array",
+        ),
         (args(f={"query": "sortBy", "type": "integer", "allowed_values": ["a"]}), "string"),
         (
             _with(GET_GROUP, args={"group": {"path_param": "groupId", "type": "integer"}}),

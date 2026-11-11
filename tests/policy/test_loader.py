@@ -1,36 +1,18 @@
 import copy
 import dataclasses
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any
 
 import pytest
 import yaml
 
 from okta_mcp.policy.loader import PolicyError, build_policy, load_policy
-from okta_mcp.registry.loader import Domain, Registry, load_registry
+from okta_mcp.registry.loader import Registry, load_registry
 from okta_mcp.registry.spec import load_spec
 
-PILOT = Path(__file__).parent / "fixtures" / "pilot.yaml"
-G1, G2 = "00g1readers000000000", "00g1helpdsk000000000"
-GROUPS_NORMAL = {"list", "get", "get-members", "get-apps", "get-owners", "list-rules", "get-rule"}
-GROUPS_SENSITIVE = {"list-roles", "get-role", "list-role-app-targets", "list-role-group-targets"}
-ZONES = {("network-zones", "list"), ("network-zones", "get")}
+from ._pilot import GROUPS_NORMAL, GROUPS_SENSITIVE, HELPDESK, PILOT, READERS, ZONES
 
-
-@pytest.fixture(scope="module")
-def registry() -> Registry:
-    """The pilot registries plus `vault`, a domain whose commands are all sensitive."""
-    pilot = load_registry(load_spec())
-    vault = {
-        name: dataclasses.replace(c, domain="vault", sensitivity="sensitive")
-        for name, c in pilot.domains["network-zones"].commands.items()
-    }
-    return Registry(
-        MappingProxyType(
-            {**pilot.domains, "vault": Domain("vault", "Secrets.", MappingProxyType(vault))}
-        )
-    )
+G1, G2 = READERS, HELPDESK
 
 
 def _doc(**roles: dict[str, Any]) -> dict[str, Any]:
@@ -616,3 +598,116 @@ def test_unquoted_star_is_a_yaml_error(tmp_path: Path, registry: Registry) -> No
     # `*` starts a YAML alias, so the wildcard must be quoted; the file must not load.
     text = f"version: 1\nroles:\n  r:\n    groups: [{G1}]\n    allow:\n      groups: [*]\n"
     assert _file_errors(_write(tmp_path, text), registry)
+
+
+# --- search_attributes ---------------------------------------------------------------------
+
+
+def test_search_attributes_compile_to_a_set(registry: Registry) -> None:
+    policy = build_policy(
+        _doc(
+            a=_role(search_attributes=["profile.login", "status"]),
+            b=_role(groups=[G2], search_attributes=["*"]),
+            c=_role(groups=[G2]),
+        ),
+        registry,
+    )
+    assert policy.warnings == ()
+    assert policy.roles["a"].search_attributes == {"profile.login", "status"}
+    assert policy.roles["b"].search_attributes == {"*"}
+    assert policy.roles["c"].search_attributes == frozenset()
+
+
+def test_pilot_policy_search_attributes() -> None:
+    roles = load_policy(PILOT, load_registry(load_spec())).roles
+    assert roles["directory-reader"].search_attributes == {"profile.name", "type"}
+    assert "profile.login" in roles["helpdesk"].search_attributes
+    assert roles["security-analyst"].search_attributes == {"*"}
+    assert roles["platform-admin"].search_attributes == {"*"}
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (["profile.login", "profile.login"], "duplicate attribute 'profile.login'"),
+        (["*", "status"], '"*" must be the only entry'),
+        (["profile.*"], "is not an attribute name"),
+        (["profile."], "is not an attribute name"),
+        (["profile login"], "is not an attribute name"),
+        (["profile.login\n"], "is not an attribute name"),
+        (['profile.login eq "x"'], "is not an attribute name"),
+        ([""], "is not an attribute name"),
+        (["pr\u043efile.login"], "is not an attribute name"),
+        ([5], "valid string"),
+        (["not", "profile.login"], "'not' is an operator or literal word"),
+        (["PR"], "'PR' is an operator or literal word"),
+        (["true"], "'true' is an operator or literal word"),
+        ("status", "valid tuple"),
+        ({"users": ["status"]}, "valid tuple"),
+    ],
+)
+def test_search_attributes_shape_errors(registry: Registry, value: Any, message: str) -> None:
+    error = _one_error(_doc(r=_role(search_attributes=value)), registry)
+    assert error.startswith("roles.r.search_attributes")
+    assert message in error
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    ["profile.apiKey", "profile.SECRET", "token", "credentials.password.value"],
+)
+def test_redacted_attribute_cannot_be_listed(registry: Registry, attribute: str) -> None:
+    assert _errors(_doc(r=_role(search_attributes=["status", attribute])), registry) == [
+        f"roles.r.search_attributes: {attribute!r} is redacted in results, so no role can "
+        "search on it"
+    ]
+
+
+def test_redaction_check_uses_the_rules_passed_in(registry: Registry) -> None:
+    from okta_mcp.exec.output import ScrubRules
+
+    doc = _doc(r=_role(search_attributes=["profile.costCenter", "profile.apiKey"]))
+    with pytest.raises(PolicyError) as e:
+        build_policy(doc, registry, ScrubRules(paths=(("costcenter",),)))
+    assert e.value.errors == [
+        "roles.r.search_attributes: 'profile.costCenter' is redacted in results, so no role "
+        "can search on it"
+    ]
+
+
+def test_policy_carries_the_scrub_rules_it_was_checked_against(registry: Registry) -> None:
+    from okta_mcp.exec.output import ScrubRules, load_scrub
+
+    assert build_policy(_doc(r=_role()), registry).scrub == load_scrub()
+    rules = ScrubRules(paths=(("costcenter",),))
+    assert build_policy(_doc(r=_role()), registry, rules).scrub is rules
+
+
+def test_an_attribute_that_only_starts_a_redaction_chain_can_be_listed(
+    registry: Registry,
+) -> None:
+    # `channel.config.headers.value` is redacted; a custom `profile.channel` is not.
+    doc = _doc(r=_role(search_attributes=["profile.channel", "profile.credentials"]))
+    assert build_policy(doc, registry).roles["r"].search_attributes == {
+        "profile.channel",
+        "profile.credentials",
+    }
+
+
+def test_search_attributes_without_an_expression_command_warn(registry: Registry) -> None:
+    doc = _doc(r=_role(allow={"groups": ["get"]}, search_attributes=["status"]))
+    assert build_policy(doc, registry).warnings == (
+        "roles.r.search_attributes: has no effect (no command this role allows takes a "
+        "search, filter or sort expression)",
+    )
+    # A deny that removes the only such command leaves it without effect too.
+    doc = _doc(
+        r=_role(
+            allow={"groups": ["list", "get"]},
+            deny={"groups": ["list"]},
+            search_attributes=["status"],
+        )
+    )
+    assert any(
+        "search_attributes: has no effect" in w for w in build_policy(doc, registry).warnings
+    )
