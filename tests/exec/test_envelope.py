@@ -338,7 +338,7 @@ async def test_first_item_over_budget_is_result_too_large() -> None:
 @pytest.fixture
 def headroom(monkeypatch: pytest.MonkeyPatch) -> None:
     # The list stops 0.1 s into a 2.1 s call, leaving 2 s before `fail_after` would fire.
-    monkeypatch.setattr(envelope, "_DEADLINE_HEADROOM", 2.0)
+    monkeypatch.setattr(envelope, "DEADLINE_HEADROOM", 2.0)
 
 
 @pytest.mark.anyio

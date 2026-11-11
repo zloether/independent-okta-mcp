@@ -410,7 +410,7 @@ Overlays can only narrow what the spec allows, and a misuse fails the load:
 - `one_of_required: [a, b]`: exactly one of the listed (optional, distinct) args must be passed.
 - `integer` accepts only whole JSON numbers without a fraction part (not `5.0`, not `true`), so Okta always receives `5`.
 
-Validation reports every problem in one `invalid_arguments` message, naming the valid args or values (lists capped at 20). It never echoes the caller's values; unknown key names are shown cut to 40 characters, at most 20 of them.
+Every string query value (and string array item) without an `enum` gets `maxLength` 4096 (or the spec's, if smaller), shown by `okta_help`: Okta's expressions and names need far less, and it keeps the request under the HTTP client's 64 KiB URL limit, so an oversized arg is refused here and not by the client later (path values are capped at 256 by §6.4). Validation reports every problem in one `invalid_arguments` message, naming the valid args or values (lists capped at 20). It never echoes the caller's values; unknown key names are shown cut to 40 characters, at most 20 of them.
 
 ### 6.4 URL construction and injection controls
 
@@ -463,7 +463,7 @@ Because the paginator is ours, the envelope builder consumes items **one at a ti
 - page size never shrinks to fit the budget (no small-page propagation into `next` links).
 
 Rules:
-- **Non-list results** (single resources, SAML metadata) over `MCP_MAX_BYTES` fail with `result_too_large` and a hint to use `select`. So does a list whose first item alone doesn't fit: an empty truncated page would resume at the same item forever. A list whose envelope alone doesn't fit (a long `select` names many columns) fails before any Okta request.
+- **Non-list results** (single resources, SAML metadata) over `MCP_MAX_BYTES` fail with `result_too_large` and a hint to use `select`. So does a list whose first item alone doesn't fit: an empty truncated page would resume at the same item forever. A list whose envelope alone doesn't fit (a long `select` names many columns) fails before any Okta request, the resolver's and an unpaged query's included: the executor checks it first, reserving the warning the call could get.
 - **Deadline:** a resumable list stops 1 s before the call's deadline and returns what it has (`truncated: "deadline"`); with nothing yet, the call fails with `timeout`, for the same reason as above. A non-resumable list isn't cut; the call fails with `timeout`. Any other cut of a non-resumable list is reported as `truncated: "non_resumable"`.
 - **The executor owns `truncated`** and `warnings`: it passes the envelope builder a cursor-issuing function (or none, for a non-resumable call) and the warnings to add.
 - **Unpaged queries:** `unpaged_args: [q]` in the registry names args with which Okta doesn't page the list (`listGroups` `q`). A call that passes one still sends `page_size` as `limit`, is read as one page (links ignored) and is never resumable. The executor reads that page whole before building the envelope; if it holds `page_size` items or more, the result is reported `truncated: "non_resumable"` with a warning to narrow the query, however many items `limit` or the byte budget let out (and even when all were), since Okta gives no other sign that it cut the list. An arg can't be in both `unpaged_args` and `resumable.unless_args` (load error).
@@ -490,7 +490,7 @@ About 285 characters for this example; Okta's `after` tokens are opaque and can 
 - **A cursor holds no path and no host.** `q` is a query string only: for a cut inside the first page it is the initial request's query, afterwards the query of Okta's next link, as sent. On resume the URL is the operation's path template expanded with `p` on `OKTA_ORG_URL`, plus `?q`. Each `p` value goes through the §6.4 rule again (characters, reserved literals) and must name exactly the template's parameters; a `q` the HTTP client would rewrite (`#`, a space, a control character) is refused. So a forged or replayed cursor, even one signed with a leaked key, cannot send the service token off the operation's path.
 - **Resume:** the client resends the same `command` and `args` with `cursor`. The server checks the tag (as text, constant-time, before decoding anything), then the payload's shape and version, that `u` is the caller and `t`/`c` the tool and command, that it has not expired, and that `a` matches the resent args. Then it re-runs the policy check on those args, fetches the page again and skips `s` items of it (if the page is now shorter, it goes on at the next page). Lists that change between calls may duplicate or miss items; resumed responses say so in `warnings`. `select`, `links` and `limit` are not bound: they may differ between pages.
 - **Errors** are `invalid_arguments` with one of three fixed messages. Forged, malformed, wrong-key, another caller's and another command's cursors all get the same one ("not valid for this call"); "expired" and "issued for other args" are told apart only for an authentic cursor of the caller's own. All three say to run the command again without the cursor.
-- **Signed, not encrypted:** the payload is readable by whoever holds the cursor, i.e. the caller it was issued to. It holds nothing they couldn't get otherwise: their own args' hash, the resolved path params (a login's user ID, which the same call returns), Okta's `after` token and counts.
+- **Signed, not encrypted (accepted disclosure):** the payload is readable by whoever holds the cursor, i.e. the caller it was issued to: their own args' hash, Okta's `after` token, counts, and the resolved path params. The last can be new to them: a call by login to a resolved command that doesn't return the user (`users get-groups alice@…`) puts Alice's user ID in the cursor, so a role with `get-groups` but not `users get` learns the login → ID mapping. Accepted: a user ID is an identifier, not profile data, and that role may already ask about Alice by login.
 - **Key:** one key. Rotation = new key + restart; outstanding cursors (≤15 min old) become invalid, which clients handle by re-running the command. Expiry uses the wall clock, since a cursor outlives a restart.
 
 ---
@@ -745,7 +745,7 @@ ENTRYPOINT ["okta-mcp"]
 | `MCP_DEV_MODE` / `MCP_DEV_PRINCIPAL_FILE` |  | off | stdio dev mode (§8.6) |
 | `MCP_DEFAULT_LIMIT` / `MCP_MAX_ITEMS` / `MCP_MAX_BYTES` |  | `50` / `1000` / `65536` | Output budgets ([T1](t1-tool-surface.md) D7); `MCP_MAX_BYTES` ≥ 1024, so the envelope always fits |
 | `MCP_MAX_BATCH` |  | `50` | Max keys in a batch result (post-v1 composites) |
-| `MCP_CALL_TIMEOUT` |  | `60` | Per-call deadline (s) |
+| `MCP_CALL_TIMEOUT` |  | `60` | Per-call deadline (s); at least 2, twice a list's 1 s deadline headroom (§7.2) |
 | `MCP_OKTA_MAX_INFLIGHT` |  | `10` | Global concurrent Okta requests |
 | `MCP_REQUESTS_PER_MINUTE` |  | `600` | Per-principal Okta-request limiter |
 | `MCP_AUDIT_LOG` / `MCP_AUDIT_ARGS` |  | `stdout` / `full` | Audit sink; `hash` for arg privacy |

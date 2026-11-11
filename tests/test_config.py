@@ -464,6 +464,8 @@ def test_write_scope_rejected(env: dict[str, str]) -> None:
         ("MCP_CALL_TIMEOUT", "inf"),
         ("MCP_CALL_TIMEOUT", "nan"),
         ("MCP_CALL_TIMEOUT", "0"),
+        ("MCP_CALL_TIMEOUT", "1"),  # under the executor's 2 s minimum (2.10 review)
+        ("MCP_CALL_TIMEOUT", "1.99"),
         ("MCP_OKTA_MAX_INFLIGHT", "1.5"),
         ("OKTA_RATE_LIMIT_MAX_WAIT", "-1"),
         ("MCP_LOG_LEVEL", "verbose"),
@@ -489,3 +491,8 @@ def test_default_limit_within_max_items(env: dict[str, str]) -> None:
 def test_zero_rate_limit_wait_allowed(env: dict[str, str]) -> None:
     env["OKTA_RATE_LIMIT_MAX_WAIT"] = "0"
     assert load_config(env).okta_rate_limit_max_wait == 0
+
+
+def test_call_timeout_minimum_is_two_seconds(env: dict[str, str]) -> None:
+    env["MCP_CALL_TIMEOUT"] = "2"
+    assert load_config(env).call_timeout == 2

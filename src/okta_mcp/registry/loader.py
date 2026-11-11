@@ -246,7 +246,8 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
     for name, arg in entry.args.items():
         # The resolved value (`00u…`) goes through the arg's schema again when the request is
         # built, so a constraint written for the login would refuse it, after a lookup.
-        if arg.resolve is not None and (arg.pattern is not None or arg.allowed_values is not None):
+        # `allowed_values: []` hides the arg instead, which the schema refuses on a path param.
+        if arg.resolve is not None and (arg.pattern is not None or arg.allowed_values):
             errors.append(f"arg {name}: resolve: user_id takes no pattern or allowed_values")
     if isinstance(entry.resumable, bool):
         return

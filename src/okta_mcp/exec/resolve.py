@@ -37,6 +37,9 @@ class UserResolver:
     def __init__(self, client: OktaClient, org_url: str, get_user: Operation) -> None:
         if get_user.operation_id != "getUser" or _LOOKUP_PARAM not in get_user.params:
             raise ValueError("the resolver needs the spec's getUser operation")
+        if "me" not in get_user.reserved.get(_LOOKUP_PARAM, frozenset()):
+            # The path rule is the only thing between `me` and the token's own user.
+            raise ValueError("getUser's reserved set must hold me (registry.spec.ROUTED_ALIASES)")
         self._client = client
         self._org_url = org_url
         self._get_user = get_user

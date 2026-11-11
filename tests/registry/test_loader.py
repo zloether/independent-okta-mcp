@@ -362,6 +362,13 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
         ),
         "resolve: user_id takes no pattern or allowed_values",
     ),
+    "resolve-hidden": (
+        _with(
+            GET_GROUPS,
+            args={"user": {"path_param": "id", "resolve": "user_id", "allowed_values": []}},
+        ),
+        "is required, so it can't be hidden",
+    ),
     "unpaged-duplicates": (
         _with(GET_GROUPS, unpaged_args=["user", "user"]),
         "unpaged_args has duplicates",
@@ -695,3 +702,25 @@ def test_domain_must_match_file_name(spec: SpecIndex) -> None:
 def test_bad_command_name(spec: SpecIndex) -> None:
     with pytest.raises(RegistryError, match="kebab-case"):
         _build(spec, getGroups=GET)
+
+
+def test_hidden_resolve_arg_gets_only_the_hidden_error(spec: SpecIndex) -> None:
+    # `[]` hides an arg; on a resolve arg that is the error, not "no allowed_values".
+    cmd = _with(
+        GET_GROUPS, args={"user": {"path_param": "id", "resolve": "user_id", "allowed_values": []}}
+    )
+    with pytest.raises(RegistryError) as e:
+        _build(spec, **{"get-groups": cmd})
+    assert not any("takes no pattern" in err for err in e.value.errors)
+
+
+def test_string_args_are_length_bounded(spec: SpecIndex) -> None:
+    # R1: every string arg (and string array item) has a maxLength the caller can read in help.
+    registry = load_registry(spec)
+    for domain in registry.domains.values():
+        for command in domain.commands.values():
+            for name, s in command.schema["properties"].items():
+                target = s["items"] if s.get("type") == "array" else s
+                arg = command.entry.args[name]
+                if arg.query and target.get("type") == "string" and "enum" not in target:
+                    assert 0 < target["maxLength"] <= 4096, (command.name, name)

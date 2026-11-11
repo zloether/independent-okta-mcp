@@ -1109,3 +1109,78 @@ async def test_login_with_dots_still_resolves(ex: Executor, okta: Okta) -> None:
     okta.override = answer
     out = await run(ex, who(READERS), "users", "get-groups", args={"user": okta_login})
     assert out["count"] == 10
+
+
+# --- 2.10 review, round 2 ---
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"q": "G" * 65536},
+        {"q": "G" * 4097},
+        {"search": 'profile.name eq "' + "a" * 70000 + '"'},
+        {"filter": "x" * 10_000},
+        {1: "x"},
+        {("t",): "x"},
+    ],
+)
+async def test_oversized_or_odd_args_are_invalid_not_internal(
+    ex: Executor, okta: Okta, caplog: pytest.LogCaptureFixture, args: dict[Any, Any]
+) -> None:
+    # R1: caller input never reaches `internal_error`, and nothing is sent.
+    with caplog.at_level(logging.ERROR):
+        out = await run(ex, who(ANALYSTS), "groups", "list", args=args)
+    failed(out, Code.INVALID_ARGUMENTS)
+    assert okta.requests == [] and caplog.text == ""
+
+
+@pytest.mark.anyio
+async def test_a_url_too_long_after_validation_is_invalid(
+    registry: Registry, okta: Okta, spec: SpecIndex, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # R1, residual: should the bounds ever allow a URL httpx2 refuses, it is still the args.
+    monkeypatch.setattr(httpx2._urlparse, "MAX_URL_LENGTH", 100)  # pyright: ignore[reportPrivateUsage]
+    ex = make(registry, okta, spec=spec)
+    out = await run(ex, who(ANALYSTS), "groups", "list", args={"q": "G" * 200})
+    assert "too long" in failed(out, Code.INVALID_ARGUMENTS).message
+    assert okta.requests == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("q", [None, "G"])
+async def test_envelope_alone_too_large_sends_nothing(
+    registry: Registry, okta: Okta, spec: SpecIndex, q: str | None
+) -> None:
+    # R2: with or without the unpaged `q`, and before the resolver too.
+    ex = make(registry, okta, spec=spec, max_bytes=1024)
+    select = ",".join(f"profile.attribute{i}" for i in range(60))
+    args = {} if q is None else {"q": q}
+    failed(
+        await run(ex, who(READERS), "groups", "list", args=args, select=select),
+        Code.RESULT_TOO_LARGE,
+    )
+    out = await run(
+        ex, who(READERS), "users", "get-groups", args={"user": "a@example.com"}, select=select
+    )
+    failed(out, Code.RESULT_TOO_LARGE)
+    assert okta.requests == []
+
+
+def test_resolver_refuses_a_get_user_without_me_reserved(spec: SpecIndex, okta: Okta) -> None:
+    # R5: a hand-built or changed operation fails at startup, not open.
+    import dataclasses
+    from types import MappingProxyType
+
+    bare = dataclasses.replace(spec.operations["getUser"], reserved=MappingProxyType({}))
+    with pytest.raises(ValueError, match="me"):
+        UserResolver(object(), ORG, bare)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.anyio
+async def test_hint_when_only_the_expression_is_refused(ex: Executor, okta: Okta) -> None:
+    # R7: the positive case of `test_hint_only_when_the_expression_is_the_cause`, same fixture.
+    args = {"filter": 'type eq "OKTA_GROUP"', "search": 'profile.description sw "G"'}
+    out = failed(await run(ex, who(READERS), "groups", "list", args=args), Code.FORBIDDEN_BY_POLICY)
+    assert out.message == f"{FORBIDDEN}; expressions may name only: profile.name, type"

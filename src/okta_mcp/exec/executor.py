@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import anyio
+import httpx2
 
 from okta_mcp.auth.principal import Principal
 from okta_mcp.exec.cursor import (
@@ -45,8 +46,10 @@ from okta_mcp.exec.cursor import (
 )
 from okta_mcp.exec.envelope import (
     DEADLINE_HEADROOM,
+    UNPAGED_WARNING,
     ResultTooLarge,
     item_result,
+    list_budget,
     list_result,
 )
 from okta_mcp.exec.output import columns
@@ -66,6 +69,7 @@ FORBIDDEN = "the command or an argument is not permitted by policy"
 """The one sentence for `forbidden_by_policy` (§5.5): no role names, no other commands."""
 UNAVAILABLE = "the server's Okta service app can't run this command; contact the MCP administrator"
 INTERNAL = "internal error; the server log has the details"
+TOO_LONG = "the args make the request too long; shorten them"
 EXPRESSION = (
     "a search, filter or sort expression can't be read: use attribute names in dotted segments, "
     "the operators eq ne gt ge lt le sw co ew pr and or not, true false null, numbers, "
@@ -202,6 +206,10 @@ class Executor:
             return await self._execute(call)
         except (InvalidArguments, CursorError) as e:
             return Failure(Code.INVALID_ARGUMENTS, str(e))
+        except httpx2.InvalidURL:
+            # Raised by the client before anything is sent, for a URL its args make too long;
+            # the schema's length bounds should keep this from happening.
+            return Failure(Code.INVALID_ARGUMENTS, TOO_LONG)
         except NotFound as e:
             return Failure(Code.NOT_FOUND, str(e))
         except (UpstreamError, PaginationError) as e:
@@ -338,9 +346,8 @@ class Executor:
     async def _resolved(self, command: Command, args: dict[str, Any]) -> dict[str, Any]:
         if not any(a.resolve is not None for a in command.entry.args.values()):
             return args
-        if self._resolver is None:
-            raise RuntimeError("a command resolves users but the executor has no resolver")
-        return await self._resolver.resolve(command, args, {})
+        # `__init__` refused a missing resolver while any command resolves.
+        return await cast(UserResolver, self._resolver).resolve(command, args, {})
 
     async def _item(self, command: Command, options: _Options) -> str:
         args = await self._resolved(command, options.args)
@@ -364,6 +371,14 @@ class Executor:
         cut_by_okta = False
         unpaged = any(a in args for a in entry.unpaged_args)
         resume = options.resume
+        # Before the resolver and any page: a `select` long enough to fill `max_bytes` with the
+        # envelope alone fails without an Okta request. Reserved at the most warnings it can get.
+        list_budget(
+            cols=options.cols,
+            limit=options.limit,
+            max_bytes=self._max_bytes,
+            warnings=(RESUMED_WARNING,) if resume else (UNPAGED_WARNING,) if unpaged else (),
+        )
         if resume is not None:
             # No resolver: the cursor's path params are the resolved ones.
             url = resume_url(command, resume, self._org_url)
