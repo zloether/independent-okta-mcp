@@ -8,12 +8,17 @@ roles:
     groups: ["00g1readers000000000"]      # mcp-okta-readers
     allow:
       groups: ["*"]
+    search_attributes: [profile.name, type]
 
   helpdesk:
     groups: ["00g1helpdsk000000000"]      # mcp-okta-helpdesk
     allow:
       groups: ["*", list-roles, get-role]
       network-zones: [list, get]
+    # What this role may name in a search, filter or sort expression. Matched exactly.
+    search_attributes:
+      [profile.name, profile.description, type, status, profile.login, profile.email,
+       profile.firstName, profile.lastName]
 
   security-analyst:
     groups: ["00g1secanalyst000000"]      # mcp-okta-security
@@ -21,6 +26,7 @@ roles:
       groups: ["*"]
       network-zones: ["*"]
     include_sensitive: [groups]
+    search_attributes: ["*"]              # any attribute that results don't redact
     deny:
       groups: [get-apps]
 
@@ -29,3 +35,4 @@ roles:
     allow:
       "*": ["*"]
     include_sensitive: [groups]
+    search_attributes: ["*"]

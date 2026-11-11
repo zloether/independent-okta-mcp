@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 
+from okta_mcp.policy.expression import ATTRIBUTE
 from okta_mcp.registry.model import NAME, ecma_pattern
 
 WILDCARD = "*"
@@ -57,6 +58,10 @@ class RoleEntry(_Model):
     deny: Patterns = Field(default_factory=lambda: MappingProxyType({}))
     include_sensitive: tuple[StrictStr, ...] = ()
     """Domains (or `*`) where this role's `allow` wildcards also match sensitive commands."""
+    search_attributes: tuple[StrictStr, ...] = ()
+    """Attributes (`profile.login`, `status`) this role may name in a search, filter or sort
+    expression on the commands it allows, or `["*"]` for any. Names are matched exactly.
+    Empty: no such expressions. Attributes that results redact are never searchable."""
 
     @field_validator("groups")
     @classmethod
@@ -78,6 +83,19 @@ class RoleEntry(_Model):
     @classmethod
     def _include_unique(cls, v: tuple[str, ...]) -> tuple[str, ...]:
         return _unique(v, "domain")
+
+    @field_validator("search_attributes")
+    @classmethod
+    def _attribute_names(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        for a in v:
+            if a != WILDCARD and not ATTRIBUTE.fullmatch(a):
+                raise ValueError(
+                    f"{a!r} is not an attribute name (letters, digits and _ in dotted "
+                    'segments, like profile.login) or "*"'
+                )
+        if WILDCARD in v and len(v) > 1:
+            raise ValueError('"*" must be the only entry')
+        return _unique(v, "attribute")
 
 
 class PolicyFile(_Model):
@@ -116,6 +134,9 @@ class Role:
     wildcard reaches in a domain in its `include_sensitive`. The same rule as for sensitive
     commands, so a plain wildcard never reaches sensitive data through an argument."""
     deny: frozenset[Grant]
+    search_attributes: frozenset[str]
+    """Attributes the role may name in an `attribute_expression` argument of a command in
+    its `allow`; `{"*"}` is any. Never includes one that results redact (the loader)."""
 
 
 @dataclass(frozen=True)

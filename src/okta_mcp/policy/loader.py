@@ -6,6 +6,7 @@ the registry the server runs with: a command added to the registry later is gran
 existing wildcard only if it is `normal`, or its domain is in the role's `include_sensitive`.
 """
 
+import functools
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -13,6 +14,8 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from okta_mcp.exec.output import ScrubRules, load_scrub
+from okta_mcp.policy.expression import scrubbed
 from okta_mcp.policy.model import WILDCARD, Grant, Patterns, Policy, PolicyFile, Role, RoleEntry
 from okta_mcp.registry.loader import Registry, UniqueKeyLoader
 
@@ -25,20 +28,27 @@ class PolicyError(Exception):
         self.errors = errors
 
 
-def load_policy(path: Path, registry: Registry) -> Policy:
+def load_policy(path: Path, registry: Registry, scrub: ScrubRules | None = None) -> Policy:
     """Raises `PolicyError` on a missing, unreadable or invalid file."""
     try:
         doc = yaml.load(path.read_bytes(), Loader=UniqueKeyLoader)  # noqa: S506
     except (OSError, yaml.YAMLError) as e:
         raise PolicyError([f"{path.name}: {e}"]) from e
     try:
-        return build_policy(doc, registry)
+        return build_policy(doc, registry, scrub)
     except PolicyError as e:
         raise PolicyError([f"{path.name}: {m}" for m in e.errors]) from e
 
 
-def build_policy(doc: Any, registry: Registry) -> Policy:
-    """`doc` is the parsed YAML."""
+@functools.cache
+def _packaged_scrub() -> ScrubRules:
+    return load_scrub()
+
+
+def build_policy(doc: Any, registry: Registry, scrub: ScrubRules | None = None) -> Policy:
+    """`doc` is the parsed YAML. `scrub` defaults to the packaged `scrub.yaml`."""
+    if scrub is None:
+        scrub = _packaged_scrub()
     try:
         parsed = PolicyFile.model_validate(doc)
     except ValidationError as e:
@@ -56,6 +66,11 @@ def build_policy(doc: Any, registry: Registry) -> Policy:
             for d in entry.include_sensitive
             if d != WILDCARD and d not in registry.domains
         )
+        errors.extend(
+            f"{where}.search_attributes: {a!r} is redacted in results, so no role can search on it"
+            for a in entry.search_attributes
+            if a != WILDCARD and scrubbed(a, scrub)
+        )
     if errors:
         raise PolicyError(errors)
 
@@ -68,6 +83,7 @@ def build_policy(doc: Any, registry: Registry) -> Policy:
             allow=allow,
             allow_raised=allow_raised,
             deny=_expand(entry.deny, registry, _EVERYWHERE),
+            search_attributes=frozenset(entry.search_attributes),
         )
     return Policy(MappingProxyType(roles), tuple(_warnings(parsed, roles, registry)))
 
@@ -158,4 +174,13 @@ def _warnings(parsed: PolicyFile, roles: dict[str, Role], registry: Registry) ->
             )
         if not role.allow - role.deny:
             warnings.append(f"{where}: grants nothing (its deny covers all of its allow)")
+        if role.search_attributes and not any(
+            arg.arg_rule is not None and arg.arg_rule.attribute_expression
+            for domain, command in role.allow - role.deny
+            for arg in registry.domains[domain].commands[command].entry.args.values()
+        ):
+            warnings.append(
+                f"{where}.search_attributes: has no effect (no command this role allows "
+                "takes a search, filter or sort expression)"
+            )
     return warnings

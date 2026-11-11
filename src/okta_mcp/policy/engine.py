@@ -10,7 +10,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from okta_mcp.auth.principal import Principal
-from okta_mcp.policy.model import Grant, Policy
+from okta_mcp.exec.output import ScrubRules, load_scrub
+from okta_mcp.policy.expression import ExpressionError, attributes, scrubbed
+from okta_mcp.policy.model import WILDCARD, Grant, Policy
 from okta_mcp.registry.loader import Command, Registry
 
 
@@ -20,6 +22,9 @@ class Verdict(enum.Enum):
     """The caller's roles don't permit the call. Says nothing about why (§5.5)."""
     UNAVAILABLE = "unavailable"
     """Permitted, but the service app holds none of the command's scope sets."""
+    INVALID = "invalid_arguments"
+    """Permitted, but a search, filter or sort expression isn't one the engine can read, so
+    it can't tell which attributes the call touches."""
 
 
 @dataclass(frozen=True)
@@ -29,17 +34,29 @@ class _Effective:
     permitted: frozenset[Grant]
     raised: frozenset[Grant]
     """⊆ `permitted`: also callable with an argument that raises the call to sensitive."""
+    search: Mapping[Grant, frozenset[str]]
+    """Per permitted command, the `search_attributes` of the roles that allow that command.
+    A role's attributes don't carry over to commands only another role allows."""
 
 
-_NOTHING = _Effective(frozenset(), frozenset())
+_NOTHING = _Effective(frozenset(), frozenset(), {})
 
 
 class Engine:
     """One per process, built at startup. Roles come from the principal's groups on every
     call; nothing about a principal is kept."""
 
-    def __init__(self, policy: Policy, registry: Registry, okta_scopes: frozenset[str]) -> None:
+    def __init__(
+        self,
+        policy: Policy,
+        registry: Registry,
+        okta_scopes: frozenset[str],
+        scrub: ScrubRules | None = None,
+    ) -> None:
+        """`scrub` defaults to the packaged `scrub.yaml`; pass the rules the executor
+        redacts with, so the two can't differ."""
         self._policy = policy
+        self._scrub = load_scrub() if scrub is None else scrub
         roles_by_group: dict[str, set[str]] = {}
         for role in policy.roles.values():
             for group in role.groups:
@@ -70,15 +87,20 @@ class Engine:
         can say why a permitted command won't run; `tools/list` leaves those out."""
         return self._effective(principal).permitted
 
+    def search_attributes(self, principal: Principal, domain: str, command: str) -> frozenset[str]:
+        """Attributes the principal may name in an expression on this command (`{"*"}`: any
+        that results don't redact). Empty if the command isn't permitted. For help text."""
+        return self._effective(principal).search.get((domain, command), frozenset())
+
     def check(
         self, principal: Principal, domain: str, command: str, args: Mapping[str, object]
     ) -> Verdict:
         """Decision for one call. An argument counts as passed if its key is present,
         whatever its value.
 
-        Only argument names are read. Values (`allowed_values`, `pattern`) are the schema's
-        to check, so `args` must already have passed `command.validator`; this is not a
-        substitute for it."""
+        Values are read only for `attribute_expression` arguments. Every other value
+        (`allowed_values`, `pattern`) is the schema's to check, so `args` must already have
+        passed `command.validator`; this is not a substitute for it."""
         grant = (domain, command)
         effective = self._effective(principal)
         entry = self._commands.get(grant)
@@ -86,7 +108,8 @@ class Engine:
         # whether a name the caller can't use exists.
         if entry is None or grant not in effective.permitted:
             return Verdict.FORBIDDEN
-        for name in args:
+        invalid = False
+        for name, value in args.items():
             arg = entry.entry.args.get(name)
             if arg is None or arg.allowed_values == ():
                 # Unknown, or not exposed (`allowed_values: []`). Schema validation rejects
@@ -95,10 +118,28 @@ class Engine:
             rule = arg.arg_rule
             if rule is None or rule.reviewed is not None:
                 continue
+            if rule.attribute_expression:
+                try:
+                    if not isinstance(value, str):
+                        raise ExpressionError("not a string")
+                    named = attributes(value)
+                except ExpressionError:
+                    # Refused either way; a policy refusal on another argument comes first.
+                    invalid = True
+                    continue
+                allowed = effective.search.get(grant, frozenset())
+                # The redaction test comes first and has no exception: `*` doesn't lift it.
+                if any(scrubbed(a, self._scrub) for a in named) or not (
+                    WILDCARD in allowed or allowed.issuperset(named)
+                ):
+                    return Verdict.FORBIDDEN
+                continue
             if rule.raises_sensitivity_to is None or grant not in effective.raised:
                 # `forbidden`, a raise the roles don't cover, or a rule form added later
                 # that this loop doesn't know.
                 return Verdict.FORBIDDEN
+        if invalid:
+            return Verdict.INVALID
         # After the policy checks, so a caller without the grant learns nothing about the
         # service app's scopes.
         if grant in self.unavailable:
@@ -113,9 +154,16 @@ class Engine:
         if cached is None:
             roles = [self._policy.roles[n] for n in names]
             deny = frozenset[Grant]().union(*(r.deny for r in roles))
+            permitted = frozenset[Grant]().union(*(r.allow for r in roles)) - deny
+            search: dict[Grant, frozenset[str]] = {}
+            for role in roles:
+                if role.search_attributes:
+                    for grant in role.allow & permitted:
+                        search[grant] = search.get(grant, frozenset()) | role.search_attributes
             cached = _Effective(
-                permitted=frozenset[Grant]().union(*(r.allow for r in roles)) - deny,
+                permitted=permitted,
                 raised=frozenset[Grant]().union(*(r.allow_raised for r in roles)) - deny,
+                search=search,
             )
             # At most one entry per distinct set of roles, and roles come from the policy
             # file, so this can't grow with the number of callers.

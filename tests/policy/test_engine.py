@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from okta_mcp.auth.principal import Principal
+from okta_mcp.exec.output import ScrubRules
 from okta_mcp.policy.engine import Engine, Verdict
 from okta_mcp.policy.loader import build_policy, load_policy
 from okta_mcp.policy.model import Grant, Policy
@@ -122,20 +123,205 @@ def test_wildcard_roles_can_use_reviewed_filters(engine: Engine) -> None:
     assert engine.check(_who(HELPDESK), "network-zones", "list", {"filter": "x"}) is ALLOWED
 
 
-def test_profile_search_is_refused_for_every_role(engine: Engine, pilot: Registry) -> None:
-    # `search` matches any profile attribute, so it can probe one scrub.yaml redacts, and
-    # that redaction holds whatever the role: sensitivity is the wrong gate for it.
-    named = _engine(
-        pilot,
-        r={"groups": [G1], "allow": {"groups": ["list", "get-members"]}},
-        all={"groups": [G2], "allow": {"*": ["*"]}, "include_sensitive": ["*"]},
+# --- search, filter and sort expressions ---------------------------------------------------
+
+INVALID = Verdict.INVALID
+MEMBERS = {"group": GROUP}
+
+
+def test_roles_search_on_their_own_attributes(engine: Engine) -> None:
+    reader, helpdesk = _who(READERS), _who(HELPDESK)
+    assert engine.search_attributes(reader, "groups", "list") == {"profile.name", "type"}
+    for who in (reader, helpdesk):
+        assert engine.check(who, "groups", "list", {"search": 'profile.name sw "Eng"'}) is ALLOWED
+        assert (
+            engine.check(
+                who, "groups", "list", {"search": 'type eq "OKTA_GROUP" and profile.name co "x"'}
+            )
+            is ALLOWED
+        )
+        assert engine.check(who, "groups", "list", {"sort_by": "profile.name"}) is ALLOWED
+    # Only helpdesk lists the user attributes.
+    by_login = {**MEMBERS, "search": 'profile.login eq "a@example.com"'}
+    assert engine.check(helpdesk, "groups", "get-members", by_login) is ALLOWED
+    assert engine.check(reader, "groups", "get-members", by_login) is FORBIDDEN
+
+
+def test_an_attribute_outside_the_roles_list_is_refused(engine: Engine) -> None:
+    for group in (READERS, HELPDESK):
+        who = _who(group)
+        for search in (
+            'profile.costCenter eq "42"',
+            'profile.name sw "a" and profile.costCenter eq "42"',
+            'profile.name sw "a" or (not (lastUpdated gt "2026-01-01T00:00:00.000Z"))',
+            # Names are matched exactly.
+            'Profile.name sw "a"',
+            'profile.Name sw "a"',
+            'profile sw "a"',
+            'name sw "a"',
+        ):
+            assert engine.check(who, "groups", "list", {"search": search}) is FORBIDDEN
+        assert engine.check(who, "groups", "list", {"sort_by": "lastUpdated"}) is FORBIDDEN
+        assert (
+            engine.check(who, "groups", "list", {"q": "x", "sort_by": "profile.costCenter"})
+            is FORBIDDEN
+        )
+
+
+def test_wildcard_search_attributes_allow_any_unredacted_attribute(engine: Engine) -> None:
+    for group in (ANALYSTS, ADMINS):
+        who = _who(group)
+        assert engine.search_attributes(who, "groups", "list") == {"*"}
+        assert (
+            engine.check(who, "groups", "list", {"search": 'profile.costCenter eq "42"'}) is ALLOWED
+        )
+        assert engine.check(who, "groups", "list", {"sort_by": "lastUpdated"}) is ALLOWED
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    [
+        "profile.apiKey",
+        "profile.APIKEY",
+        "profile.secret",
+        "profile.token",
+        "profile.password",
+        "profile.privateKey",
+        "profile.access_token",
+        "credentials.password.value",
+        "credentials.password",
+        "credentials",
+        "profile.custom.secret.inner",
+    ],
+)
+def test_redacted_attributes_are_searchable_by_no_role(engine: Engine, attribute: str) -> None:
+    # Matching on a value is reading it, and results redact these for every role.
+    for group in (READERS, HELPDESK, ANALYSTS, ADMINS):
+        who = _who(group)
+        for search in (f'{attribute} sw "a"', f'profile.name sw "a" and {attribute} pr'):
+            assert engine.check(who, "groups", "list", {"search": search}) is FORBIDDEN
+            assert (
+                engine.check(who, "groups", "get-members", {**MEMBERS, "search": search})
+                is FORBIDDEN
+            )
+        assert engine.check(who, "groups", "list", {"sort_by": attribute}) is FORBIDDEN
+
+
+def test_the_engine_uses_the_scrub_rules_it_is_given(pilot: Registry) -> None:
+    policy = load_policy(PILOT, pilot)
+    custom = Engine(policy, pilot, ALL_SCOPES, ScrubRules(paths=(("costcenter",),)))
+    who = _who(ADMINS)
+    assert custom.check(who, "groups", "list", {"search": 'profile.costCenter eq "1"'}) is (
+        FORBIDDEN
     )
-    callers = [(engine, _who(g)) for g in (READERS, HELPDESK, ANALYSTS, ADMINS)]
-    for e, who in [*callers, (named, _who(G1)), (named, _who(G2)), (named, _who(G1, G2))]:
-        assert e.check(who, "groups", "list", {"search": "x"}) is FORBIDDEN
-        assert e.check(who, "groups", "list", {"q": "x", "search": "x"}) is FORBIDDEN
-        assert e.check(who, "groups", "get-members", {"group": GROUP, "search": "x"}) is (FORBIDDEN)
-        assert e.check(who, "groups", "list", {"q": "x"}) is ALLOWED
+    assert custom.check(who, "groups", "list", {"search": 'profile.apiKey sw "a"'}) is ALLOWED
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        " ",
+        '"profile.apiKey" sw "a"',
+        'profile.name sw "a',
+        'profile.name sw "a\\" or profile.apiKey sw "b"',
+        "profile.name sw 'a'",
+        'profile.name[0] eq "a"',
+        'profile.name eq "a"; x',
+        'pr\u043efile.name eq "a"',
+        '"a" eq profile.name',
+        'profile.name "a"',
+        None,
+        5,
+        ["profile.name"],
+    ],
+)
+def test_unreadable_expression_is_invalid_for_a_permitted_caller(
+    engine: Engine, value: object
+) -> None:
+    for group in (READERS, ADMINS):
+        assert engine.check(_who(group), "groups", "list", {"search": value}) is INVALID
+    # Without the grant the answer is the same as for any other call.
+    assert engine.check(_who(STRANGERS), "groups", "list", {"search": value}) is FORBIDDEN
+    assert engine.check(_who(READERS), "network-zones", "list", {"filter": value}) is FORBIDDEN
+
+
+def test_a_policy_refusal_comes_before_invalid(engine: Engine) -> None:
+    who = _who(READERS)
+    bad = 'profile.name sw "a'
+    assert engine.check(who, "groups", "list", {"search": bad, "expand": "stats"}) is FORBIDDEN
+    assert engine.check(who, "groups", "list", {"expand": "stats", "search": bad}) is FORBIDDEN
+    assert (
+        engine.check(who, "groups", "list", {"search": bad, "sort_by": "lastUpdated"}) is FORBIDDEN
+    )
+    assert engine.check(who, "groups", "list", {"search": bad, "nope": 1}) is FORBIDDEN
+
+
+def test_invalid_comes_before_unavailable(pilot: Registry) -> None:
+    e = Engine(load_policy(PILOT, pilot), pilot, frozenset())
+    assert e.check(_who(READERS), "groups", "list", {"search": "("}) is INVALID
+    assert e.check(_who(READERS), "groups", "list", {"search": 'type eq "x"'}) is UNAVAILABLE
+
+
+def test_no_search_attributes_means_no_expressions(registry: Registry) -> None:
+    e = _engine(registry, r={"groups": [G1], "allow": {"*": ["*"]}, "include_sensitive": ["*"]})
+    who = _who(G1)
+    assert e.search_attributes(who, "groups", "list") == frozenset()
+    assert e.check(who, "groups", "list", {"search": 'profile.name sw "a"'}) is FORBIDDEN
+    assert e.check(who, "groups", "list", {"sort_by": "profile.name"}) is FORBIDDEN
+    assert e.check(who, "groups", "list", {"q": "a"}) is ALLOWED
+
+
+def test_search_attributes_apply_only_to_commands_the_same_role_allows(
+    registry: Registry,
+) -> None:
+    # `wide` may search anything, but only on what `wide` allows: it doesn't lend its
+    # attributes to the command `narrow` grants.
+    e = _engine(
+        registry,
+        wide={"groups": [G1], "allow": {"groups": ["list"]}, "search_attributes": ["*"]},
+        narrow={
+            "groups": [G2],
+            "allow": {"groups": ["get-members"]},
+            "search_attributes": ["status"],
+        },
+    )
+    both = _who(G1, G2)
+    assert e.search_attributes(both, "groups", "list") == {"*"}
+    assert e.search_attributes(both, "groups", "get-members") == {"status"}
+    assert e.search_attributes(both, "groups", "get") == frozenset()
+    by_login = {**MEMBERS, "search": 'profile.login eq "a@example.com"'}
+    assert e.check(both, "groups", "get-members", by_login) is FORBIDDEN
+    assert (
+        e.check(both, "groups", "get-members", {**MEMBERS, "search": 'status eq "ACTIVE"'})
+        is ALLOWED
+    )
+    assert e.check(both, "groups", "list", {"search": 'profile.x eq "1"'}) is ALLOWED
+
+
+def test_search_attributes_of_roles_that_allow_the_command_are_joined(
+    registry: Registry,
+) -> None:
+    e = _engine(
+        registry,
+        a={"groups": [G1], "allow": {"groups": ["list"]}, "search_attributes": ["type"]},
+        b={"groups": [G2], "allow": {"groups": ["*"]}, "search_attributes": ["profile.name"]},
+    )
+    search = {"search": 'type eq "x" and profile.name sw "a"'}
+    assert e.check(_who(G1), "groups", "list", search) is FORBIDDEN
+    assert e.check(_who(G2), "groups", "list", search) is FORBIDDEN
+    assert e.check(_who(G1, G2), "groups", "list", search) is ALLOWED
+
+
+def test_deny_removes_the_command_and_its_search(registry: Registry) -> None:
+    e = _engine(
+        registry,
+        a={"groups": [G1], "allow": {"groups": ["list"]}, "search_attributes": ["*"]},
+        b={"groups": [G2], "allow": {"groups": ["get"]}, "deny": {"groups": ["list"]}},
+    )
+    assert e.check(_who(G1), "groups", "list", {"search": 'type eq "x"'}) is ALLOWED
+    assert e.search_attributes(_who(G1, G2), "groups", "list") == frozenset()
+    assert e.check(_who(G1, G2), "groups", "list", {"search": 'type eq "x"'}) is FORBIDDEN
 
 
 def test_owner_filter_widens_so_it_raises(engine: Engine) -> None:
@@ -154,7 +340,7 @@ def test_arg_that_is_not_exposed_is_refused(registry: Registry) -> None:
     reg = _replace(registry, ("groups", "list"), entry=entry.model_copy(update={"args": args}))
     e = _engine(reg, r={"groups": [G1], "allow": {"*": ["*"]}, "include_sensitive": ["*"]})
     assert e.check(_who(G1), "groups", "list", {"sort_order": "asc"}) is FORBIDDEN
-    assert e.check(_who(G1), "groups", "list", {"sort_by": "x"}) is ALLOWED
+    assert e.check(_who(G1), "groups", "list", {"q": "x"}) is ALLOWED
 
 
 @pytest.mark.parametrize(
@@ -181,7 +367,7 @@ def test_wildcard_with_include_sensitive_reaches_a_raising_arg(engine: Engine) -
 
 def test_args_without_a_rule_change_nothing(engine: Engine) -> None:
     who = _who(READERS)
-    assert engine.check(who, "groups", "list", {"sort_by": "x", "sort_order": "asc"}) is ALLOWED
+    assert engine.check(who, "groups", "list", {"sort_order": "asc"}) is ALLOWED
     assert engine.check(who, "groups", "get", {"group": GROUP}) is ALLOWED
     # `allowed_values` without an `arg_rule` (get-members `expand`).
     assert (

@@ -598,3 +598,94 @@ def test_unquoted_star_is_a_yaml_error(tmp_path: Path, registry: Registry) -> No
     # `*` starts a YAML alias, so the wildcard must be quoted; the file must not load.
     text = f"version: 1\nroles:\n  r:\n    groups: [{G1}]\n    allow:\n      groups: [*]\n"
     assert _file_errors(_write(tmp_path, text), registry)
+
+
+# --- search_attributes ---------------------------------------------------------------------
+
+
+def test_search_attributes_compile_to_a_set(registry: Registry) -> None:
+    policy = build_policy(
+        _doc(
+            a=_role(search_attributes=["profile.login", "status"]),
+            b=_role(groups=[G2], search_attributes=["*"]),
+            c=_role(groups=[G2]),
+        ),
+        registry,
+    )
+    assert policy.warnings == ()
+    assert policy.roles["a"].search_attributes == {"profile.login", "status"}
+    assert policy.roles["b"].search_attributes == {"*"}
+    assert policy.roles["c"].search_attributes == frozenset()
+
+
+def test_pilot_policy_search_attributes() -> None:
+    roles = load_policy(PILOT, load_registry(load_spec())).roles
+    assert roles["directory-reader"].search_attributes == {"profile.name", "type"}
+    assert "profile.login" in roles["helpdesk"].search_attributes
+    assert roles["security-analyst"].search_attributes == {"*"}
+    assert roles["platform-admin"].search_attributes == {"*"}
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (["profile.login", "profile.login"], "duplicate attribute 'profile.login'"),
+        (["*", "status"], '"*" must be the only entry'),
+        (["profile.*"], "is not an attribute name"),
+        (["profile."], "is not an attribute name"),
+        (["profile login"], "is not an attribute name"),
+        (["profile.login\n"], "is not an attribute name"),
+        (['profile.login eq "x"'], "is not an attribute name"),
+        ([""], "is not an attribute name"),
+        (["pr\u043efile.login"], "is not an attribute name"),
+        ([5], "valid string"),
+        ("status", "valid tuple"),
+        ({"users": ["status"]}, "valid tuple"),
+    ],
+)
+def test_search_attributes_shape_errors(registry: Registry, value: Any, message: str) -> None:
+    error = _one_error(_doc(r=_role(search_attributes=value)), registry)
+    assert error.startswith("roles.r.search_attributes")
+    assert message in error
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    ["profile.apiKey", "profile.SECRET", "token", "credentials.password.value", "credentials"],
+)
+def test_redacted_attribute_cannot_be_listed(registry: Registry, attribute: str) -> None:
+    assert _errors(_doc(r=_role(search_attributes=["status", attribute])), registry) == [
+        f"roles.r.search_attributes: {attribute!r} is redacted in results, so no role can "
+        "search on it"
+    ]
+
+
+def test_redaction_check_uses_the_rules_passed_in(registry: Registry) -> None:
+    from okta_mcp.exec.output import ScrubRules
+
+    doc = _doc(r=_role(search_attributes=["profile.costCenter", "profile.apiKey"]))
+    with pytest.raises(PolicyError) as e:
+        build_policy(doc, registry, ScrubRules(paths=(("costcenter",),)))
+    assert e.value.errors == [
+        "roles.r.search_attributes: 'profile.costCenter' is redacted in results, so no role "
+        "can search on it"
+    ]
+
+
+def test_search_attributes_without_an_expression_command_warn(registry: Registry) -> None:
+    doc = _doc(r=_role(allow={"groups": ["get"]}, search_attributes=["status"]))
+    assert build_policy(doc, registry).warnings == (
+        "roles.r.search_attributes: has no effect (no command this role allows takes a "
+        "search, filter or sort expression)",
+    )
+    # A deny that removes the only such command leaves it without effect too.
+    doc = _doc(
+        r=_role(
+            allow={"groups": ["list", "get"]},
+            deny={"groups": ["list"]},
+            search_attributes=["status"],
+        )
+    )
+    assert any(
+        "search_attributes: has no effect" in w for w in build_policy(doc, registry).warnings
+    )

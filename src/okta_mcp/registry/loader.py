@@ -23,7 +23,10 @@ from okta_mcp.registry.spec import Operation, SpecIndex
 REGISTRY = files("okta_mcp") / "data" / "registry"
 # Free-form filters narrow a list; the other widening params add data to it.
 _FILTERS = frozenset({"filter", "search", "q"})
-_WIDENING = _FILTERS | {"expand", "discloseIdentifiers"}
+# `sortBy` takes any property: ordering by a redacted one leaks it more slowly than `sw` does.
+_WIDENING = _FILTERS | {"expand", "discloseIdentifiers", "sortBy"}
+# Params whose value names attributes, so `arg_rule: attribute_expression` can check them.
+_EXPRESSIONS = frozenset({"filter", "search", "sortBy"})
 # Pagination and page size belong to the server (design §7.2), never to the caller.
 _RESERVED_QUERY = frozenset({"after", "limit"})
 
@@ -205,8 +208,17 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
                 # ones included, and scrub.yaml redacts by key name: an oracle for those.
                 errors.append(
                     f"arg {arg_name}: search on {op.operation_id} matches any profile "
-                    "attribute, so it can't be reviewed; use forbidden"
+                    "attribute, so it can't be reviewed; use attribute_expression"
                 )
+        if (
+            arg.arg_rule is not None
+            and arg.arg_rule.attribute_expression
+            and arg.query not in _EXPRESSIONS
+        ):
+            errors.append(
+                f"arg {arg_name}: arg_rule attribute_expression is only for "
+                f"{', '.join(sorted(_EXPRESSIONS))}, not {arg.param}"
+            )
     for p in op.params.values():
         if p.required and p.name not in used and not (p.name == "limit" and entry.page_size):
             errors.append(f"required {p.location} param {p.name} has no arg")

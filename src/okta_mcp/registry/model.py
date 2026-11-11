@@ -83,12 +83,23 @@ class ArgRule(_Model):
     the filter can match is one the command returns unredacted (design §6.2 check 6). Only
     for free-form filters (`filter`, `search`, `q`), which the loader enforces."""
 
+    attribute_expression: bool = False
+    """The value is an Okta filter expression (`search`, `filter`) or one attribute name
+    (`sortBy`). The policy engine reads the attributes it names: none may be one results
+    redact, and each must be in the caller's roles' `search_attributes` (design §9.3)."""
+
     @model_validator(mode="after")
     def _exactly_one(self) -> Self:
-        chosen = (self.forbidden, self.raises_sensitivity_to is not None, self.reviewed is not None)
+        chosen = (
+            self.forbidden,
+            self.raises_sensitivity_to is not None,
+            self.reviewed is not None,
+            self.attribute_expression,
+        )
         if sum(chosen) != 1:
             raise ValueError(
-                "arg_rule must set exactly one of forbidden, raises_sensitivity_to or reviewed"
+                "arg_rule must set exactly one of forbidden, raises_sensitivity_to, reviewed "
+                "or attribute_expression"
             )
         return self
 

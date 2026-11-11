@@ -72,8 +72,8 @@ def test_sensitivity(registry: Registry) -> None:
 
 def test_free_form_filter_rules(registry: Registry) -> None:
     # Step 3.2 decision: a filter over a closed set of returned fields leaves sensitivity
-    # alone and says why. A `search` that matches any profile attribute is forbidden: it can
-    # match a custom attribute scrub.yaml redacts by key name (3.2 reviews).
+    # alone and says why. A `search` that matches any profile attribute is checked per call:
+    # it can match a custom attribute scrub.yaml redacts by key name (3.2 reviews).
     rules = {
         (domain, cmd.name, name): arg.arg_rule
         for domain in PILOTS
@@ -92,9 +92,14 @@ def test_free_form_filter_rules(registry: Registry) -> None:
     }
     # `resolved eq false` returns owners the default call leaves out.
     assert raising == {("groups", "get-owners", "filter")}
-    # Redaction is the same for every role, so no role may probe around it.
-    assert forbidden == {("groups", "list", "search"), ("groups", "get-members", "search")}
-    assert reviewed | raising | forbidden == set(rules)
+    assert forbidden == set()
+    # Any profile attribute: the engine checks the names against the redaction list and
+    # the caller's roles' `search_attributes`.
+    checked = {k for k, r in rules.items() if r is not None and r.attribute_expression}
+    assert checked == {("groups", "list", "search"), ("groups", "get-members", "search")}
+    assert reviewed | raising | checked == set(rules)
+    sort_by = registry.domains["groups"].commands["list"].entry.args["sort_by"].arg_rule
+    assert sort_by is not None and sort_by.attribute_expression
 
 
 def test_only_filters_are_reviewed(registry: Registry) -> None:

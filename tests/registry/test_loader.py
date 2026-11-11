@@ -424,6 +424,50 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
         },
         "arg sort_by: arg_rule reviewed is only for free-form filters",
     ),
+    "attribute-expression-on-q": (
+        {
+            "operation": "listUsers",
+            "summary": "Users",
+            "args": {"q": {"query": "q", "arg_rule": {"attribute_expression": True}}},
+            "paginate": "link",
+            "view": ["id"],
+            "data_classes": ["pii"],
+        },
+        "arg q: arg_rule attribute_expression is only for filter, search, sortBy, not q",
+    ),
+    "attribute-expression-on-expand": (
+        {
+            "operation": "listUsers",
+            "summary": "Users",
+            "args": {"expand": {"query": "expand", "arg_rule": {"attribute_expression": True}}},
+            "paginate": "link",
+            "view": ["id"],
+            "data_classes": ["pii"],
+        },
+        "arg expand: arg_rule attribute_expression is only for",
+    ),
+    "attribute-expression-on-path-param": (
+        _with(GET, args={"user": {"path_param": "id", "arg_rule": {"attribute_expression": True}}}),
+        "arg user: arg_rule attribute_expression is only for",
+    ),
+    "attribute-expression-false-alone": (
+        _with(
+            GET, args={"user": {"path_param": "id", "arg_rule": {"attribute_expression": False}}}
+        ),
+        "exactly one of",
+    ),
+    "attribute-expression-and-reviewed": (
+        _with(
+            GET,
+            args={
+                "user": {
+                    "path_param": "id",
+                    "arg_rule": {"attribute_expression": True, "reviewed": "x"},
+                }
+            },
+        ),
+        "exactly one of",
+    ),
     "reviewed-on-path-param": (
         _with(GET, args={"user": {"path_param": "id", "arg_rule": {"reviewed": "x"}}}),
         "arg user: arg_rule reviewed is only for free-form filters",
@@ -525,10 +569,11 @@ def test_failure_modes(spec: SpecIndex, cmd: dict[str, Any], message: str) -> No
 
 
 def _users(rule: dict[str, Any], arg: str = "search") -> dict[str, Any]:
+    """`listUsers` with one arg, named after its query param in lower case."""
     return {
         "operation": "listUsers",
         "summary": "Users",
-        "args": {arg: {"query": arg, "arg_rule": rule}},
+        "args": {arg.lower(): {"query": arg, "arg_rule": rule}},
         "paginate": "link",
         "view": ["id"],
         "data_classes": ["pii"],
@@ -546,10 +591,25 @@ def test_profile_search_cannot_be_reviewed(spec: SpecIndex, operation: str) -> N
         _build(spec, list=cmd)
     assert e.value.errors == [
         f"users.yaml: list: arg search: search on {operation} matches any profile attribute, "
-        "so it can't be reviewed; use forbidden"
+        "so it can't be reviewed; use attribute_expression"
     ]
-    for rule in ({"forbidden": True}, {"raises_sensitivity_to": "sensitive"}):
+    for rule in ({"forbidden": True}, {"attribute_expression": True}):
         cmd["args"]["search"]["arg_rule"] = rule
+        _build(spec, list=cmd)
+
+
+@pytest.mark.parametrize("arg", ["search", "filter", "sortBy"])
+def test_attribute_expression_loads_on_expression_params(spec: SpecIndex, arg: str) -> None:
+    cmd = _users({"attribute_expression": True}, arg)
+    rule = _build(spec, list=cmd).domains["users"].commands["list"].entry
+    rule = rule.args[arg.lower()].arg_rule
+    assert rule is not None and rule.attribute_expression
+
+
+def test_sort_by_needs_a_rule(spec: SpecIndex) -> None:
+    cmd = _users({}, "sortBy")
+    del cmd["args"]["sortby"]["arg_rule"]
+    with pytest.raises(RegistryError, match="sortBy needs an arg_rule or allowed_values"):
         _build(spec, list=cmd)
 
 

@@ -9,17 +9,17 @@ commands:
       filter:
         query: filter
         arg_rule: {reviewed: "closed set (id, type, lastUpdated, lastMembershipUpdated), all returned"}
-      # `search` matches any profile attribute, custom ones too. scrub.yaml redacts by key name
-      # for every role (a custom `apiKey`, `secret`, `token`), and `sw` would read such a value
-      # back a character at a time. No role may pass it until the executor can check the
-      # expression's property names (plan 3.2, option b).
-      search: {query: search, arg_rule: {forbidden: true}}
+      # `search` matches any profile attribute, custom ones too, and `sw` reads a value back
+      # a character at a time. The engine checks the attributes named: never one scrub.yaml
+      # redacts, and only those in the caller's roles' `search_attributes`.
+      search: {query: search, arg_rule: {attribute_expression: true}}
       # `stats` includes `hasAdminPrivlege`, admin-role data.
       expand:
         query: expand
         allowed_values: [stats, app]
         arg_rule: {raises_sensitivity_to: sensitive}
-      sort_by: {query: sortBy}
+      # Any single property: ordering by one is a slower way to read it.
+      sort_by: {query: sortBy, arg_rule: {attribute_expression: true}}
       sort_order: {query: sortOrder, allowed_values: [asc, desc]}
     paginate: link
     page_size: 200
@@ -40,8 +40,8 @@ commands:
     summary: Users in a group
     args:
       group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
-      # Any user profile attribute, as for `list` above: an oracle for redacted ones.
-      search: {query: search, arg_rule: {forbidden: true}}
+      # Any user profile attribute, checked as for `list` above.
+      search: {query: search, arg_rule: {attribute_expression: true}}
       expand: {query: expand, allowed_values: [group-rules, login-status-info]}
     paginate: link
     page_size: 200
