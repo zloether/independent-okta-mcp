@@ -22,8 +22,15 @@ FILTERS_URI = "okta://reference/filters"
 EXPRESSION_LANGUAGE_URI = "okta://reference/expression-language"
 
 _EXTRA_TOOLS = frozenset({"okta_help", "okta_status"})
-_COMMAND_REF = re.compile(r"`(okta_[A-Za-z0-9_]+) ([A-Za-z0-9-]+)`")
-_TOOL_REF = re.compile(r"`(okta_[A-Za-z0-9_]+)(?=[` (])")
+# Case-insensitive on purpose: registry names are lower case, so `okta_Groups` is an error to
+# report, not text to skip.
+_TOOL = re.compile(r"\bokta_[A-Za-z0-9_]+")
+_SPAN = re.compile(r"`([^`\n]+)`")
+_SPAN_COMMAND = re.compile(r"(okta_[A-Za-z0-9_]+) +([A-Za-z0-9][A-Za-z0-9-]*)")
+_HELP_CALL = re.compile(r'okta_help\(tool="([^"]*)", *command="([^"]*)"\)')
+# Ends on a letter or digit, so a sentence's comma or full stop isn't part of the URI.
+_URI = re.compile(r"okta://(?:[A-Za-z0-9/_.-]*[A-Za-z0-9])?")
+_GUIDE = re.compile(r"okta://guide/(.*)")
 _REFERENCES = (
     (
         "filters.md",
@@ -59,23 +66,42 @@ class Resource:
 
 
 def guide_problems(text: str, registry: Registry) -> list[str]:
-    """Every `okta_<tool> <command>` reference in backticks must name a registry command, and
-    every backticked `okta_<x>` tool name must be a domain tool or okta_help/okta_status."""
+    """What a resource names that doesn't exist (design §6.2 check 7): every `okta_<x>` must be
+    a tool of this server; a backticked `okta_<tool> <command> …` and every
+    `okta_help(tool="…", command="…")` must name a registry command; every `okta://` URI must be
+    a reference or the guide URI of a registry domain (whether that guide exists is checked by
+    `Resources`)."""
     tools = {tool_name(d): d for d in registry.domains}
     problems: list[str] = []
-    reported: set[str] = set()
-    for tool, command in dict.fromkeys(_COMMAND_REF.findall(text)):
+
+    def command(tool: str, name: str, where: str) -> None:
         domain = tools.get(tool)
         if domain is None:
-            if tool not in _EXTRA_TOOLS:
-                problems.append(f"`{tool} {command}`: no tool {tool}")
-                reported.add(tool)
-        elif command not in registry.domains[domain].commands:
-            problems.append(f"`{tool} {command}`: no command {command} in domain {domain}")
-    for tool in dict.fromkeys(_TOOL_REF.findall(text)):
-        if tool not in tools and tool not in _EXTRA_TOOLS and tool not in reported:
+            return  # reported by the tool-name check below, wherever the name appears
+        if name not in registry.domains[domain].commands:
+            problems.append(f"{where}: no command {name} in domain {domain}")
+
+    for tool in _TOOL.findall(text):
+        if tool not in tools and tool not in _EXTRA_TOOLS:
             problems.append(f"`{tool}`: not a tool of this server")
+    for span in _SPAN.findall(text):
+        m = _SPAN_COMMAND.match(span)
+        if m is not None and m.group(1) not in _EXTRA_TOOLS:
+            command(m.group(1), m.group(2), f"`{m.group(0)}`")
+    for m in _HELP_CALL.finditer(text):
+        command(m.group(1), m.group(2), m.group(0))
+    for uri in _URI.findall(text):
+        guide = _GUIDE.fullmatch(uri)
+        if uri in (FILTERS_URI, EXPRESSION_LANGUAGE_URI):
+            continue
+        if guide is None or guide.group(1) not in registry.domains:
+            problems.append(f"{uri}: not a resource of this server")
     return list(dict.fromkeys(problems))
+
+
+def guide_links(text: str) -> set[str]:
+    """Domains whose guide URI the text names."""
+    return {m.group(1) for uri in _URI.findall(text) if (m := _GUIDE.fullmatch(uri))}
 
 
 def _read(entry: Traversable, problems: list[str]) -> str | None:
@@ -129,6 +155,12 @@ class Resources:
                 text,
                 domain,
             )
+        for resource in [*references, *guides.values()]:
+            problems += [
+                f"{resource.name}: names {GUIDE_URI.format(domain=d)}, which has no guide file"
+                for d in sorted(guide_links(resource.text))
+                if d in registry.domains and d not in guides
+            ]
         if problems:
             raise ResourceError(problems)
         self._references = tuple(references)

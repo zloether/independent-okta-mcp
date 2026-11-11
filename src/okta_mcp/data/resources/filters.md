@@ -29,8 +29,10 @@ Example: `type eq "OKTA_GROUP" and lastUpdated gt "2025-01-01T00:00:00.000Z"`.
 
 ## Restrictions this server enforces
 
-The server reads every expression before sending it, so it can tell which attributes it names.
-It accepts only this alphabet and refuses everything else:
+For the arguments that can name any attribute (`search` and `sort_by` on the commands whose
+`okta_help` shows a `Search:` line), the server reads the
+expression before sending it, so it can tell which attributes it names. It accepts only this
+alphabet and refuses everything else:
 
 - Attribute names are dotted segments of ASCII letters, digits and underscores, starting with a
   letter or underscore (`profile.name`, `profile.costCenter`). Non-ASCII attribute names are not
@@ -47,16 +49,19 @@ shorter piece of it with `sw`, `co` or `ew`.
 
 ## Which attributes you may name
 
-Naming an attribute in `search`, `filter` or `sort_by` can reveal its value (matching on a value
-is a way of reading it), so the server checks the attributes against your roles.
+Naming an attribute in `search` or `sort_by` can reveal its value (matching on a value is a way
+of reading it), so on commands whose `okta_help` shows a `Search:` line the server checks
+those attributes against your roles. Elsewhere `filter`, `q` and `search` work over a fixed set
+of fields the command returns anyway (a group rule's `search` matches its name), so they are not
+checked this way: if your roles allow the command, they allow those arguments.
 
-- Your roles decide which attributes you may name: each role has a `search_attributes` list,
-  and a role may allow any attribute that results do not redact.
+- Your roles decide which attributes you may name there: each role has a
+  `search_attributes` list, and a role may allow any attribute that results do not redact.
 - Attributes that results redact can never be named, by anyone, whatever the role.
 - If a name is refused, the message lists what you may name for that command. Use one of those,
   or tell the user their roles do not allow the search.
-- A refusal that says your roles allow no expression on the command means `q` and the command's
-  fixed arguments are all you have.
+- A message that says your roles allow no `search` or `sort_by` on a command means those are
+  out there; its `q`, `filter` and other arguments still work.
 
 ## Paging
 

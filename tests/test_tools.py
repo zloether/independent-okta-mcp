@@ -13,6 +13,7 @@ from jsonschema import Draft202012Validator
 from okta_mcp.auth.principal import Principal
 from okta_mcp.exec.cursor import Cursors
 from okta_mcp.exec.executor import (
+    CURSOR_MAX,
     FORBIDDEN,
     UNAVAILABLE,
     Code,
@@ -204,6 +205,9 @@ def test_annotations_and_schemas(tools: Tools) -> None:
             assert tool.input_schema["type"] == "object"
             assert tool.input_schema["additionalProperties"] is False
             Draft202012Validator.check_schema(tool.input_schema)
+            if tool.name.startswith("okta_") and "cursor" in tool.input_schema["properties"]:
+                # 2.9 carry-over; the executor enforces the same bound.
+                assert tool.input_schema["properties"]["cursor"]["maxLength"] == CURSOR_MAX
 
 
 # --- 3. unavailable -----------------------------------------------------------------------

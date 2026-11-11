@@ -92,6 +92,37 @@ def test_guide_problems(pilot: Registry) -> None:
     assert guide_problems("`okta_groups List`", pilot)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The forms the shipped guides use, each with one name wrong (code review, 3.4).
+        'Arguments: `okta_help(tool="okta_groups", command="get-membrs")`.',
+        'Arguments: `okta_help(tool="okta_grups", command="list")`.',
+        "`okta_groups lst <group>`",
+        "`okta_grups`, then",
+        "plain okta_grups in prose",
+        "see okta://guide/widgets",
+        "see `okta://reference/filter`",
+    ],
+)
+def test_guide_problems_cover_every_form(pilot: Registry, text: str) -> None:
+    assert guide_problems(text, pilot)
+
+
+def test_guide_problems_accept_the_good_forms(pilot: Registry) -> None:
+    text = (
+        'Use `okta_help(tool="okta_groups", command="get-members")`, `okta_groups get <group>`, '
+        "`okta_status`, okta://guide/network-zones, okta://reference/filters and "
+        "`okta://reference/expression-language`."
+    )
+    assert guide_problems(text, pilot) == []
+
+
+def test_link_to_a_guide_that_has_no_file(tmp_path: Path, pilot: Registry, engine: Engine) -> None:
+    errors = _errors(pilot, engine, _dir(tmp_path, **{"groups.md": "okta://guide/network-zones"}))
+    assert len(errors) == 1 and "no guide file" in errors[0]
+
+
 def test_unknown_command_reference(tmp_path: Path, pilot: Registry, engine: Engine) -> None:
     errors = _errors(pilot, engine, _dir(tmp_path, **{"groups.md": "`okta_groups nope`\n"}))
     assert len(errors) == 1 and "groups.md" in errors[0]
