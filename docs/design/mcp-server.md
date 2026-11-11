@@ -169,7 +169,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 ```
 independent-okta-mcp/
 ├── AGENTS.md                    # agent/contributor instructions incl. trust boundaries (§12.2)
-├── CLAUDE.md                    # one line: @AGENTS.md
+├── CLAUDE.md                    # @AGENTS.md, plus Claude Code subagent model choices
 ├── LICENSE
 ├── README.md
 ├── pyproject.toml               # [project] + dev group; ruff/pyright/pytest config
