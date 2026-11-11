@@ -15,6 +15,17 @@ Follow the plan's "How to work a step" section: branch `step/<id>-<slug>`, tests
 
 Every change gets **`/code-review`** before a PR is opened or, on a branch that already has one, before the work is called done. Fix what it finds or say in the decisions log why not, then re-run the standard checks. A change to a trust boundary (below) also gets **`/security-review`**; one does not replace the other, since the security review looks only for exploitable flaws and skips correctness. Re-run both on commits that fix review findings when those commits touch a trust boundary. Record each review's outcome in the plan's decisions log.
 
+## Working with subagents
+
+Orchestrate a step with subagents where it makes sense, and give work that is well specified and bounded to a lower-cost model. Do the work yourself when explaining it would take as long as doing it.
+
+- **Delegate to a lower-cost model:** tests for an API that is already written; resource and guide prose; mechanical edits across files; searches and inventories; running checks and reporting the failures.
+- **Keep:** the design of code on a trust boundary, choices the plan or design doc must record, judging review findings, and anything a later step depends on.
+- **Brief it fully.** A subagent starts with none of your context, so give it the exact API or contract, the design and plan refs, what to cover, and the standard checks to pass.
+- **One owner per file.** Name the files a subagent may create or edit. Other files, `docs/implementation-plan.md` and the design doc stay yours. Subagents don't commit, push, stash, reset or check out. When subagents run in parallel, give each its own set of files.
+- **Don't let it fix around a bug.** A subagent that finds a bug in code it didn't write reports it, with a failing or `xfail(strict=True)` test. It doesn't change that code.
+- **Review what comes back.** Read the diff, check factual claims about Okta and about this repo's behavior against the code, then rerun the standard checks yourself. Subagent output gets the same `/code-review` and `/security-review` as your own, and the decisions log says which parts were delegated.
+
 ## Layout
 
 ```
