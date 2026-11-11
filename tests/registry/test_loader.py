@@ -598,6 +598,18 @@ def test_profile_search_cannot_be_reviewed(spec: SpecIndex, operation: str) -> N
         _build(spec, list=cmd)
 
 
+@pytest.mark.parametrize("arg", ["search", "sortBy"])
+def test_profile_search_and_sort_cannot_be_gated_by_sensitivity(spec: SpecIndex, arg: str) -> None:
+    with pytest.raises(RegistryError) as e:
+        _build(spec, list=_users({"raises_sensitivity_to": "sensitive"}, arg))
+    assert e.value.errors == [
+        f"users.yaml: list: arg {arg.lower()}: {arg} on listUsers can name any profile "
+        "attribute, so raises_sensitivity_to doesn't cover it; use attribute_expression"
+    ]
+    # A filter with a closed property set may still raise.
+    _build(spec, list=_users({"raises_sensitivity_to": "sensitive"}, "filter"))
+
+
 @pytest.mark.parametrize("arg", ["search", "filter", "sortBy"])
 def test_attribute_expression_loads_on_expression_params(spec: SpecIndex, arg: str) -> None:
     cmd = _users({"attribute_expression": True}, arg)

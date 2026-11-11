@@ -13,6 +13,9 @@ from okta_mcp.exec.output import ScrubRules
 
 _COMPARISONS = frozenset({"eq", "ne", "gt", "ge", "lt", "le", "sw", "co", "ew"})
 _WORDS = _COMPARISONS | {"pr", "and", "or", "not", "true", "false", "null"}
+# These take an attribute on their left. Held to that, an operator word can't itself be the
+# attribute (`pr sw "a"`, for a custom attribute named `pr`) without being reported.
+_AFTER_ATTRIBUTE = _COMPARISONS | {"pr"}
 
 # ASCII only, spelled out: `\w` and `\d` would take letters and digits Okta might fold into
 # ASCII ones. No backslash inside a string: whether `\"` ends it is Okta's choice, and a
@@ -42,10 +45,12 @@ def attributes(expression: str) -> tuple[str, ...]:
 
     A name is an attribute unless it is an undotted operator or literal word. A string or
     number must directly follow a comparison operator, so a quoted string is never in the
-    place of an attribute name. Raises `ExpressionError` otherwise, and when no attribute
-    is named."""
+    place of an attribute name; a comparison operator or `pr` must directly follow an
+    attribute, so an operator word is never in that place either. Raises `ExpressionError`
+    otherwise, and when no attribute is named."""
     found: dict[str, None] = {}
     previous = ""
+    after_attribute = False
     position = 0
     while position < len(expression):
         token = _TOKEN.match(expression, position)
@@ -61,9 +66,13 @@ def attributes(expression: str) -> tuple[str, ...]:
             continue
         if kind in ("string", "number") and previous not in _COMPARISONS:
             raise ExpressionError("a value must follow a comparison operator (eq, sw, ...)")
-        if kind == "name" and text.lower() not in _WORDS:
+        word = text.lower() if kind == "name" else ""
+        if word in _AFTER_ATTRIBUTE and not after_attribute:
+            raise ExpressionError("an operator must follow an attribute name")
+        after_attribute = kind == "name" and word not in _WORDS
+        if after_attribute:
             found[text] = None
-        previous = text.lower() if kind == "name" else ""
+        previous = word
     if not found:
         raise ExpressionError("expression names no attribute")
     return tuple(found)

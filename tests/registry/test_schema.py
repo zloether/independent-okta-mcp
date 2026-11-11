@@ -25,7 +25,7 @@ LIST_GROUPS = {
     "summary": "List groups",
     "args": {
         "filter": {"query": "filter", "arg_rule": {"raises_sensitivity_to": "sensitive"}},
-        "search": {"query": "search", "arg_rule": {"raises_sensitivity_to": "sensitive"}},
+        "search": {"query": "search", "arg_rule": {"attribute_expression": True}},
         "expand": {"query": "expand", "allowed_values": []},
         "sort_by": {"query": "sortBy", "arg_rule": {"attribute_expression": True}},
         "sort_order": {"query": "sortOrder", "allowed_values": ["asc", "desc"]},

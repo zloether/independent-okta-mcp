@@ -211,6 +211,17 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
                     "attribute, so it can't be reviewed; use attribute_expression"
                 )
         if (
+            arg.query in ("search", "sortBy")
+            and arg.arg_rule is not None
+            and arg.arg_rule.raises_sensitivity_to
+            and _has_profile(op)
+        ):
+            # Redaction holds for every role, so a raise would only pick who gets the oracle.
+            errors.append(
+                f"arg {arg_name}: {arg.query} on {op.operation_id} can name any profile "
+                "attribute, so raises_sensitivity_to doesn't cover it; use attribute_expression"
+            )
+        if (
             arg.arg_rule is not None
             and arg.arg_rule.attribute_expression
             and arg.query not in _EXPRESSIONS
