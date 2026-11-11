@@ -24,6 +24,10 @@ def group(n: int, name: str = "Sales") -> dict[str, Any]:
     return {"id": f"00g{n}", "profile": {"name": name}, "_links": {"self": {"href": GROUPS}}}
 
 
+def cursor(page: str, index: int) -> str:
+    return f"{page}#{index}"
+
+
 async def gen(items: list[Any], *, then_sleep: float = 0) -> AsyncGenerator[tuple[Any, str, int]]:
     for i, item in enumerate(items):
         yield item, "/api/v1/groups", i
@@ -36,7 +40,7 @@ async def result(items: list[Any], *, then_sleep: float = 0, **kw: Any) -> dict[
         "cols": COLS,
         "limit": 50,
         "max_bytes": 65536,
-        "resumable": True,
+        "next_cursor": cursor,
     }
     text = await list_result(gen(items, then_sleep=then_sleep), RULES, **(opts | kw))
     assert len(text) <= (opts | kw)["max_bytes"]
@@ -120,7 +124,13 @@ async def test_items_are_scrubbed() -> None:
 async def test_item_cap_mid_page_fetches_one_page() -> None:
     okta = Okta([group(i) for i in range(5)], [group(9)])
     text = await list_result(
-        okta_items(okta), RULES, links=False, cols=COLS, limit=2, max_bytes=65536, resumable=True
+        okta_items(okta),
+        RULES,
+        links=False,
+        cols=COLS,
+        limit=2,
+        max_bytes=65536,
+        next_cursor=cursor,
     )
     got = json.loads(text)
     assert (got["count"], got["truncated"]) == (2, "max_items")
@@ -132,7 +142,13 @@ async def test_item_cap_mid_page_fetches_one_page() -> None:
 async def test_item_cap_at_page_end_reads_next_page_to_decide() -> None:
     okta = Okta([group(0), group(1)], [group(2)])
     text = await list_result(
-        okta_items(okta), RULES, links=False, cols=COLS, limit=2, max_bytes=65536, resumable=True
+        okta_items(okta),
+        RULES,
+        links=False,
+        cols=COLS,
+        limit=2,
+        max_bytes=65536,
+        next_cursor=cursor,
     )
     assert json.loads(text)["truncated"] == "max_items"
     assert okta.requests == 2
@@ -142,7 +158,13 @@ async def test_item_cap_at_page_end_reads_next_page_to_decide() -> None:
 async def test_item_cap_equal_to_list_is_complete() -> None:
     okta = Okta([group(0), group(1)])
     text = await list_result(
-        okta_items(okta), RULES, links=False, cols=COLS, limit=2, max_bytes=65536, resumable=True
+        okta_items(okta),
+        RULES,
+        links=False,
+        cols=COLS,
+        limit=2,
+        max_bytes=65536,
+        next_cursor=cursor,
     )
     assert "truncated" not in json.loads(text)
 
@@ -158,7 +180,7 @@ async def test_items_across_pages_in_order() -> None:
             cols=("id",),
             limit=50,
             max_bytes=65536,
-            resumable=True,
+            next_cursor=cursor,
         )
     )
     assert got["rows"] == [["00g0"], ["00g1"], ["00g2"], ["00g3"]]
@@ -166,7 +188,7 @@ async def test_items_across_pages_in_order() -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("max_bytes", range(110, 400, 7))
+@pytest.mark.parametrize("max_bytes", range(145, 435, 7))
 async def test_byte_cap_never_exceeded_and_keeps_a_prefix(max_bytes: int) -> None:
     items = [group(i, "x" * (i * 5)) for i in range(20)]
     got = await result(items, max_bytes=max_bytes)  # `result` asserts the size
@@ -186,14 +208,108 @@ async def test_byte_cap_measured_after_select() -> None:
 async def test_rows_that_fit_exactly_are_all_kept() -> None:
     items = [group(i) for i in range(3)]
     full = await list_result(
-        gen(items), RULES, links=False, cols=COLS, limit=3, max_bytes=65536, resumable=True
+        gen(items), RULES, links=False, cols=COLS, limit=3, max_bytes=65536, next_cursor=cursor
     )
-    # The budget reserves the longest `truncated` reason: a complete list fits in that much more.
-    reserve = len(',"truncated":"non_resumable"')
+    # The budget reserves the longest `truncated` reason and the last row's cursor: a complete
+    # list fits in that much more.
+    reserve = len(',"truncated":"non_resumable"') + len(',"next_cursor":"/api/v1/groups#2"')
     got = await result(items, limit=3, max_bytes=len(full) + reserve)
     assert got["count"] == 3 and "truncated" not in got
     got = await result(items, limit=3, max_bytes=len(full) + reserve - 1)
     assert (got["count"], got["truncated"]) == (2, "max_bytes")
+    assert got["next_cursor"] == "/api/v1/groups#1"
+
+
+@pytest.mark.anyio
+async def test_non_resumable_rows_are_not_charged_for_a_cursor() -> None:
+    items = [group(i) for i in range(3)]
+    full = await list_result(
+        gen(items), RULES, links=False, cols=COLS, limit=3, max_bytes=65536, next_cursor=None
+    )
+    reserve = len(',"truncated":"non_resumable"')
+    got = await result(items, limit=3, max_bytes=len(full) + reserve, next_cursor=None)
+    assert got["count"] == 3 and "truncated" not in got
+
+
+@pytest.mark.anyio
+async def test_complete_list_has_no_cursor() -> None:
+    got = await result([group(1), group(2)], limit=2)
+    assert "next_cursor" not in got and "truncated" not in got
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("kw", "reason"), [({"limit": 2}, "max_items"), ({"max_bytes": 180}, "max_bytes")]
+)
+async def test_cut_list_carries_cursor_of_last_delivered_item(
+    kw: dict[str, Any], reason: str
+) -> None:
+    okta = Okta([group(0)], [group(1), group(2), group(3)], [group(4)])
+    opts: dict[str, Any] = {"limit": 50, "max_bytes": 65536} | kw
+    text = await list_result(
+        okta_items(okta), RULES, links=False, cols=COLS, next_cursor=cursor, **opts
+    )
+    got = json.loads(text)
+    # Item 1 is index 0 of the second page, whose URL is Okta's next link as sent.
+    assert (got["count"], got["truncated"]) == (2, reason)
+    assert got["next_cursor"] == "/api/v1/groups?after=1#0"
+    assert list(got) == ["untrusted", "count", "cols", "rows", "next_cursor", "truncated"]
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("headroom")
+async def test_deadline_cut_carries_cursor() -> None:
+    with anyio.fail_after(2.1):
+        got = await result([group(1), group(2)], then_sleep=10)
+    assert got["next_cursor"] == "/api/v1/groups#1"
+
+
+@pytest.mark.anyio
+async def test_failed_read_past_limit_still_carries_cursor() -> None:
+    async def items() -> AsyncGenerator[tuple[Any, str, int]]:
+        yield group(1), "/p", 0
+        raise UpstreamError(500, "boom")
+
+    text = await list_result(
+        items(), RULES, links=False, cols=COLS, limit=1, max_bytes=65536, next_cursor=cursor
+    )
+    assert json.loads(text)["next_cursor"] == "/p#0"
+
+
+@pytest.mark.anyio
+async def test_non_resumable_cut_has_no_cursor() -> None:
+    got = await result([group(1), group(2)], limit=1, next_cursor=None)
+    assert got["truncated"] == "non_resumable" and "next_cursor" not in got
+
+
+@pytest.mark.anyio
+async def test_warnings_only_when_given() -> None:
+    assert "warnings" not in await result([group(1)])
+    got = await result([group(1)], warnings=("the list may have changed",))
+    assert got["warnings"] == ["the list may have changed"]
+    assert list(got)[-1] == "warnings"
+    got = await result([group(1), group(2)], limit=1, warnings=("w",))
+    assert list(got)[-3:] == ["next_cursor", "truncated", "warnings"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("max_bytes", range(200, 520, 9))
+async def test_byte_cap_holds_with_cursor_and_warnings(max_bytes: int) -> None:
+    # A cursor that grows with the index, as a real one does with Okta's `after` token.
+    def growing(page: str, index: int) -> str:
+        return "c" * (20 + 7 * index)
+
+    items = [group(i, "x" * (i * 3)) for i in range(20)]
+    got = await result(items, max_bytes=max_bytes, next_cursor=growing, warnings=("resumed",))
+    assert got["truncated"] == "max_bytes"
+    assert got["next_cursor"] == "c" * (20 + 7 * (got["count"] - 1))
+
+
+@pytest.mark.anyio
+async def test_first_item_and_its_cursor_over_budget_is_result_too_large() -> None:
+    assert (await result([group(1)], max_bytes=150))["count"] == 1
+    with pytest.raises(ResultTooLarge):
+        await result([group(1)], max_bytes=150, next_cursor=lambda page, index: "c" * 100)
 
 
 @pytest.mark.anyio
@@ -208,7 +324,7 @@ async def test_envelope_over_budget_is_result_too_large_before_any_read() -> Non
     cols = tuple(f"profile.attribute_{i:02d}" for i in range(60))
     with pytest.raises(ResultTooLarge):
         await list_result(
-            items(), RULES, links=False, cols=cols, limit=1000, max_bytes=1024, resumable=True
+            items(), RULES, links=False, cols=cols, limit=1000, max_bytes=1024, next_cursor=cursor
         )
     assert not read
 
@@ -267,7 +383,7 @@ async def test_failed_read_past_limit_keeps_rows(error: Exception) -> None:
         raise error
 
     text = await list_result(
-        items(), RULES, links=False, cols=COLS, limit=2, max_bytes=65536, resumable=True
+        items(), RULES, links=False, cols=COLS, limit=2, max_bytes=65536, next_cursor=cursor
     )
     got = json.loads(text)
     assert (got["count"], got["truncated"]) == (2, "max_items")
@@ -284,14 +400,14 @@ async def test_deadline_on_non_resumable_list_times_out() -> None:
                 cols=COLS,
                 limit=50,
                 max_bytes=65536,
-                resumable=False,
+                next_cursor=None,
             )
 
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(("kw", "count"), [({"limit": 1}, 1), ({"max_bytes": 120}, 1)])
 async def test_non_resumable_cut_is_reported_as_such(kw: dict[str, Any], count: int) -> None:
-    got = await result([group(1), group(2)], resumable=False, **kw)
+    got = await result([group(1), group(2)], next_cursor=None, **kw)
     assert (got["count"], got["truncated"]) == (count, "non_resumable")
 
 
@@ -308,7 +424,7 @@ async def test_generator_is_closed_when_cut() -> None:
             closed = True
 
     await list_result(
-        items(), RULES, links=False, cols=COLS, limit=2, max_bytes=65536, resumable=True
+        items(), RULES, links=False, cols=COLS, limit=2, max_bytes=65536, next_cursor=cursor
     )
     assert closed
 
@@ -321,7 +437,7 @@ async def test_error_mid_list_propagates() -> None:
 
     with pytest.raises(UpstreamError):
         await list_result(
-            items(), RULES, links=False, cols=COLS, limit=50, max_bytes=65536, resumable=True
+            items(), RULES, links=False, cols=COLS, limit=50, max_bytes=65536, next_cursor=cursor
         )
 
 
@@ -334,7 +450,7 @@ async def test_output_is_ascii_and_survives_lone_surrogate() -> None:
         cols=COLS,
         limit=50,
         max_bytes=65536,
-        resumable=True,
+        next_cursor=cursor,
     )
     assert text.isascii()
     assert json.loads(text)["rows"] == [["00g1", "Zoë \ud800"]]

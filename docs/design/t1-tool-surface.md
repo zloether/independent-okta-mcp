@@ -135,7 +135,7 @@ A cursor is emitted and then **echoed by the model as output tokens**, which are
 - HMAC-SHA256 tag truncated to 128 bits (RFC 2104 §5 permits truncation; 128 bits leaves ample forgery margin);
 - `page.rel` → **query string only** (`after=00g9…&limit=200`). The path is always the template expanded with `p` (resolved path params), so a cursor can no longer carry a path at all. This removes the design §7.3 path-equality check by making it structurally impossible to fail, and it is easier to review than the check.
 
-Measured: 516 → ~290 characters. Needs `/security-review` in 2.9 as already planned. Okta's `after` tokens are opaque and can be long, so this is a floor, not a guarantee.
+Measured: 516 → ~290 characters (285 as built in 2.9). Needs `/security-review` in 2.9 as already planned. Okta's `after` tokens are opaque and can be long, so this is a floor, not a guarantee.
 
 ## 5. `okta_help` output
 
@@ -198,5 +198,5 @@ Token cost regresses silently, so guard it the same way as behavior:
 | D7 | Default limit 50, max bytes 64 KB | Accepted 2026-11-02 |
 | D8 | Table encoding for lists | Accepted 2026-11-02 |
 | D9 | Text-only results, no `structuredContent` | Accepted 2026-11-02, pending client check in 4.x |
-| D10 | Compact cursor, query-only page | Accepted 2026-11-02, via `/security-review` in 2.9 |
+| D10 | Compact cursor, query-only page | Accepted 2026-11-02; built in 2.9 (2026-11-10), `/security-review` done there |
 | D11 | Help as text | Accepted 2026-11-02 |

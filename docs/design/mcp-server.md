@@ -21,6 +21,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 | Global in-flight cap only (§6.5) | A per-principal share of the in-flight slots is planned with the limiter (plan 6.2) | A few slow calls (System Log) from one user can hold all 10 slots well inside the request limit |
 | Policy file had `groups_claim` and `unknown_group_behavior` (§9.3) | Both **removed**; a file that has them fails to load (step 3.1) | The claim name was set twice (`MCP_GROUPS_CLAIM`, §11.3), and a mismatch would mean zero roles for everyone or, worse, roles read from a different claim; config owns it. `unknown_group_behavior` had one value, `ignore`, which is what default deny already does |
 | Command "patterns" unspecified (§9.1) | A pattern is a command name or `"*"`; no partial globs. Under domain `"*"` only `["*"]` (§9.3) | `get-*` would grant commands by how they are named, and `"*": [get]` a different command per domain |
+| Cursor held `page.rel`, a relative path and query, checked against the template on resume (§7.3) | Compact cursor ([T1](t1-tool-surface.md) D10, step 2.9): short keys, 128-bit args hash and tag, and the page's **query string only**; the path is always the template expanded with the cursor's path params | A cursor is echoed by the model as output tokens (516 → 285 characters for the §7.3 example), and a cursor that can't hold a path needs no path check |
 | Wildcard-vs-sensitive rule covered commands only (§9.2) | The same rule covers calls an `arg_rule` raises to sensitive (§9.3) | Otherwise a plain wildcard reaches sensitive data through an argument |
 
 ### 0.1 Changes from r3
@@ -279,7 +280,7 @@ All failures are `isError: true` with `{ "error": { "code", "message", "request_
 
 | `code` | When |
 |---|---|
-| `invalid_arguments` | Schema validation failed (message lists valid commands/args); path value rejected (§6.4) |
+| `invalid_arguments` | Schema validation failed (message lists valid commands/args); path value rejected (§6.4); cursor not usable for this call (§7.3) |
 | `forbidden_by_policy` | Roles don't permit the command. Does **not** reveal role names or other commands |
 | `unavailable` | Service app lacks a required scope (never executed) |
 | `not_found` | Resolver found no user with that exact login or ID |
@@ -425,7 +426,7 @@ Native URL building replaces argv, so the r2 option-injection class disappears; 
 - **Deadline:** each call runs under `anyio.fail_after(MCP_CALL_TIMEOUT, default 60s)`. Cancellation propagates into in-flight HTTP requests, so timed-out work actually stops and releases its slots.
 - **429 handling:** on 429, wait = `x-rate-limit-reset` − the response's `Date` header (local clock only if `Date` is missing), plus jitter. If the wait is ≤ `OKTA_RATE_LIMIT_MAX_WAIT` (default 10s) and fits the deadline, sleep and retry once; otherwise return `rate_limited`. Per-bucket pausing and proactive slowdown are deferred until real traffic shows a need.
 - **Per-principal limiter:** `MCP_REQUESTS_PER_MINUTE` (default 600) counts **Okta requests**, charged by the client using the principal contextvar (contextvars propagate natively through anyio tasks).
-- **Pagination** (`okta/paginate.py`): async generator yielding `(item, page_state, index_in_page)`. `page_state` is the relative path and query that fetched the item's page, as sent (the first page's includes the server's query params; later ones are Okta's next link unchanged); it becomes the cursor's `page.rel` (§7.3). Modes: `link` (RFC 8288 `Link: rel="next"`), `body_links` (`_links.next.href`), `link_or_body` (Link header if present, else body), and `none` (one page; links ignored). `items_key` selects the list inside a wrapped response. Every next link must be same-origin **and** have the operation's expanded path, compared after RFC 3986 normalisation (case-normalise percent-escapes, decode unreserved characters only); otherwise the call fails (never follows). A next link that repeats the page also fails. Pagination stops at a page with no items, even if it has a next link.
+- **Pagination** (`okta/paginate.py`): async generator yielding `(item, page_state, index_in_page)`. `page_state` is the relative path and query that fetched the item's page, as sent (the first page's includes the server's query params; later ones are Okta's next link unchanged); its query becomes the cursor's `q` (§7.3). Modes: `link` (RFC 8288 `Link: rel="next"`), `body_links` (`_links.next.href`), `link_or_body` (Link header if present, else body), and `none` (one page; links ignored). `items_key` selects the list inside a wrapped response. Every next link must be same-origin **and** have the operation's expanded path, compared after RFC 3986 normalisation (case-normalise percent-escapes, decode unreserved characters only); otherwise the call fails (never follows). A next link that repeats the page also fails. Pagination stops at a page with no items, even if it has a next link.
 
 ---
 
@@ -450,34 +451,39 @@ With `select: "*"` (or a list without a view) `cols`/`rows` become `items: [{…
 
 Because the paginator is ours, the envelope builder consumes items **one at a time** and applies, per item: secret scrub → drop `_links` at every depth unless `links` → `select`/view (a row of cells; `null` cells kept) or, for the whole object (`select: "*"`, or no view), prune `null`/`{}`/`[]` members → serialized size (`exec/output.py`). `select` paths aren't checked against the schema; an array on a path maps the rest of the path over its elements (`gateways.value`). It stops at the first of: item limit reached, next item would exceed the byte budget, deadline near. The cursor records the page state of the *last delivered item* and its index in that page, so:
 
-- the byte budget is measured on post-`select` output, on the whole serialized response: the envelope is reserved at its largest (count = limit, longest `truncated` reason), so the text never exceeds `MCP_MAX_BYTES`;
+- the byte budget is measured on post-`select` output, on the whole serialized response: the envelope is reserved at its largest (count = limit, longest `truncated` reason, any `warnings`), and on a resumable list each row is charged for the cursor that would follow it, so the text never exceeds `MCP_MAX_BYTES`. A list that only just fits can therefore be cut where it was in fact complete; the resume returns the rest (possibly nothing);
 - to tell a complete list from a cut one, one item past the limit is read, which costs a page fetch when the limit ends a page; if that read fails (Okta error, 429, refused next link) or meets the deadline, the rows are returned cut at `max_items`;
-- items dropped by any budget are re-delivered on resume, exactly once **if the list is unchanged** between calls;
+- items dropped by any budget are re-delivered on resume, exactly once **if the list is unchanged** between calls. A resume fetches the last delivered item's page again, so a cut at the end of a page costs one fetch that yields nothing new;
 - page size never shrinks to fit the budget (no small-page propagation into `next` links).
 
 Rules:
 - **Non-list results** (single resources, SAML metadata) over `MCP_MAX_BYTES` fail with `result_too_large` and a hint to use `select`. So does a list whose first item alone doesn't fit: an empty truncated page would resume at the same item forever. A list whose envelope alone doesn't fit (a long `select` names many columns) fails before any Okta request.
 - **Deadline:** a resumable list stops 1 s before the call's deadline and returns what it has (`truncated: "deadline"`); with nothing yet, the call fails with `timeout`, for the same reason as above. A non-resumable list isn't cut; the call fails with `timeout`. Any other cut of a non-resumable list is reported as `truncated: "non_resumable"`.
-- **The executor owns `truncated`** and `warnings`.
+- **The executor owns `truncated`** and `warnings`: it passes the envelope builder a cursor-issuing function (or none, for a non-resumable call) and the warnings to add.
 - **Resumability is a property of (command, args):** `resumable: true | false | {unless_args: […]}` in the registry. Simple and resolved commands are resumable. Post-v1 composite handlers default to non-resumable (`truncated: "non_resumable"`), are capped at `MCP_MAX_BATCH` (50) keys for batch results, and get their own aggregation caps when they are designed.
 
 ### 7.3 Cursors
 
-`cursor = base64url(payload) + "." + HMAC-SHA256(payload, MCP_CURSOR_KEY)`:
+`cursor = base64url(payload) + "." + base64url(tag)`, where `tag` is the first 128 bits of HMAC-SHA256 over the encoded payload with `MCP_CURSOR_KEY` (RFC 2104 §5 permits truncation). The payload is compact JSON with one-letter keys ([T1](t1-tool-surface.md) D10), because the model echoes a cursor back as output tokens:
 
-```json
-{ "v": 1, "uid": "00u…", "tool": "okta_users", "cmd": "get-groups",
-  "args_sha256": "…",
-  "path_params": { "id": "00u1abcDEFghiJKLm0h7" },
-  "page": { "kind": "link", "rel": "/api/v1/users/00u1abcDEFghiJKLm0h7/groups?after=00g9…&limit=200" },
-  "skip": 37,
-  "iat": 1760000000, "exp": 1760000900 }
+```jsonc
+{ "v": 1,                                  // format version
+  "u": "00u…",                             // caller (token subject)
+  "t": "okta_users", "c": "get-groups",    // tool and command
+  "a": "…",                                // first 128 bits of SHA-256 over the original args (canonical JSON), base64url
+  "p": { "id": "00u1abcDEFghiJKLm0h7" },   // resolved path params
+  "q": "after=00g9…&limit=200",            // query string of the last delivered item's page
+  "s": 37,                                 // items of that page already delivered
+  "e": 1760000900 }                        // expiry, Unix seconds (15 min)
 ```
 
-- `args_sha256` covers the **original** args (canonical JSON). `path_params` holds the **resolved** values (login → ID), so resume does not re-resolve and the path check compares like with like.
-- `page.rel` is a **relative** path+query. For a truncation inside the first page it is the initial request built from the template and args; afterwards it is the relative form of the next link. On resume the executor joins it to `OKTA_ORG_URL` and checks its path equals the template expanded with `path_params`. No absolute URL is ever accepted from a client, so a forged or replayed cursor cannot redirect the service token.
-- **Resume:** the client resends the same `command` and `args` with `cursor`. The server verifies the signature, `uid` equals caller, same `tool`/`cmd`, `args_sha256` matches the resent args, and not expired (15 min); then re-runs the policy check on those args, re-fetches the page and skips `skip` items. Lists that change between calls may duplicate or miss items; resumed responses say so in `warnings`.
-- **Key:** one key. Rotation = new key + restart; outstanding cursors (≤15 min old) become invalid, which clients handle by re-running the command.
+About 285 characters for this example; Okta's `after` tokens are opaque and can be long, so that is a floor.
+
+- `a` covers the **original** args (sorted keys, compact, ASCII). `p` holds the **resolved** values (login → ID), so resume does not re-resolve.
+- **A cursor holds no path and no host.** `q` is a query string only: for a cut inside the first page it is the initial request's query, afterwards the query of Okta's next link, as sent. On resume the URL is the operation's path template expanded with `p` on `OKTA_ORG_URL`, plus `?q`. Each `p` value goes through the §6.4 rule again (characters, reserved literals) and must name exactly the template's parameters; a `q` the HTTP client would rewrite (`#`, a space, a control character) is refused. So a forged or replayed cursor, even one signed with a leaked key, cannot send the service token off the operation's path.
+- **Resume:** the client resends the same `command` and `args` with `cursor`. The server checks the tag (as text, constant-time, before decoding anything), then the payload's shape and version, that `u` is the caller and `t`/`c` the tool and command, that it has not expired, and that `a` matches the resent args. Then it re-runs the policy check on those args, fetches the page again and skips `s` items of it (if the page is now shorter, it goes on at the next page). Lists that change between calls may duplicate or miss items; resumed responses say so in `warnings`. `select`, `links` and `limit` are not bound: they may differ between pages.
+- **Errors** are `invalid_arguments` with one of three fixed messages. Forged, malformed, wrong-key, another caller's and another command's cursors all get the same one ("not valid for this call"); "expired" and "issued for other args" are told apart only for an authentic cursor of the caller's own. All three say to run the command again without the cursor.
+- **Key:** one key. Rotation = new key + restart; outstanding cursors (≤15 min old) become invalid, which clients handle by re-running the command. Expiry uses the wall clock, since a cursor outlives a restart.
 
 ---
 
@@ -770,7 +776,7 @@ Startup fails fast on missing/invalid values, unreadable key, invalid policy, or
 | Non-GET operation added to registry | Loader rejects non-GET operations; HTTP client exposes only `get` |
 | Secret-bearing "normal" endpoints | Classify by data returned; `scrub.yaml` regardless of role |
 | Widening via arguments | `arg_rules`; unknown `expand` rejected; policy re-checked with args on resume |
-| SSRF / credential exfil via cursor or pagination link | Cursors hold relative state only; URL re-derived from template; next links must be same origin and path |
+| SSRF / credential exfil via cursor or pagination link | Cursors hold a query string and path params only, never a path or host; URL re-derived from template; next links must be same origin and path |
 | Dev mode exposed over the network | stdio-only dev mode; HTTP always authenticates; image sets `MCP_ENV=production` |
 | Stolen service access token replayed elsewhere | DPoP binds it to an in-memory key |
 | DoS | Item/byte/deadline budgets, global in-flight cap, per-principal limiter, proxy limits |
@@ -829,7 +835,7 @@ Results include PII. Roles should be scoped accordingly; `select` is a convenien
 | Params/schema | Schema generation for every command; validation errors name valid options; one-of-required; `pattern`; `maxItems` |
 | Okta client | Token refresh once under concurrency; DPoP proof claims (`htm`, `htu`, `ath`, fresh `jti` per request and per pagination hop) and nonce retry at token and resource endpoints; 429 wait from `Date` header, retry once, cap → `rate_limited`; global in-flight cap; deadline cancels in-flight requests |
 | Pagination/budget | `link`, `body_links`, `link_or_body`, `items_key`; cross-origin and cross-path next links refused (incl. encoding-variant paths); item/byte/deadline caps mid-page; resume delivers every item exactly once on an unchanged list; post-`select` byte measurement |
-| Cursor | Tamper, wrong subject, wrong args, expired, wrong key, absolute URL rejected; first-page truncation; resolved path params reused on resume |
+| Cursor | Tamper (every character), wrong subject, wrong args, expired, wrong key, malformed signed payloads; absolute URL in path params rejected and in the query kept a query; path-injection payloads in path params; first-page truncation; resolved path params reused on resume; resume delivers every item exactly once across item and byte caps |
 | Resolver | ID short-circuit; exact login match; not found; runs after policy denial check (no Okta request on a forbidden call) |
 | Policy | Matching, deny precedence, wildcard vs sensitive, `include_sensitive`, ID-only groups, empty claim; pilot policy loads clean (full example policy after Phase 5) |
 | Auth | Forged signature, `alg=none`, wrong `iss`/`aud`, expired, missing scope, `kid` refetch limits, malformed groups, missing `uid`; cold JWKS → 503; dev-mode refusals (HTTP, production) |
