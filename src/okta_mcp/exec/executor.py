@@ -161,6 +161,13 @@ def searchable(engine: Engine, principal: Principal, command: Command) -> str:
     return f"expressions may name only: {listed}"
 
 
+def log_internal(logger: logging.Logger, where: str, e: BaseException) -> None:
+    """Log an unexpected exception by its type and traceback frames only, never its message,
+    which may hold Okta data or a caller's args. The one place that rule lives."""
+    frames = "".join(traceback.format_tb(e.__traceback__))
+    logger.error("internal error in %s: %s\n%s", where, type(e).__name__, frames)
+
+
 def tool_name(domain: str) -> str:
     """The MCP tool for a registry domain (§5.1): `network-zones` → `okta_network_zones`.
     Domain names are kebab-case, so this is one-to-one. Cursors are bound to it."""
@@ -256,14 +263,7 @@ class Executor:
             # `OriginError`, `RuntimeError` (a DPoP token without a key, a URL off its
             # template, no principal for the limiter) and anything else. The message may hold
             # data, so only the type and the frames are logged.
-            frames = "".join(traceback.format_tb(e.__traceback__))
-            log.error(
-                "internal error in %s %s: %s\n%s",
-                _logged(call.domain),
-                _logged(call.command),
-                type(e).__name__,
-                frames,
-            )
+            log_internal(log, f"{_logged(call.domain)} {_logged(call.command)}", e)
             return Failure(Code.INTERNAL_ERROR, INTERNAL)
         finally:
             ratelimit.principal.reset(token)

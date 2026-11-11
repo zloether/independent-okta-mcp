@@ -32,6 +32,7 @@ from okta_mcp.server import (
     _RequestIdFilter,  # pyright: ignore[reportPrivateUsage]
     _tokens,  # pyright: ignore[reportPrivateUsage]
     build_runtime,
+    configure_logging,
     mcp_server,
 )
 
@@ -210,9 +211,16 @@ async def test_exception_message_never_reaches_the_caller(
     assert SECRET not in caplog.text
 
 
+PROTOCOL_CALLS: dict[str, tuple[str, str, tuple[Any, ...]]] = {
+    "list_tools": ("tools", "list_tools", ()),
+    "list_resources": ("resources", "visible", ()),
+    "read_resource": ("resources", "read", ("okta://guide/groups",)),
+}
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize("method", ["list_tools", "list_resources"])
-async def test_list_exception_is_a_fixed_protocol_error(
+@pytest.mark.parametrize("method", list(PROTOCOL_CALLS))
+async def test_exception_is_a_fixed_protocol_error(
     config: Config,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -221,14 +229,42 @@ async def test_list_exception_is_a_fixed_protocol_error(
     def boom(*_: object) -> None:
         raise RuntimeError(SECRET)
 
+    part, attribute, args = PROTOCOL_CALLS[method]
     async with running(config, caller(READERS), Okta()) as (client, runtime):
-        target = runtime.tools if method == "list_tools" else runtime.resources
-        monkeypatch.setattr(target, "list_tools" if method == "list_tools" else "visible", boom)
-        with caplog.at_level(logging.ERROR, logger="okta_mcp.server"), pytest.raises(MCPError) as e:
-            await getattr(client, method)()
-    assert e.value.message == INTERNAL
+        monkeypatch.setattr(getattr(runtime, part), attribute, boom)
+        with caplog.at_level(logging.ERROR), pytest.raises(MCPError) as e:
+            await getattr(client, method)(*args)
+    assert (e.value.code, e.value.message) == (types.INTERNAL_ERROR, INTERNAL)
+    assert REQUEST_ID.fullmatch(e.value.data["request_id"])
     assert SECRET not in str(e.value.data)
+    assert "RuntimeError" in caplog.text
     assert SECRET not in caplog.text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("method", [*PROTOCOL_CALLS, "call_tool"])
+async def test_principal_failure_is_a_fixed_protocol_error(
+    config: Config, caplog: pytest.LogCaptureFixture, method: str
+) -> None:
+    """What the principal source raises (4.2: the verifier's contextvar) never reaches the
+    client as text, and never runs the request."""
+
+    def no_principal() -> Principal:
+        raise LookupError(SECRET)
+
+    okta = Okta()
+    if method == "call_tool":
+        args: tuple[Any, ...] = ("okta_groups", {"command": "list"})
+    else:
+        args = PROTOCOL_CALLS[method][2]
+    async with new_http_client(httpx2.MockTransport(okta)) as http:
+        server = mcp_server(build_runtime(config, http), no_principal)
+        async with Client(server) as client:
+            with caplog.at_level(logging.ERROR), pytest.raises(MCPError) as e:
+                await getattr(client, method)(*args)
+    assert (e.value.code, e.value.message) == (types.INTERNAL_ERROR, INTERNAL)
+    assert SECRET not in caplog.text
+    assert okta.requests == []
 
 
 @pytest.mark.anyio
@@ -377,3 +413,24 @@ def test_handlers_registered(config: Config) -> None:
     assert capabilities.prompts is None
     assert capabilities.completions is None
     assert server.middleware == []
+
+
+def test_logging_keeps_dependencies_at_warning(capsys: pytest.CaptureFixture[str]) -> None:
+    """httpx2 logs each request URL at INFO; the SDK logs messages at DEBUG."""
+    root = logging.getLogger()
+    saved = (root.handlers[:], root.level, logging.getLogger("okta_mcp").level)
+    try:
+        configure_logging("DEBUG")
+        logging.getLogger("httpx2").info("HTTP Request: GET https://example.okta.com/x?q=alice")
+        logging.getLogger("mcp.server").debug("message body")
+        logging.getLogger("httpx2").warning("dependency warning")
+        logging.getLogger("okta_mcp.exec").debug("ours")
+    finally:
+        root.handlers[:], root.level = saved[0], saved[1]
+        logging.getLogger("okta_mcp").setLevel(saved[2])
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "alice" not in err
+    assert "message body" not in err
+    assert "dependency warning" in err
+    assert "DEBUG okta_mcp.exec [-] ours" in err

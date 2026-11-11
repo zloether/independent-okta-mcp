@@ -16,9 +16,8 @@ import contextvars
 import json
 import logging
 import sys
-import traceback
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,7 +32,7 @@ from okta_mcp.auth.devmode import dev_principal
 from okta_mcp.auth.principal import Principal
 from okta_mcp.config import Config
 from okta_mcp.exec.cursor import Cursors
-from okta_mcp.exec.executor import INTERNAL, Code, Executor, Failure, Success
+from okta_mcp.exec.executor import INTERNAL, Code, Executor, Failure, Success, log_internal
 from okta_mcp.exec.output import load_scrub
 from okta_mcp.exec.resolve import UserResolver
 from okta_mcp.okta.client import OktaClient, new_http_client
@@ -53,6 +52,7 @@ from okta_mcp.resources import Resources
 from okta_mcp.tools import Text, Tools
 
 log = logging.getLogger(__name__)
+
 
 NAME = "okta-mcp"
 LIST_TTL_MS = 300_000
@@ -79,7 +79,10 @@ class _RequestIdFilter(logging.Filter):
 
 
 def configure_logging(level: str) -> None:
-    """Log lines to stderr, each with the request ID. stdout is the stdio transport's."""
+    """Log lines to stderr, each with the request ID; stdout is the stdio transport's.
+    `level` (`MCP_LOG_LEVEL`) applies to this package. Every other logger stays at WARNING
+    whatever it is: httpx2 logs each request URL at INFO (search values, logins, Okta's
+    `after` tokens) and the SDK can log messages at DEBUG (Okta results)."""
     handler = logging.StreamHandler(sys.stderr)
     handler.addFilter(_RequestIdFilter())
     handler.setFormatter(
@@ -87,7 +90,8 @@ def configure_logging(level: str) -> None:
     )
     root = logging.getLogger()
     root.handlers[:] = [handler]
-    root.setLevel(level)
+    root.setLevel(logging.WARNING)
+    logging.getLogger("okta_mcp").setLevel(level)
 
 
 @dataclass(frozen=True)
@@ -176,44 +180,48 @@ def _failure(failure: Failure, rid: str) -> types.CallToolResult:
     )
 
 
-def _internal(what: str, e: Exception) -> None:
-    # The message may hold data; only the type and frames are logged.
-    frames = "".join(traceback.format_tb(e.__traceback__))
-    log.error("internal error in %s: %s\n%s", what, type(e).__name__, frames)
+def _guarded[P, R](
+    method: str, body: Callable[[P], Awaitable[R]]
+) -> Callable[[ServerRequestContext[Any], P], Awaitable[R]]:
+    """The SDK handler for `body`: one request ID per request, and any exception other than
+    our own `MCPError` (fixed text) logged by type and answered with the fixed internal-error
+    text, `principal()` included. The SDK would otherwise send `str(e)`."""
 
+    async def handler(ctx: ServerRequestContext[Any], params: P) -> R:
+        rid = uuid.uuid4().hex
+        token = request_id.set(rid)
+        try:
+            return await body(params)
+        except MCPError:
+            raise
+        except Exception as e:
+            log_internal(log, method, e)
+            raise MCPError(
+                code=types.INTERNAL_ERROR, message=INTERNAL, data={"request_id": rid}
+            ) from None
+        finally:
+            request_id.reset(token)
 
-def _protocol_internal(what: str, e: Exception) -> MCPError:
-    _internal(what, e)
-    return MCPError(code=types.INTERNAL_ERROR, message=INTERNAL)
+    return handler
 
 
 def mcp_server(runtime: Runtime, principal: Callable[[], Principal]) -> Server[Any]:
     """The SDK server for `runtime`. `principal()` is called once per request and must return
-    the authenticated caller or raise; what it raises is not caught here."""
+    the authenticated caller or raise; what it raises becomes the fixed internal error."""
 
-    async def list_tools(
-        ctx: ServerRequestContext[Any], params: types.PaginatedRequestParams | None
-    ) -> types.ListToolsResult:
-        caller = principal()
-        try:
-            tools = runtime.tools.list_tools(caller)
-        except Exception as e:
-            raise _protocol_internal("tools/list", e) from None
+    async def list_tools(params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        tools = runtime.tools.list_tools(principal())
         return types.ListToolsResult(tools=tools, ttl_ms=LIST_TTL_MS, cache_scope="private")
 
-    async def call_tool(
-        ctx: ServerRequestContext[Any], params: types.CallToolRequestParams
-    ) -> types.CallToolResult:
+    async def call_tool(params: types.CallToolRequestParams) -> types.CallToolResult:
         caller = principal()
-        rid = uuid.uuid4().hex
-        token = request_id.set(rid)
+        rid = request_id.get() or ""
         try:
             outcome = await runtime.tools.call(caller, params.name, params.arguments)
         except Exception as e:
-            _internal("tools/call", e)
+            # A tool's failure is a tool result the model can read (§5.5), not a protocol error.
+            log_internal(log, "tools/call", e)
             outcome = Failure(Code.INTERNAL_ERROR, INTERNAL)
-        finally:
-            request_id.reset(token)
         match outcome:
             case Success(text=text):
                 envelope = json.loads(text)
@@ -224,31 +232,20 @@ def mcp_server(runtime: Runtime, principal: Callable[[], Principal]) -> Server[A
                 return _failure(outcome, rid)
 
     async def list_resources(
-        ctx: ServerRequestContext[Any], params: types.PaginatedRequestParams | None
+        params: types.PaginatedRequestParams | None,
     ) -> types.ListResourcesResult:
-        caller = principal()
-        try:
-            visible = runtime.resources.visible(caller)
-        except Exception as e:
-            raise _protocol_internal("resources/list", e) from None
         listed = [
             types.Resource(
                 uri=r.uri, name=r.name, title=r.title, description=r.description, mime_type=MARKDOWN
             )
-            for r in visible
+            for r in runtime.resources.visible(principal())
         ]
         return types.ListResourcesResult(
             resources=listed, ttl_ms=LIST_TTL_MS, cache_scope="private"
         )
 
-    async def read_resource(
-        ctx: ServerRequestContext[Any], params: types.ReadResourceRequestParams
-    ) -> types.ReadResourceResult:
-        caller = principal()
-        try:
-            found = runtime.resources.read(caller, params.uri)
-        except Exception as e:
-            raise _protocol_internal("resources/read", e) from None
+    async def read_resource(params: types.ReadResourceRequestParams) -> types.ReadResourceResult:
+        found = runtime.resources.read(principal(), params.uri)
         if found is None:
             # The same answer for a URI that doesn't exist and one this caller can't see.
             raise MCPError(code=types.INVALID_PARAMS, message=RESOURCE_NOT_FOUND)
@@ -261,10 +258,10 @@ def mcp_server(runtime: Runtime, principal: Callable[[], Principal]) -> Server[A
         NAME,
         version=__version__,
         instructions=INSTRUCTIONS,
-        on_list_tools=list_tools,
-        on_call_tool=call_tool,
-        on_list_resources=list_resources,
-        on_read_resource=read_resource,
+        on_list_tools=_guarded("tools/list", list_tools),
+        on_call_tool=_guarded("tools/call", call_tool),
+        on_list_resources=_guarded("resources/list", list_resources),
+        on_read_resource=_guarded("resources/read", read_resource),
     )
     # No tracing middleware: spans would carry tool names and arguments to whatever exporter
     # the environment configures.

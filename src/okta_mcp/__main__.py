@@ -44,10 +44,11 @@ def _stdio(config: Config) -> int:
         return _fail([STDIO_NEEDS_DEV_MODE])
     try:
         anyio.run(serve_stdio, config)
+    # The loaders' errors, raised only before the transport opens. Anything else is a bug and
+    # keeps its traceback.
     except (ConfigError, PolicyError, RegistryError, ResourceError) as e:
         return _fail(e.errors)
-    # `ValueError`: limits no call could work under (`Executor`). Both messages are ours.
-    except (ScrubError, ValueError) as e:
+    except ScrubError as e:
         return _fail([str(e)])
     return 0
 
