@@ -2,7 +2,13 @@
 import pytest
 
 from okta_mcp.exec.output import ScrubRules, load_scrub
-from okta_mcp.policy.expression import ATTRIBUTE, ExpressionError, attributes, scrubbed
+from okta_mcp.policy.expression import (
+    ATTRIBUTE,
+    ExpressionError,
+    attribute,
+    attributes,
+    scrubbed,
+)
 
 
 @pytest.mark.parametrize(
@@ -73,6 +79,14 @@ def test_attributes(expression: str, expected: tuple[str, ...]) -> None:
         '(eq "x")',
         'profile.a and eq "x"',
         'profile.a pr "x"',
+        # An operator word, or a parenthesis, where a comparison's value goes.
+        "profile.a eq and",
+        "profile.a eq not",
+        "profile.a eq or profile.b pr",
+        "profile.a eq pr",
+        "profile.a eq sw",
+        "profile.a eq (profile.b)",
+        "profile.a eq )",
         'profile.a and "x"',
         'profile.a eq "x" "y"',
         "5 eq profile.a",
@@ -110,6 +124,72 @@ def test_attributes(expression: str, expected: tuple[str, ...]) -> None:
 def test_refused(expression: str) -> None:
     with pytest.raises(ExpressionError):
         attributes(expression)
+
+
+@pytest.mark.parametrize("name", ["profile.name", "status", "_a.b_1", "profile.eq", "equals"])
+def test_attribute(name: str) -> None:
+    assert attribute(name) == name
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        " ",
+        "profile.name ",
+        " profile.name",
+        "profile.name\n",
+        "a b",
+        'a eq "x"',
+        "(a)",
+        "a,b",
+        "profile.",
+        "1a",
+        "pr",
+        "EQ",
+        "and",
+        "true",
+        "Null",
+        "pr\u043efile.name",
+    ],
+)
+def test_attribute_refused(value: str) -> None:
+    with pytest.raises(ExpressionError):
+        attribute(value)
+
+
+def test_scrubbed_is_what_the_scrubber_redacts_for_a_string_value() -> None:
+    # Never narrower. Wider only where a `strings` rule's key sits above the leaf: the
+    # scrubber redacts that key only when its value is a string, which a name can't tell.
+    import itertools
+
+    from okta_mcp.exec.output import REDACTED, scrub
+
+    rules = load_scrub()
+    strings = {chain[-1] for chain in rules.strings}
+    keys = [*sorted({k for chain, _ in rules.chains for k in chain}), "profile", "x"]
+    assert not scrubbed("profile.channel", rules)
+    assert not scrubbed("profile.credentials", rules)
+    exact = 0
+    for n in (1, 2, 3):
+        for path in itertools.product(keys, repeat=n):
+            if n == 3 and path[0] not in ("profile", "credentials", "channel"):
+                continue
+            doc: object = "v"
+            for key in reversed(path):
+                doc = {key: doc}
+            leaf: object = scrub(doc, rules)
+            for key in path:
+                if leaf == REDACTED:
+                    break
+                leaf = leaf[key]  # type: ignore[index]
+            redacted = leaf == REDACTED
+            if redacted:
+                assert scrubbed(".".join(path), rules), path
+            elif not strings & set(path[:-1]):
+                exact += 1
+                assert not scrubbed(".".join(path), rules), path
+    assert exact > 500
 
 
 def test_error_text_never_repeats_the_value() -> None:
@@ -155,11 +235,6 @@ RULES = ScrubRules(
         "credentials.password.value",
         "x.credentials.password.value",
         "credentials.password.value.more",
-        # Stops inside a redacted chain.
-        "credentials.password",
-        "credentials",
-        "x.credentials",
-        "x.credentials.password",
     ],
 )
 def test_scrubbed(attribute: str) -> None:
@@ -177,6 +252,10 @@ def test_scrubbed(attribute: str) -> None:
         "profile.my_secret",
         "credentials.provider.type",
         "credentials.provider",
+        # Ends inside a chain: the scrubber leaves these alone, so does this.
+        "credentials.password",
+        "credentials",
+        "x.credentials",
         "password.value",
         "password",
         "value",

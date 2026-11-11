@@ -46,7 +46,8 @@ def _packaged_scrub() -> ScrubRules:
 
 
 def build_policy(doc: Any, registry: Registry, scrub: ScrubRules | None = None) -> Policy:
-    """`doc` is the parsed YAML. `scrub` defaults to the packaged `scrub.yaml`."""
+    """`doc` is the parsed YAML. `scrub` defaults to the packaged `scrub.yaml`; startup
+    passes the rules the executor redacts with."""
     if scrub is None:
         scrub = _packaged_scrub()
     try:
@@ -85,7 +86,7 @@ def build_policy(doc: Any, registry: Registry, scrub: ScrubRules | None = None) 
             deny=_expand(entry.deny, registry, _EVERYWHERE),
             search_attributes=frozenset(entry.search_attributes),
         )
-    return Policy(MappingProxyType(roles), tuple(_warnings(parsed, roles, registry)))
+    return Policy(MappingProxyType(roles), tuple(_warnings(parsed, roles, registry)), scrub)
 
 
 def _unknown(where: str, patterns: Patterns, registry: Registry) -> list[str]:

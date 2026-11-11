@@ -10,8 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from okta_mcp.auth.principal import Principal
-from okta_mcp.exec.output import ScrubRules, load_scrub
-from okta_mcp.policy.expression import ExpressionError, attributes, scrubbed
+from okta_mcp.policy.expression import ExpressionError, attribute, attributes, scrubbed
 from okta_mcp.policy.model import WILDCARD, Grant, Policy
 from okta_mcp.registry.loader import Command, Registry
 
@@ -46,17 +45,8 @@ class Engine:
     """One per process, built at startup. Roles come from the principal's groups on every
     call; nothing about a principal is kept."""
 
-    def __init__(
-        self,
-        policy: Policy,
-        registry: Registry,
-        okta_scopes: frozenset[str],
-        scrub: ScrubRules | None = None,
-    ) -> None:
-        """`scrub` defaults to the packaged `scrub.yaml`; pass the rules the executor
-        redacts with, so the two can't differ."""
+    def __init__(self, policy: Policy, registry: Registry, okta_scopes: frozenset[str]) -> None:
         self._policy = policy
-        self._scrub = load_scrub() if scrub is None else scrub
         roles_by_group: dict[str, set[str]] = {}
         for role in policy.roles.values():
             for group in role.groups:
@@ -119,17 +109,21 @@ class Engine:
             if rule is None or rule.reviewed is not None:
                 continue
             if rule.attribute_expression:
+                allowed = effective.search.get(grant, frozenset())
+                if not allowed:
+                    # No expression of any kind for this caller, well-formed or not.
+                    return Verdict.FORBIDDEN
                 try:
                     if not isinstance(value, str):
                         raise ExpressionError("not a string")
-                    named = attributes(value)
+                    # `sortBy` takes one property, not an expression.
+                    named = (attribute(value),) if arg.query == "sortBy" else attributes(value)
                 except ExpressionError:
                     # Refused either way; a policy refusal on another argument comes first.
                     invalid = True
                     continue
-                allowed = effective.search.get(grant, frozenset())
                 # The redaction test comes first and has no exception: `*` doesn't lift it.
-                if any(scrubbed(a, self._scrub) for a in named) or not (
+                if any(scrubbed(a, self._policy.scrub) for a in named) or not (
                     WILDCARD in allowed or allowed.issuperset(named)
                 ):
                     return Verdict.FORBIDDEN

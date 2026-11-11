@@ -12,7 +12,9 @@ import re
 from okta_mcp.exec.output import ScrubRules
 
 _COMPARISONS = frozenset({"eq", "ne", "gt", "ge", "lt", "le", "sw", "co", "ew"})
-_WORDS = _COMPARISONS | {"pr", "and", "or", "not", "true", "false", "null"}
+_LITERALS = frozenset({"true", "false", "null"})
+WORDS = _COMPARISONS | _LITERALS | {"pr", "and", "or", "not"}
+"""Undotted names that are never attributes. Compared lower-cased."""
 # These take an attribute on their left. Held to that, an operator word can't itself be the
 # attribute (`pr sw "a"`, for a custom attribute named `pr`) without being reported.
 _AFTER_ATTRIBUTE = _COMPARISONS | {"pr"}
@@ -46,7 +48,8 @@ def attributes(expression: str) -> tuple[str, ...]:
     A name is an attribute unless it is an undotted operator or literal word. A string or
     number must directly follow a comparison operator, so a quoted string is never in the
     place of an attribute name; a comparison operator or `pr` must directly follow an
-    attribute, so an operator word is never in that place either. Raises `ExpressionError`
+    attribute, and what follows a comparison operator is a value, a literal or an attribute,
+    so an operator word is never in an operand's place either. Raises `ExpressionError`
     otherwise, and when no attribute is named."""
     found: dict[str, None] = {}
     previous = ""
@@ -69,7 +72,9 @@ def attributes(expression: str) -> tuple[str, ...]:
         word = text.lower() if kind == "name" else ""
         if word in _AFTER_ATTRIBUTE and not after_attribute:
             raise ExpressionError("an operator must follow an attribute name")
-        after_attribute = kind == "name" and word not in _WORDS
+        if previous in _COMPARISONS and (kind == "paren" or word in WORDS - _LITERALS):
+            raise ExpressionError("a comparison operator must be followed by a value")
+        after_attribute = kind == "name" and word not in WORDS
         if after_attribute:
             found[text] = None
         previous = word
@@ -78,18 +83,23 @@ def attributes(expression: str) -> tuple[str, ...]:
     return tuple(found)
 
 
+def attribute(value: str) -> str:
+    """`value` if it is one attribute name and nothing else (a `sortBy`). Raises
+    `ExpressionError` otherwise."""
+    if not ATTRIBUTE.fullmatch(value) or value.lower() in WORDS:
+        raise ExpressionError("give one attribute name, like profile.name")
+    return value
+
+
 def scrubbed(attribute: str, rules: ScrubRules) -> bool:
-    """Whether results redact `attribute`, or something under it. Such an attribute is not
+    """Whether results redact `attribute`, or something inside it. Such an attribute is not
     searchable by anyone: matching on a value is reading it.
 
-    Keys compare as the scrubber compares them (lower-cased, at any depth). An attribute that
-    stops partway into a redacted chain (`credentials.password` for
-    `credentials.password.value`) counts too."""
+    The scrubber's own test: a rule's key chain, lower-cased, anywhere in the path. A
+    `strings` rule counts whatever the value's type, which a name can't tell."""
     keys = attribute.lower().split(".")
-    for chain, _ in rules.chains:
-        n = len(chain)
-        if any(tuple(keys[i : i + n]) == chain for i in range(len(keys) - n + 1)):
-            return True
-        if any(tuple(keys[-k:]) == chain[:k] for k in range(1, min(n, len(keys) + 1))):
-            return True
-    return False
+    return any(
+        tuple(keys[i : i + len(chain)]) == chain
+        for chain, _ in rules.chains
+        for i in range(len(keys) - len(chain) + 1)
+    )

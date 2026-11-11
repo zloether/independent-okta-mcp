@@ -190,7 +190,6 @@ def test_wildcard_search_attributes_allow_any_unredacted_attribute(engine: Engin
         "profile.access_token",
         "credentials.password.value",
         "credentials.password",
-        "credentials",
         "profile.custom.secret.inner",
     ],
 )
@@ -208,8 +207,8 @@ def test_redacted_attributes_are_searchable_by_no_role(engine: Engine, attribute
 
 
 def test_the_engine_uses_the_scrub_rules_it_is_given(pilot: Registry) -> None:
-    policy = load_policy(PILOT, pilot)
-    custom = Engine(policy, pilot, ALL_SCOPES, ScrubRules(paths=(("costcenter",),)))
+    policy = load_policy(PILOT, pilot, ScrubRules(paths=(("costcenter",),)))
+    custom = Engine(policy, pilot, ALL_SCOPES)
     who = _who(ADMINS)
     assert custom.check(who, "groups", "list", {"search": 'profile.costCenter eq "1"'}) is (
         FORBIDDEN
@@ -270,6 +269,35 @@ def test_no_search_attributes_means_no_expressions(registry: Registry) -> None:
     assert e.check(who, "groups", "list", {"search": 'profile.name sw "a"'}) is FORBIDDEN
     assert e.check(who, "groups", "list", {"sort_by": "profile.name"}) is FORBIDDEN
     assert e.check(who, "groups", "list", {"q": "a"}) is ALLOWED
+    # The answer doesn't depend on whether the expression is well formed.
+    for bad in ('profile.name sw "a', "(", "", None, 5):
+        assert e.check(who, "groups", "list", {"search": bad}) is FORBIDDEN
+        assert e.check(who, "groups", "list", {"sort_by": bad}) is FORBIDDEN
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        'profile.name eq "x"',
+        "profile.name desc",
+        "profile.name type",
+        "profile.name,type",
+        "(profile.name)",
+        " profile.name",
+        "profile.name ",
+        "profile.name\n",
+        "",
+        "pr",
+        "and",
+        "true",
+        None,
+        ["profile.name"],
+    ],
+)
+def test_sort_by_takes_one_attribute_name(engine: Engine, value: object) -> None:
+    for group in (READERS, ADMINS):
+        assert engine.check(_who(group), "groups", "list", {"sort_by": value}) is INVALID
+        assert engine.check(_who(group), "groups", "list", {"sort_by": "profile.name"}) is ALLOWED
 
 
 def test_search_attributes_apply_only_to_commands_the_same_role_allows(

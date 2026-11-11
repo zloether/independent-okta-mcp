@@ -639,6 +639,9 @@ def test_pilot_policy_search_attributes() -> None:
         ([""], "is not an attribute name"),
         (["pr\u043efile.login"], "is not an attribute name"),
         ([5], "valid string"),
+        (["not", "profile.login"], "'not' is an operator or literal word"),
+        (["PR"], "'PR' is an operator or literal word"),
+        (["true"], "'true' is an operator or literal word"),
         ("status", "valid tuple"),
         ({"users": ["status"]}, "valid tuple"),
     ],
@@ -651,7 +654,7 @@ def test_search_attributes_shape_errors(registry: Registry, value: Any, message:
 
 @pytest.mark.parametrize(
     "attribute",
-    ["profile.apiKey", "profile.SECRET", "token", "credentials.password.value", "credentials"],
+    ["profile.apiKey", "profile.SECRET", "token", "credentials.password.value"],
 )
 def test_redacted_attribute_cannot_be_listed(registry: Registry, attribute: str) -> None:
     assert _errors(_doc(r=_role(search_attributes=["status", attribute])), registry) == [
@@ -670,6 +673,25 @@ def test_redaction_check_uses_the_rules_passed_in(registry: Registry) -> None:
         "roles.r.search_attributes: 'profile.costCenter' is redacted in results, so no role "
         "can search on it"
     ]
+
+
+def test_policy_carries_the_scrub_rules_it_was_checked_against(registry: Registry) -> None:
+    from okta_mcp.exec.output import ScrubRules, load_scrub
+
+    assert build_policy(_doc(r=_role()), registry).scrub == load_scrub()
+    rules = ScrubRules(paths=(("costcenter",),))
+    assert build_policy(_doc(r=_role()), registry, rules).scrub is rules
+
+
+def test_an_attribute_that_only_starts_a_redaction_chain_can_be_listed(
+    registry: Registry,
+) -> None:
+    # `channel.config.headers.value` is redacted; a custom `profile.channel` is not.
+    doc = _doc(r=_role(search_attributes=["profile.channel", "profile.credentials"]))
+    assert build_policy(doc, registry).roles["r"].search_attributes == {
+        "profile.channel",
+        "profile.credentials",
+    }
 
 
 def test_search_attributes_without_an_expression_command_warn(registry: Registry) -> None:

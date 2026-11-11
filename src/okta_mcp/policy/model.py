@@ -12,7 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 
-from okta_mcp.policy.expression import ATTRIBUTE
+from okta_mcp.exec.output import ScrubRules
+from okta_mcp.policy.expression import ATTRIBUTE, WORDS
 from okta_mcp.registry.model import NAME, ecma_pattern
 
 WILDCARD = "*"
@@ -93,6 +94,9 @@ class RoleEntry(_Model):
                     f"{a!r} is not an attribute name (letters, digits and _ in dotted "
                     'segments, like profile.login) or "*"'
                 )
+            if a.lower() in WORDS:
+                # An expression reads this word as an operator or literal, never as a name.
+                raise ValueError(f"{a!r} is an operator or literal word, not an attribute")
         if WILDCARD in v and len(v) > 1:
             raise ValueError('"*" must be the only entry')
         return _unique(v, "attribute")
@@ -144,3 +148,6 @@ class Policy:
     roles: Mapping[str, Role]
     warnings: tuple[str, ...]
     """Entries that load but probably don't do what was meant; startup logs them."""
+    scrub: ScrubRules
+    """The redaction rules `search_attributes` was checked against. The engine tests
+    expressions with these, so the load and the per-call check can't use different ones."""
