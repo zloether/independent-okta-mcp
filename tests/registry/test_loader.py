@@ -345,6 +345,23 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
         _with(GET, unpaged_args=["user"]),
         "unpaged_args set on a single-resource command",
     ),
+    "unpaged-and-unless-arg": (
+        _with(GET_GROUPS, unpaged_args=["user"], resumable={"unless_args": ["user"]}),
+        "unpaged_args are never resumed; drop user from resumable.unless_args",
+    ),
+    "resolve-with-pattern": (
+        _with(
+            GET_GROUPS, args={"user": {"path_param": "id", "resolve": "user_id", "pattern": "^a$"}}
+        ),
+        "resolve: user_id takes no pattern or allowed_values",
+    ),
+    "resolve-with-allowed-values": (
+        _with(
+            GET_GROUPS,
+            args={"user": {"path_param": "id", "resolve": "user_id", "allowed_values": ["a"]}},
+        ),
+        "resolve: user_id takes no pattern or allowed_values",
+    ),
     "unpaged-duplicates": (
         _with(GET_GROUPS, unpaged_args=["user", "user"]),
         "unpaged_args has duplicates",

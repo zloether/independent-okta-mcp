@@ -4,17 +4,17 @@ It runs only after the policy check has allowed the call, so it can't tell a cal
 login exists on a command they may not use. A value shaped like a user ID is used as is. Anything
 else is looked up with `getUser`, which Okta also answers for a login shortname, so the user it
 returns must have exactly that login (Okta compares logins case-insensitively); otherwise, or on
-a 404, the user is not found. `me` is refused before any request: `/api/v1/users/me` is the
-token's own user, not a login. The value goes into the lookup's path through the same §6.4 rule as
-any path value.
+a 404, the user is not found. The value goes into the lookup's path through the same §6.4 rule as
+any path value, which refuses `me` before any request (`/api/v1/users/me` is the token's own user;
+it is in `getUser`'s `Operation.reserved`).
 """
 
 import re
 from collections.abc import Mapping
 from typing import Any, cast
 
-from okta_mcp.exec.params import build_url, path_segment, reserved_for
-from okta_mcp.okta.client import OktaClient, UpstreamError
+from okta_mcp.exec.params import build_url, path_segment
+from okta_mcp.okta.client import OktaClient, UpstreamError, json_body
 from okta_mcp.registry.loader import Command
 from okta_mcp.registry.schema import InvalidArguments
 from okta_mcp.registry.spec import Operation
@@ -62,10 +62,7 @@ class UserResolver:
             return value
         if value in cache:
             return cache[value]
-        if value.casefold() == "me":
-            # Also refused by `reserved_for` (as an alias after `/users/`); said plainly here.
-            raise InvalidArguments(f"arg {arg!r} must be a user ID or login, not me")
-        reserved = reserved_for(self._get_user, _LOOKUP_PARAM) | {"me"}
+        reserved = self._get_user.reserved.get(_LOOKUP_PARAM, frozenset())
         segment = path_segment(arg, value, reserved)
         url = build_url(self._org_url, self._get_user.path, {_LOOKUP_PARAM: segment})
         found: str | None = None
@@ -75,11 +72,7 @@ class UserResolver:
             if e.status != 404:
                 raise
         else:
-            try:
-                body = response.json()
-            except (ValueError, UnicodeDecodeError):
-                body = None
-            found = _user_id_of(body, value)
+            found = _user_id_of(json_body(response), value)
         if found is None:
             raise NotFound(_NOT_FOUND)
         cache[value] = found
@@ -96,6 +89,8 @@ def _user_id_of(body: object, login: str) -> str | None:
     user_id = user.get("id")
     if (
         isinstance(found_login, str)
+        # `lower`, not `casefold` as the refusals use: this test accepts, so the narrower
+        # comparison is the safe one (`casefold` would match `STRASSE` to `straße`).
         and found_login.lower() == login.lower()
         and isinstance(user_id, str)
         and USER_ID.fullmatch(user_id)

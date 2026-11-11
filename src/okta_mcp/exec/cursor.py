@@ -24,7 +24,7 @@ from typing import Any, cast
 
 import httpx2
 
-from okta_mcp.exec.params import build_url, path_segment, reserved_for
+from okta_mcp.exec.params import build_url, path_segment
 from okta_mcp.okta.client import on_origin
 from okta_mcp.registry.loader import Command
 from okta_mcp.registry.schema import InvalidArguments
@@ -218,7 +218,7 @@ def resume_url(command: Command, resume: Resume, org_url: str) -> str:
     operation = command.operation
     try:
         segments = {
-            name: path_segment(name, value, reserved_for(operation, name))
+            name: path_segment(name, value, operation.reserved.get(name, frozenset()))
             for name, value in resume.path_params.items()
         }
         url = build_url(org_url, operation.path, segments)

@@ -11,6 +11,7 @@ caller's (`anyio.fail_after`); cancelling one aborts the request in flight and f
 
 import logging
 from collections.abc import Callable, Mapping
+from typing import Any
 
 import anyio
 import httpx2
@@ -35,6 +36,14 @@ class UpstreamError(Exception):
     def __init__(self, status: int | None, message: str) -> None:
         super().__init__(message)
         self.status = status
+
+
+def json_body(response: httpx2.Response) -> Any:
+    """The response's JSON, or `None` if it isn't JSON."""
+    try:
+        return response.json()
+    except (ValueError, UnicodeDecodeError):
+        return None
 
 
 def new_http_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx2.AsyncClient:
@@ -164,11 +173,7 @@ class OktaClient:
             return UpstreamError(
                 status, f"Okta refused the request (HTTP {status}); contact the MCP administrator"
             )
-        try:
-            body = response.json()
-        except (ValueError, UnicodeDecodeError):
-            body = None
-        match body:
+        match json_body(response):
             case {"errorSummary": str(summary)} if summary:
                 return UpstreamError(
                     status, f"Okta returned HTTP {status}: {summary[:_SUMMARY_MAX]}"

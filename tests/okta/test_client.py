@@ -469,3 +469,11 @@ async def test_deadline_cancels_in_flight_request() -> None:
 def test_on_origin(url: str, ok: bool) -> None:
     # The one origin check behind the client, `paginate`, `build_url` and `resume_url`.
     assert on_origin(httpx2.URL(url), httpx2.URL("https://example.okta.com")) is ok
+
+
+def test_empty_userinfo_is_dropped_by_the_parser() -> None:
+    # S4: `https://@host` parses to no userinfo and is sent without the `@`, so it is the org
+    # URL itself; `:@` keeps a userinfo and is refused.
+    url = httpx2.URL("https://@example.okta.com/x")
+    assert url.userinfo == b"" and str(url) == "https://example.okta.com/x"
+    assert not on_origin(httpx2.URL("https://:@example.okta.com/x"), httpx2.URL(ORG))

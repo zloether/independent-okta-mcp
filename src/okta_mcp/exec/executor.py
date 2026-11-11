@@ -43,12 +43,17 @@ from okta_mcp.exec.cursor import (
     resumable,
     resume_url,
 )
-from okta_mcp.exec.envelope import ResultTooLarge, item_result, list_result
+from okta_mcp.exec.envelope import (
+    DEADLINE_HEADROOM,
+    ResultTooLarge,
+    item_result,
+    list_result,
+)
 from okta_mcp.exec.output import columns
 from okta_mcp.exec.params import build_request, check_args
 from okta_mcp.exec.resolve import NotFound, UserResolver
 from okta_mcp.okta import ratelimit
-from okta_mcp.okta.client import OktaClient, UpstreamError
+from okta_mcp.okta.client import OktaClient, UpstreamError, json_body
 from okta_mcp.okta.paginate import Mode, PaginationError, paginate
 from okta_mcp.okta.ratelimit import RateLimited
 from okta_mcp.policy.engine import Engine, Verdict
@@ -68,6 +73,8 @@ EXPRESSION = (
     "attribute name"
 )
 _ATTRIBUTES_SHOWN = 20
+_LOGGED_NAME = 64
+"""Characters of a caller-sent domain or command name a log line may carry."""
 
 
 class Code(enum.StrEnum):
@@ -135,10 +142,20 @@ class _Options:
     resume: Resume | None
 
 
+def _logged(name: object) -> str:
+    return repr(name[:_LOGGED_NAME]) if isinstance(name, str) else type(name).__name__
+
+
+async def _replay(items: list[tuple[Any, str, int]]) -> AsyncGenerator[tuple[Any, str, int]]:
+    for item in items:
+        yield item
+
+
 class Executor:
-    """One per process, built at startup. `engine` must hold the policy loaded with the scrub
-    rules results are scrubbed with (`Engine.scrub`); `resolver` may be `None` only when no
-    command has a `resolve` arg."""
+    """One per process, built at startup. Results are scrubbed with `Engine.scrub`, the rules
+    the policy was checked against. Raises `ValueError` for a configuration no call could
+    work under: a `call_timeout` a list can't fit in, or no `resolver` while a command has a
+    `resolve` arg."""
 
     def __init__(
         self,
@@ -156,6 +173,17 @@ class Executor:
     ) -> None:
         if not 0 < default_limit <= max_items:
             raise ValueError("default_limit must be from 1 to max_items")
+        if call_timeout < 2 * DEADLINE_HEADROOM:
+            # A resumable list stops DEADLINE_HEADROOM before the deadline; with less than
+            # that again left to read in, every list would time out or come back cut.
+            raise ValueError(f"call_timeout must be at least {2 * DEADLINE_HEADROOM:g} s")
+        if resolver is None and any(
+            arg.resolve is not None
+            for domain in registry.domains.values()
+            for command in domain.commands.values()
+            for arg in command.entry.args.values()
+        ):
+            raise ValueError("a command resolves users, so the executor needs a resolver")
         self._registry = registry
         self._engine = engine
         self._client = client
@@ -190,9 +218,9 @@ class Executor:
             # data, so only the type and the frames are logged.
             frames = "".join(traceback.format_tb(e.__traceback__))
             log.error(
-                "internal error in %r %r: %s\n%s",
-                call.domain,
-                call.command,
+                "internal error in %s %s: %s\n%s",
+                _logged(call.domain),
+                _logged(call.command),
                 type(e).__name__,
                 frames,
             )
@@ -202,6 +230,12 @@ class Executor:
 
     async def _execute(self, call: Call) -> Outcome:
         principal = call.principal
+        # Typed `str`, but from the client: refused as an unknown command is, before anything
+        # uses them as names.
+        if not isinstance(cast(object, call.domain), str) or not isinstance(
+            cast(object, call.command), str
+        ):
+            return Failure(Code.FORBIDDEN_BY_POLICY, FORBIDDEN)
         if not principal.uid:
             # A cursor binds the uid and the limiter keys on it: an empty one would be shared.
             raise RuntimeError("principal without a uid")
@@ -269,14 +303,21 @@ class Executor:
         return limit
 
     def _forbidden(self, call: Call, command: Command, options: _Options) -> str:
-        """`FORBIDDEN`, and for a call with an expression arg, what the caller may name in one:
-        their own roles' `search_attributes` for this command, which they may call."""
-        if not any(
-            (arg := command.entry.args.get(name)) is not None
+        """`FORBIDDEN`, and when an expression arg is what was refused, what the caller may
+        name in one: their own roles' `search_attributes` for this command, which they may
+        call. The engine gives no reason, so the call is checked again without the expression
+        args: still forbidden means another arg (or the command) is the cause."""
+        expressions = {
+            name
+            for name in options.args
+            if (arg := command.entry.args.get(name)) is not None
             and arg.arg_rule is not None
             and arg.arg_rule.attribute_expression
-            for name in options.args
-        ):
+        }
+        if not expressions:
+            return FORBIDDEN
+        rest = {k: v for k, v in options.args.items() if k not in expressions}
+        if self._engine.check(call.principal, call.domain, call.command, rest) is Verdict.FORBIDDEN:
             return FORBIDDEN
         return f"{FORBIDDEN}; {self._searchable(call)}"
 
@@ -305,10 +346,7 @@ class Executor:
         args = await self._resolved(command, options.args)
         url, params = build_request(command, args, self._org_url)
         response = await self._client.get(url, params)
-        try:
-            body = response.json()
-        except (ValueError, UnicodeDecodeError):
-            body = None
+        body = json_body(response)
         if body is None:
             raise UpstreamError(response.status_code, "Okta's response is not JSON")
         return item_result(
@@ -323,6 +361,7 @@ class Executor:
         entry = command.entry
         args = options.args
         items: AsyncGenerator[tuple[Any, str, int]]
+        cut_by_okta = False
         unpaged = any(a in args for a in entry.unpaged_args)
         resume = options.resume
         if resume is not None:
@@ -337,8 +376,20 @@ class Executor:
         else:
             resolved = await self._resolved(command, args)
             url, params = build_request(command, resolved, self._org_url)
-            mode: Mode = "none" if unpaged else entry.paginate
-            items = paginate(self._client, url, params, mode=mode, items_key=entry.items_key)
+            if unpaged:
+                # One page, links ignored. Read whole first, so the cut is judged on the page
+                # Okta returned, not on how much of it `limit` or the byte budget lets out.
+                page = [
+                    x
+                    async for x in paginate(
+                        self._client, url, params, mode="none", items_key=entry.items_key
+                    )
+                ]
+                cut_by_okta = len(page) >= cast(int, entry.page_size)
+                items = _replay(page)
+            else:
+                mode: Mode = entry.paginate
+                items = paginate(self._client, url, params, mode=mode, items_key=entry.items_key)
             bound = path_params(command, resolved)
             warnings = ()
         issue = (
@@ -361,5 +412,5 @@ class Executor:
             max_bytes=self._max_bytes,
             next_cursor=issue,
             warnings=warnings,
-            unpaged_limit=entry.page_size if unpaged else None,
+            cut_by_okta=cut_by_okta,
         )

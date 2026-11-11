@@ -623,25 +623,25 @@ async def test_rate_limited_per_principal(registry: Registry, okta: Okta, spec: 
 @pytest.mark.anyio
 async def test_timeout(registry: Registry, okta: Okta, spec: SpecIndex) -> None:
     async def slow(request: httpx2.Request) -> httpx2.Response:
-        await anyio.sleep(5)
+        await anyio.sleep(20)
         return httpx2.Response(200, json={})
 
-    ex = make(registry, okta, call_timeout=0.2, spec=spec)
+    ex = make(registry, okta, call_timeout=2, spec=spec)
     ex._client._http = new_http_client(httpx2.MockTransport(slow))  # pyright: ignore[reportPrivateUsage]
-    with anyio.fail_after(3):
+    with anyio.fail_after(8):
         out = await run(ex, who(READERS), "groups", "get", args={"group": GROUP})
-    assert failed(out, Code.TIMEOUT).message == "the call took longer than 0.2 s"
+    assert failed(out, Code.TIMEOUT).message == "the call took longer than 2 s"
 
 
 @pytest.mark.anyio
 async def test_timeout_covers_the_resolver(registry: Registry, okta: Okta, spec: SpecIndex) -> None:
     async def slow(request: httpx2.Request) -> httpx2.Response:
-        await anyio.sleep(5)
+        await anyio.sleep(20)
         return httpx2.Response(200, json={})
 
-    ex = make(registry, okta, call_timeout=0.2, spec=spec)
+    ex = make(registry, okta, call_timeout=2, spec=spec)
     ex._client._http = new_http_client(httpx2.MockTransport(slow))  # pyright: ignore[reportPrivateUsage]
-    with anyio.fail_after(3):
+    with anyio.fail_after(8):
         out = await run(ex, who(READERS), "users", "get-groups", args={"user": "a@example.com"})
     failed(out, Code.TIMEOUT)
 
@@ -701,16 +701,6 @@ async def test_internal_error_for_a_url_off_the_org(
 @pytest.mark.anyio
 async def test_internal_error_for_a_principal_without_uid(ex: Executor, okta: Okta) -> None:
     failed(await run(ex, who(ADMINS, uid=""), "groups", "list"), Code.INTERNAL_ERROR)
-    assert okta.requests == []
-
-
-@pytest.mark.anyio
-async def test_internal_error_for_a_resolved_command_without_resolver(
-    registry: Registry, okta: Okta, spec: SpecIndex
-) -> None:
-    ex = make(registry, okta, with_resolver=False, spec=spec)
-    out = await run(ex, who(READERS), "users", "get-groups", args={"user": "a@example.com"})
-    failed(out, Code.INTERNAL_ERROR)
     assert okta.requests == []
 
 
@@ -978,6 +968,7 @@ async def test_q_ignoring_limit_is_reported_cut(registry: Registry, spec: SpecIn
     ex = make(registry, okta, spec=spec)
     out = await pages(ex, who(READERS), "groups", "list", args={"q": "Group"}, limit=1000)
     assert out["count"] == 250 and out["truncated"] == "non_resumable"
+    assert out["warnings"] == [UNPAGED_WARNING]
 
 
 @pytest.mark.anyio
@@ -1008,3 +999,113 @@ async def test_without_q_the_list_pages(registry: Registry, spec: SpecIndex) -> 
     ex = make(registry, okta, spec=spec)
     out = await pages(ex, who(READERS), "groups", "list", limit=1000)
     assert out["count"] == 250 and "truncated" not in out and len(okta.requests) == 2
+
+
+# --- 2.10 review ---
+
+
+@pytest.mark.anyio
+async def test_q_full_page_warns_with_the_default_limit(
+    registry: Registry, spec: SpecIndex
+) -> None:
+    # C1: the warning follows Okta's page length, not where the limit stopped reading.
+    okta = Okta(groups=250)
+    ex = make(registry, okta, spec=spec)
+    out = await pages(ex, who(READERS), "groups", "list", args={"q": "Group"})
+    assert out["count"] == 50 and out["truncated"] == "non_resumable"
+    assert out["warnings"] == [UNPAGED_WARNING]
+
+
+@pytest.mark.anyio
+async def test_q_full_page_warns_on_a_byte_cut(registry: Registry, spec: SpecIndex) -> None:
+    okta = Okta(groups=250)
+    ex = make(registry, okta, spec=spec, max_bytes=1024)
+    out = await pages(ex, who(READERS), "groups", "list", args={"q": "Group"}, limit=1000)
+    assert out["count"] < 200 and out["truncated"] == "non_resumable"
+    assert out["warnings"] == [UNPAGED_WARNING]
+
+
+@pytest.mark.anyio
+async def test_q_short_page_cut_by_limit_has_no_warning(
+    registry: Registry, spec: SpecIndex
+) -> None:
+    okta = Okta(groups=150)
+    ex = make(registry, okta, spec=spec)
+    out = await pages(ex, who(READERS), "groups", "list", args={"q": "Group"})
+    assert out["truncated"] == "non_resumable" and "warnings" not in out
+
+
+@pytest.mark.parametrize("timeout", [0.2, 1.0, 1.9])
+def test_call_timeout_must_exceed_the_list_headroom(
+    registry: Registry, okta: Okta, timeout: float
+) -> None:
+    # C3: at or under the 1 s soft stop every list would time out or come back cut.
+    with pytest.raises(ValueError, match="call_timeout"):
+        make(registry, okta, call_timeout=timeout)
+
+
+def test_resolver_required_when_a_command_resolves(registry: Registry, okta: Okta) -> None:
+    # C4: fail at startup, not per call.
+    with pytest.raises(ValueError, match="resolver"):
+        make(registry, okta, with_resolver=False)
+
+
+@pytest.mark.anyio
+async def test_hint_only_when_the_expression_is_the_cause(ex: Executor, okta: Okta) -> None:
+    # C5: `expand=stats` needs a raise the reader lacks; the search itself is fine.
+    args = {"expand": "stats", "search": 'profile.name sw "G"'}
+    out = failed(await run(ex, who(READERS), "groups", "list", args=args), Code.FORBIDDEN_BY_POLICY)
+    assert out.message == FORBIDDEN
+    assert okta.requests == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("domain", "command"),
+    [(["groups"], "list"), ("groups", ["list"]), ({"a": 1}, "list"), (None, None), (5, "get")],
+)
+async def test_non_string_names_are_refused_like_unknown_ones(
+    ex: Executor, okta: Okta, caplog: pytest.LogCaptureFixture, domain: Any, command: Any
+) -> None:
+    # S2: the same fixed refusal as an unknown command, nothing sent, nothing logged.
+    with caplog.at_level(logging.DEBUG, logger="okta_mcp"):
+        out = await run(ex, who(ADMINS), domain, command)
+    assert failed(out, Code.FORBIDDEN_BY_POLICY).message == FORBIDDEN
+    assert okta.requests == [] and caplog.text == ""
+
+
+@pytest.mark.anyio
+async def test_log_lines_carry_no_unbounded_caller_data(
+    ex: Executor, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.ERROR):
+        out = await run(ex, who(ADMINS, uid=""), "d" * 5000, "c" * 5000)
+    failed(out, Code.INTERNAL_ERROR)
+    assert caplog.text.count("c") < 200 and caplog.text.count("d") < 200
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("value", ["me.json", "me.", "ME;x", "me;", "a;b@example.com"])
+async def test_me_with_a_suffix_or_matrix_param_is_refused(
+    ex: Executor, okta: Okta, value: str
+) -> None:
+    # S1: in case Okta matches `/users/me.json` or `/users/me;x` as `/users/me`.
+    for command in ("get", "get-groups"):
+        out = await run(ex, who(READERS), "users", command, args={"user": value})
+        failed(out, Code.INVALID_ARGUMENTS)
+    assert okta.requests == []
+
+
+@pytest.mark.anyio
+async def test_login_with_dots_still_resolves(ex: Executor, okta: Okta) -> None:
+    okta.alice["profile"]["login"] = "alice.mel@example.com"
+    okta_login = "alice.mel@example.com"
+
+    def answer(request: httpx2.Request) -> httpx2.Response | None:
+        if unquote(request.url.path) == f"/api/v1/users/{okta_login}":
+            return httpx2.Response(200, json=okta.alice)
+        return None
+
+    okta.override = answer
+    out = await run(ex, who(READERS), "users", "get-groups", args={"user": okta_login})
+    assert out["count"] == 10

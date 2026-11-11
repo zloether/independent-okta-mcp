@@ -101,8 +101,8 @@ async def test_exact_login_ignoring_case(spec: SpecIndex, login: str) -> None:
 async def test_lookup_value_is_encoded_with_no_safe_characters(spec: SpecIndex) -> None:
     okta = Okta(httpx2.Response(404))
     with pytest.raises(NotFound):
-        await resolver(spec, okta).user_id("user", "a+b:c;d=e@example.com", {})
-    assert okta.paths == ["/api/v1/users/a%2Bb%3Ac%3Bd%3De%40example.com"]
+        await resolver(spec, okta).user_id("user", "a+b:c=e@example.com", {})
+    assert okta.paths == ["/api/v1/users/a%2Bb%3Ac%3De%40example.com"]
 
 
 @pytest.mark.anyio
@@ -164,14 +164,6 @@ async def test_me_is_refused_before_any_request(spec: SpecIndex, value: str) -> 
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("value", ["me", "ME"])
-async def test_me_gets_its_own_message(spec: SpecIndex, value: str) -> None:
-    # Said plainly, not as "another endpoint"; also refused if `OKTA_ALIASES` loses `me`.
-    with pytest.raises(InvalidArguments, match="must be a user ID or login, not me"):
-        await resolver(spec, Okta()).user_id("user", value, {})
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize("value", [*PAYLOADS, ALICE + "\n", ALICE + " "])
 async def test_path_rule_applies_to_the_lookup(spec: SpecIndex, value: object) -> None:
     okta = Okta()
@@ -209,3 +201,11 @@ def test_user_id_pattern() -> None:
     assert USER_ID.fullmatch(ALICE)
     assert not USER_ID.fullmatch(ALICE + "\n")
     assert not USER_ID.fullmatch("00u1alice0000000000")
+
+
+@pytest.mark.anyio
+async def test_me_message_is_the_path_rules(spec: SpecIndex) -> None:
+    # C7: one check, one message, from the path rule; the resolver has no second copy.
+    with pytest.raises(InvalidArguments) as e:
+        await resolver(spec, Okta()).user_id("user", "me", {})
+    assert str(e.value) == "arg 'user' is the name of another endpoint, not an ID"
