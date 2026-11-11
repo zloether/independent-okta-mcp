@@ -457,3 +457,51 @@ def test_reserved_name_with_a_suffix_or_semicolon_is_refused(
 @pytest.mark.parametrize("value", ["alice.me@example.com", "meg.ryan@example.com", "rulesx.y"])
 def test_dotted_values_not_starting_with_a_reserved_name_pass(value: str) -> None:
     path_segment("x", value, frozenset({"me", "rules"}))
+
+
+def _search_apps(spec: SpecIndex) -> Command:
+    registry = build_registry(
+        {
+            "apps.yaml": {
+                "domain": "apps",
+                "description": "Apps.",
+                "commands": {
+                    "search": {
+                        "operation": "listApplicationsBySearch",
+                        "summary": "Search apps",
+                        "args": {
+                            "q": {"query": "q", "arg_rule": {"reviewed": "app name"}},
+                            "labels": {"query": "labels"},
+                        },
+                        "paginate": "link",
+                        "page_size": 100,
+                        "view": ["id", "label"],
+                        "data_classes": ["org-config"],
+                    }
+                },
+            }
+        },
+        spec,
+    )
+    return registry.domains["apps"].commands["search"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"q": "\ud800"},
+        {"q": "a\udfffb"},
+        {"labels": ["\ud800" * 20]},
+        {"labels": ["lbco3v6xlwdtEX2il1d6", "lbco3v6xlwdtEX2il1d\udc00"]},
+    ],
+)
+def test_query_values_that_are_not_utf8_are_refused(spec: SpecIndex, args: dict[str, Any]) -> None:
+    # A lone surrogate can't be encoded for the URL; refused in validation, naming the arg.
+    with pytest.raises(InvalidArguments, match=f"arg '{next(iter(args))}'") as e:
+        check_args(_search_apps(spec), args)
+    assert "\ud800" not in str(e.value)
+
+
+@pytest.mark.parametrize("q", ["\x00", "é", "\N{GRINNING FACE}", "a b"])
+def test_other_query_strings_are_accepted_as_before(spec: SpecIndex, q: str) -> None:
+    check_args(_search_apps(spec), {"q": q})

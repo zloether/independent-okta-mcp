@@ -42,9 +42,12 @@ SYNOPSIS_MAX = 60
 """Cap on `usage + "  " + summary` (T1 D1); column padding in the tool description is extra."""
 _OPTIONS_MAX = 20
 QUERY_LENGTH_MAX = 4096
-"""Longest string query value, or array item. Okta filter expressions and names fit in far
-less, and the bound keeps the request URL under httpx2's 64 KiB limit, so an oversized arg is
-`invalid_arguments` from validation (and shown by `okta_help`), not a client error later."""
+"""Longest string query value, or array item, in characters. Okta filter expressions and names
+fit in far less, so a runaway arg is `invalid_arguments` from validation (and the bound is shown
+by `okta_help`). It keeps one ASCII arg well under httpx2's 64 KiB URL limit, but not every
+call: percent-encoding grows non-ASCII up to 12 times, and args add up, so for combined or
+non-ASCII args the executor's `InvalidURL` catch (also `invalid_arguments`) is the expected
+path."""
 # Spec schema keywords that constrain a value; descriptions, examples, defaults and the spec's
 # prose `format`s are dropped.
 _KEEP = ("type", "enum", "pattern", "minimum", "maximum", "minLength", "maxLength", "maxItems")

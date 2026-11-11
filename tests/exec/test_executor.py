@@ -1124,6 +1124,8 @@ async def test_login_with_dots_still_resolves(ex: Executor, okta: Okta) -> None:
         {"filter": "x" * 10_000},
         {1: "x"},
         {("t",): "x"},
+        {"q": "\ud800"},  # a lone surrogate can't be sent (UTF-8)
+        {"filter": 'type eq "\udfff"'},
     ],
 )
 async def test_oversized_or_odd_args_are_invalid_not_internal(

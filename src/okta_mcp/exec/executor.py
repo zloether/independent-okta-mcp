@@ -206,9 +206,11 @@ class Executor:
             return await self._execute(call)
         except (InvalidArguments, CursorError) as e:
             return Failure(Code.INVALID_ARGUMENTS, str(e))
-        except httpx2.InvalidURL:
-            # Raised by the client before anything is sent, for a URL its args make too long;
-            # the schema's length bounds should keep this from happening.
+        except httpx2.InvalidURL as e:
+            # Raised by the client before anything is sent, for a URL its args make too long
+            # (combined or non-ASCII args can pass the per-arg bound). Logged by type only, so
+            # a path-rule regression relabelled as the caller's error still leaves a trace.
+            log.debug("request URL refused by the HTTP client: %s", type(e).__name__)
             return Failure(Code.INVALID_ARGUMENTS, TOO_LONG)
         except NotFound as e:
             return Failure(Code.NOT_FOUND, str(e))

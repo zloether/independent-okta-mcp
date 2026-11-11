@@ -88,6 +88,14 @@ def check_args(command: Command, args: object) -> None:
             and (param := entry.args[name].path_param) is not None
             and (problem := _path_problem(value, reserved.get(param, frozenset()))) is not None
         }
+        problems |= {
+            f"arg {name!r} must be valid Unicode text (no lone surrogates)"
+            for name, value in cast(Mapping[object, object], args).items()
+            if isinstance(name, str)
+            and name in entry.args
+            and entry.args[name].query is not None
+            and not _encodable(value)
+        }
     if problems:
         raise InvalidArguments("; ".join(sorted(problems)))
 
@@ -116,6 +124,18 @@ def build_request(
     if entry.page_size is not None:
         params["limit"] = str(entry.page_size)
     return build_url(org_url, command.operation.path, segments), params
+
+
+def _encodable(value: object) -> bool:
+    """A query value, or every item of one, can be sent as UTF-8 (a lone surrogate can't)."""
+    items = cast(list[object], value) if isinstance(value, list) else [value]
+    for item in items:
+        if isinstance(item, str):
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                return False
+    return True
 
 
 def _query_value(value: object) -> str:
