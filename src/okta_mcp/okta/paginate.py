@@ -13,7 +13,7 @@ from typing import Any, Literal, cast
 
 import httpx2
 
-from okta_mcp.okta.client import OktaClient
+from okta_mcp.okta.client import OktaClient, on_origin
 
 Mode = Literal["link", "body_links", "link_or_body", "none"]
 
@@ -78,7 +78,6 @@ async def paginate(
     `OktaClient.get` raises."""
     response = await client.get(url, params)
     first = response.url
-    origin = (first.scheme, first.host, first.port)
     path = normalise_path(_raw_path(first))
     while True:
         try:
@@ -98,8 +97,7 @@ async def paginate(
             target = None
         if (
             target is None
-            or (target.scheme, target.host, target.port) != origin
-            or target.userinfo
+            or not on_origin(target, first)
             or normalise_path(_raw_path(target)) != path
         ):
             raise PaginationError("Okta's next link is not on the operation's path")

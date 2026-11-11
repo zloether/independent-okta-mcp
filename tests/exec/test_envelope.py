@@ -488,3 +488,48 @@ def test_item_result_over_max_bytes() -> None:
     assert item_result(body, RULES, links=False, cols=None, max_bytes=size)
     with pytest.raises(ResultTooLarge, match="over 99 bytes"):
         item_result(body, RULES, links=False, cols=None, max_bytes=99)
+
+
+# --- unpaged queries (`unpaged_args`): Okta's page may be its own cut ---
+
+
+@pytest.mark.anyio
+async def test_unpaged_full_page_is_reported_cut() -> None:
+    out = await result([group(i) for i in range(5)], next_cursor=None, unpaged_limit=5)
+    assert out["count"] == 5
+    assert out["truncated"] == "non_resumable"
+    assert out["warnings"] == [envelope.UNPAGED_WARNING]
+
+
+@pytest.mark.anyio
+async def test_unpaged_short_page_is_complete() -> None:
+    out = await result([group(i) for i in range(4)], next_cursor=None, unpaged_limit=5)
+    assert out["count"] == 4 and "truncated" not in out and "warnings" not in out
+
+
+@pytest.mark.anyio
+async def test_unpaged_full_page_seen_on_the_read_past_limit() -> None:
+    out = await result([group(i) for i in range(5)], next_cursor=None, unpaged_limit=5, limit=4)
+    assert out["truncated"] == "non_resumable"
+    assert out["warnings"] == [envelope.UNPAGED_WARNING]
+
+
+@pytest.mark.anyio
+async def test_unpaged_warning_keeps_other_warnings_and_fits_the_budget() -> None:
+    items = [group(i, "x" * 30) for i in range(40)]
+    for max_bytes in range(1024, 3000, 97):
+        out = await result(
+            items,
+            next_cursor=None,
+            unpaged_limit=40,
+            max_bytes=max_bytes,
+            warnings=["first"],
+        )
+        assert out["warnings"][0] == "first"
+        assert out["truncated"] == "non_resumable"
+
+
+@pytest.mark.anyio
+async def test_unpaged_query_cant_be_resumable() -> None:
+    with pytest.raises(ValueError, match="resumable"):
+        await result([group(1)], unpaged_limit=5)

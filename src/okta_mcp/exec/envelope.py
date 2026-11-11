@@ -25,6 +25,8 @@ Truncated = Literal["max_items", "max_bytes", "deadline", "non_resumable"]
 _DEADLINE_HEADROOM = 1.0
 """Time left before the call's deadline when a resumable list stops, to build the response."""
 _LONGEST_REASON: Truncated = "non_resumable"
+UNPAGED_WARNING = "Okta doesn't page this query and returned a full page; narrow it to see the rest"
+"""For `warnings` when an unpaged query (`unpaged_args`) may have been cut by Okta."""
 
 
 class ResultTooLarge(Exception):
@@ -81,6 +83,7 @@ async def list_result(
     max_bytes: int,
     next_cursor: Callable[[str, int], str] | None,
     warnings: Sequence[str] = (),
+    unpaged_limit: int | None = None,
 ) -> str:
     """A list from `paginate`'s `items`: `rows` of `cols` cells, or with `cols` `None` whole
     `items`. One item past `limit` is read to tell whether the list is complete, which can cost
@@ -92,9 +95,18 @@ async def list_result(
     the last delivered item's cursor as `next_cursor`, and every row is charged for its cursor,
     so a list that only just fits may be cut where it would have been complete. A non-resumable
     list is never cut by the deadline (the call times out instead) and reports any other cut as
-    `non_resumable`. `warnings` are added as given. Raises `ResultTooLarge` if not even the first
+    `non_resumable`. `warnings` are added as given.
+
+    `unpaged_limit` is for a query Okta doesn't page (`unpaged_args`; the call must not be
+    resumable): the `limit` sent. A page of that many items may be Okta's cut, with no next link
+    to say so, so a list that holds one is reported `non_resumable` with `UNPAGED_WARNING` even
+    when every item was delivered. Raises `ResultTooLarge` if not even the first
     item fits, `TimeoutError` if the deadline comes before it, and whatever `items` raises."""
     resumable = next_cursor is not None
+    if resumable and unpaged_limit is not None:
+        raise ValueError("an unpaged query can't be resumable")
+    if unpaged_limit is not None:
+        warnings = (*warnings, UNPAGED_WARNING)  # reserved; dropped below if Okta's page isn't full
     # Reserve the envelope at its largest, so the final text fits whatever count and reason.
     budget = max_bytes - len(_head(limit, cols)) - len(_tail(_LONGEST_REASON, None, warnings))
     if budget < 0:  # A long `select` alone can fill it; fail before any Okta request.
@@ -103,6 +115,7 @@ async def list_result(
     used = 0
     cursor: str | None = None
     truncated: Truncated | None = None
+    full_page = False  # Okta returned `unpaged_limit` items in one page
     deadline = anyio.current_effective_deadline() - _DEADLINE_HEADROOM if resumable else math.inf
     async with aclosing(items):
         with anyio.CancelScope(deadline=deadline) as scope:
@@ -111,6 +124,7 @@ async def list_result(
                     item, page, index = await anext(items)
                 except StopAsyncIteration:
                     break
+                full_page |= unpaged_limit is not None and index + 1 >= unpaged_limit
                 row = dumps(render(item, rules, links=links, cols=cols))
                 size = len(row) + (1 if rows else 0)
                 here = None if next_cursor is None else next_cursor(page, index)
@@ -125,7 +139,8 @@ async def list_result(
             if truncated is None and len(rows) == limit:
                 truncated = "max_items"
                 try:
-                    await anext(items)
+                    _, _, index = await anext(items)
+                    full_page |= unpaged_limit is not None and index + 1 >= unpaged_limit
                 except StopAsyncIteration:
                     truncated = None
                 except (UpstreamError, RateLimited, PaginationError):
@@ -135,6 +150,11 @@ async def list_result(
             if not rows:
                 raise TimeoutError("deadline reached before the first item")
             truncated = "deadline"
+    if unpaged_limit is not None:
+        if full_page:
+            truncated = truncated or "non_resumable"
+        else:
+            warnings = warnings[:-1]
     if truncated is not None and not resumable:
         truncated = "non_resumable"
     return _head(len(rows), cols) + ",".join(rows) + _tail(truncated, cursor, warnings)

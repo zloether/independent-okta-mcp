@@ -258,8 +258,9 @@ def _is_var(segment: str) -> bool:
 def _reserved(path: str, paths: list[tuple[str, ...]]) -> dict[str, frozenset[str]]:
     """See `Operation.reserved`. A prefix is compatible when each segment before the parameter
     is equal in both paths or a variable in either, so the set errs on the large side: it also
-    holds literals of longer paths and of paths with only non-GET operations (`me` for
-    `/api/v1/users/{id}`)."""
+    holds literals of longer paths and of paths with only non-GET operations. Names Okta routes
+    that no spec path lists (`me` for `/api/v1/users/{id}`) aren't here; `exec.params.reserved_for`
+    adds them."""
     template = _segments(path)
     reserved: dict[str, frozenset[str]] = {}
     for i, segment in enumerate(template):

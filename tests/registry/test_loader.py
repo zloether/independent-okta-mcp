@@ -336,6 +336,19 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
     ),
     "page-size-without-limit": (_with(GET, page_size=10), "has no limit param"),
     "unknown-unless-arg": (_with(GET, resumable={"unless_args": ["x"]}), "unknown arg x"),
+    "unknown-unpaged-arg": (_with(GET_GROUPS, unpaged_args=["x"]), "unpaged_args: unknown arg x"),
+    "unpaged-without-page-size": (
+        _with(GET_GROUPS, unpaged_args=["user"], page_size=None),
+        "unpaged_args needs page_size",
+    ),
+    "unpaged-on-single-resource": (
+        _with(GET, unpaged_args=["user"]),
+        "unpaged_args set on a single-resource command",
+    ),
+    "unpaged-duplicates": (
+        _with(GET_GROUPS, unpaged_args=["user", "user"]),
+        "unpaged_args has duplicates",
+    ),
     # Check 3
     "no-scope-set": (
         {

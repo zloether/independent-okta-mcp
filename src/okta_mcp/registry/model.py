@@ -169,6 +169,10 @@ class CommandEntry(_Model):
     view: tuple[str, ...] | None = Field(default=None, min_length=1)
     data_classes: tuple[DataClass, ...] = Field(min_length=1)
     resumable: bool | Resumable = True
+    unpaged_args: tuple[str, ...] = ()
+    """Args with which Okta doesn't page the list (`listGroups` `q`): no next link, and a result
+    cut at `page_size` gives no sign of it. A call that passes one is read as one page, is never
+    resumable, and is reported truncated when Okta returns a full page (design §7.2)."""
     okta_scopes_override: ScopesOverride | None = None
     response_override: ResponseOverride | None = None
     handler: str | None = None

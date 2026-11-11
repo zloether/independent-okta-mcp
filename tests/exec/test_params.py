@@ -3,7 +3,7 @@ from typing import Any
 import httpx2
 import pytest
 
-from okta_mcp.exec.params import build_request, build_url, path_segment
+from okta_mcp.exec.params import build_request, build_url, check_args, path_segment, reserved_for
 from okta_mcp.okta.client import OktaClient, new_http_client
 from okta_mcp.okta.token import ServiceToken
 from okta_mcp.registry.loader import Command, build_registry, load_registry
@@ -359,3 +359,62 @@ def test_build_url_checks_template_and_origin() -> None:
     assert build_url(ORG, template, {"groupId": "00g1", "roleAssignmentId": "r1"}) == (
         f"{ORG}/api/v1/groups/00g1/roles/r1"
     )
+
+
+def _user_params() -> list[tuple[str, str]]:
+    """Every (operation, path param) of the pinned spec whose param follows a `users` segment."""
+    return [
+        (op.operation_id, param)
+        for op in load_spec().operations.values()
+        for param in op.params
+        if f"/users/{{{param}}}" in op.path
+    ]
+
+
+@pytest.mark.parametrize("case", _user_params(), ids="-".join)
+def test_me_is_refused_after_users_for_every_spec_path_param(
+    case: tuple[str, str], spec: SpecIndex
+) -> None:
+    # `/api/v1/users/me` is the token's own user and no spec path lists it (2026-11-10 review).
+    op_id, param = case
+    reserved = reserved_for(spec.operations[op_id], param)
+    assert "me" in reserved
+    for value in ("me", "ME", "Me", "\N{FULLWIDTH LATIN SMALL LETTER M}e"):
+        with pytest.raises(InvalidArguments, match=f"arg '{param}' is the name of another"):
+            path_segment(param, value, reserved)
+
+
+def test_user_params_are_found(spec: SpecIndex) -> None:
+    cases = _user_params()
+    assert ("getUser", "id") in cases and ("listFactors", "userId") in cases
+    assert len(cases) > 20
+
+
+def test_me_is_not_reserved_elsewhere(spec: SpecIndex) -> None:
+    assert "me" not in reserved_for(spec.operations["getGroup"], "groupId")
+    assert "me" not in reserved_for(spec.operations["getNetworkZone"], "zoneId")
+    # Second param of a users path: not right after `users`.
+    assert "me" not in reserved_for(spec.operations["getFactor"], "factorId")
+
+
+def test_build_request_refuses_me_on_an_unpatterned_user_path(spec: SpecIndex) -> None:
+    get = _unpatterned(spec)["users get"]
+    with pytest.raises(InvalidArguments, match="arg 'user' is the name of another endpoint"):
+        build_request(get, {"user": "me"}, ORG)
+    url, _ = build_request(get, {"user": "mel@example.com"}, ORG)
+    assert url == f"{ORG}/api/v1/users/mel%40example.com"
+
+
+@pytest.mark.parametrize("args", [None, "x", ["group"], 5])
+def test_check_args_refuses_non_objects(spec: SpecIndex, args: object) -> None:
+    get = load_registry(spec).domains["groups"].commands["get"]
+    with pytest.raises(InvalidArguments):
+        check_args(get, args)
+
+
+def test_check_args_reports_schema_and_path_problems(spec: SpecIndex) -> None:
+    get = load_registry(spec).domains["groups"].commands["get"]
+    with pytest.raises(InvalidArguments) as e:
+        check_args(get, {"group": "a/b", "x": 1})
+    assert "'group'" in str(e.value) and "'x'" in str(e.value)
+    check_args(get, {"group": "00g1emaKYZTWRYYRRTSK"})

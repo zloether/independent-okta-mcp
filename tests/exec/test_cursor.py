@@ -1,4 +1,5 @@
 import base64
+import dataclasses
 import hashlib
 import hmac
 import json
@@ -469,6 +470,13 @@ def test_resumable_by_registry_rule(registry: Registry) -> None:
     assert resumable(groups["list"], {"search": 'profile.name sw "A"'})
     assert not resumable(groups["list"], {"q": "Sales"})  # `unless_args: [q]`
     assert not resumable(groups["get"], {"group": GROUP})  # not a list
+
+
+def test_never_resumable_with_an_unpaged_arg(registry: Registry) -> None:
+    command = registry.domains["groups"].commands["list"]
+    entry = command.entry.model_copy(update={"resumable": True})
+    command = dataclasses.replace(command, entry=entry)
+    assert resumable(command, {}) and not resumable(command, {"q": "Sales"})
 
 
 # --- end to end: cut, resume, cut again ---

@@ -49,8 +49,16 @@ def new_http_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx
     )
 
 
-def _origin(url: httpx2.URL) -> tuple[str, str, int | None, str]:
-    return url.scheme, url.host, url.port, url.userinfo.decode()
+def on_origin(url: httpx2.URL, origin: httpx2.URL) -> bool:
+    """`url` has `origin`'s scheme, host and port, and no userinfo. The one origin check, used
+    by the client before a token is attached, by `paginate` on next links, and by
+    `exec.params.build_url` and `exec.cursor.resume_url` on the URLs they build (design §6.4,
+    §6.5). httpx2 has already lower-cased the host and dropped a default port."""
+    return (url.scheme, url.host, url.port) == (
+        origin.scheme,
+        origin.host,
+        origin.port,
+    ) and not url.userinfo
 
 
 class OktaClient:
@@ -70,7 +78,7 @@ class OktaClient:
         to Okta, nonce and 429 retries included: before the slot and the token are taken, and
         for a 429 retry before the wait. What it raises propagates."""
         self._http = http
-        self._origin = _origin(httpx2.URL(org_url))
+        self._origin = httpx2.URL(org_url)
         self._tokens = tokens
         self._dpop = dpop
         self._slots = anyio.Semaphore(max_inflight)
@@ -86,7 +94,7 @@ class OktaClient:
             target = httpx2.URL(url)
         except httpx2.InvalidURL:
             target = None
-        if target is None or _origin(target) != self._origin:
+        if target is None or not on_origin(target, self._origin):
             raise OriginError("URL is not on the Okta org")
         if params:
             target = target.copy_merge_params(params)
