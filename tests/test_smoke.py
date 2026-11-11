@@ -11,13 +11,13 @@ def test_version() -> None:
 
 
 def test_main_prints_version(capsys) -> None:
-    assert main() == 0
+    assert main(["--version"]) == 0
     assert capsys.readouterr().out.strip() == f"okta-mcp {okta_mcp.__version__}"
 
 
 def test_module_entrypoint_exits_zero() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "okta_mcp"], capture_output=True, text=True, check=False
+        [sys.executable, "-m", "okta_mcp", "--version"], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0
 

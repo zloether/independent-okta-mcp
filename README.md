@@ -8,6 +8,28 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server for the O
 - [Implementation plan](docs/implementation-plan.md)
 - [Okta setup](docs/okta-setup.md)
 
+## Local dev mode (stdio)
+
+For trying the pilot domains against a dev org from an MCP client on your own machine. There is no authentication: the caller is the principal in a file, checked by the normal policy. Refused when `MCP_ENV=production`; the HTTP app never runs this way.
+
+```yaml
+# principal.yaml: who you are to the policy
+uid: 00u1abcdEFGH2ijkl345        # your Okta user ID
+sub: you@example.com
+groups: [00g1readers000000000]   # group IDs your policy maps to roles
+```
+
+```
+MCP_DEV_MODE=1 MCP_DEV_PRINCIPAL_FILE=principal.yaml \
+MCP_POLICY_FILE=tests/policy/fixtures/pilot.yaml \
+MCP_CURSOR_KEY="$(openssl rand -base64 32)" \
+OKTA_ORG_URL=https://your-org.okta.com OKTA_SCOPES="okta.groups.read okta.networkZones.read" \
+OKTA_API_TOKEN_FILE=okta-token.txt \
+uv run okta-mcp --stdio
+```
+
+Use a read-only admin's API token, or the service app (`OKTA_CLIENT_ID`, `OKTA_PRIVATE_KEY_FILE`) instead of `OKTA_API_TOKEN_FILE`. In a client config, pass the same variables as the server's environment; set `MCP_CURSOR_KEY` to a fixed value there, or cursors stop working at each restart.
+
 ## License
 
 Apache-2.0 with the Commons Clause: free to use and modify, not to sell. See [LICENSE](LICENSE).
