@@ -72,8 +72,8 @@ def test_sensitivity(registry: Registry) -> None:
 
 def test_free_form_filter_rules(registry: Registry) -> None:
     # Step 3.2 decision: a filter over a closed set of returned fields leaves sensitivity
-    # alone and says why. A `search` that matches any profile attribute stays raising: it can
-    # match a custom attribute scrub.yaml redacts by key name (3.2 security review).
+    # alone and says why. A `search` that matches any profile attribute is forbidden: it can
+    # match a custom attribute scrub.yaml redacts by key name (3.2 reviews).
     rules = {
         (domain, cmd.name, name): arg.arg_rule
         for domain in PILOTS
@@ -83,15 +83,18 @@ def test_free_form_filter_rules(registry: Registry) -> None:
     }
     reviewed = {k for k, r in rules.items() if r is not None and r.reviewed}
     raising = {k for k, r in rules.items() if r is not None and r.raises_sensitivity_to}
+    forbidden = {k for k, r in rules.items() if r is not None and r.forbidden}
     assert reviewed == {
         ("groups", "list", "q"),
         ("groups", "list", "filter"),
-        ("groups", "get-owners", "filter"),
         ("groups", "list-rules", "search"),
         ("network-zones", "list", "filter"),
     }
-    assert raising == {("groups", "list", "search"), ("groups", "get-members", "search")}
-    assert reviewed | raising == set(rules)
+    # `resolved eq false` returns owners the default call leaves out.
+    assert raising == {("groups", "get-owners", "filter")}
+    # Redaction is the same for every role, so no role may probe around it.
+    assert forbidden == {("groups", "list", "search"), ("groups", "get-members", "search")}
+    assert reviewed | raising | forbidden == set(rules)
 
 
 def test_only_filters_are_reviewed(registry: Registry) -> None:

@@ -10,9 +10,10 @@ commands:
         query: filter
         arg_rule: {reviewed: "closed set (id, type, lastUpdated, lastMembershipUpdated), all returned"}
       # `search` matches any profile attribute, custom ones too. scrub.yaml redacts by key name
-      # (a custom `apiKey`, `secret`, `token`), and `sw` would read such a value back a
-      # character at a time, so it is not `reviewed`.
-      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      # for every role (a custom `apiKey`, `secret`, `token`), and `sw` would read such a value
+      # back a character at a time. No role may pass it until the executor can check the
+      # expression's property names (plan 3.2, option b).
+      search: {query: search, arg_rule: {forbidden: true}}
       # `stats` includes `hasAdminPrivlege`, admin-role data.
       expand:
         query: expand
@@ -40,7 +41,7 @@ commands:
     args:
       group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
       # Any user profile attribute, as for `list` above: an oracle for redacted ones.
-      search: {query: search, arg_rule: {raises_sensitivity_to: sensitive}}
+      search: {query: search, arg_rule: {forbidden: true}}
       expand: {query: expand, allowed_values: [group-rules, login-status-info]}
     paginate: link
     page_size: 200
@@ -62,8 +63,8 @@ commands:
     summary: Owners of a group
     args:
       group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
-      # `resolved eq false` adds owners the default call leaves out: same fields, same class.
-      filter: {query: filter, arg_rule: {reviewed: "closed set (type, resolved), both returned"}}
+      # `resolved eq false` adds owners the default call leaves out, so this one widens.
+      filter: {query: filter, arg_rule: {raises_sensitivity_to: sensitive}}
     paginate: link
     page_size: 200
     view: [id, type, displayName, resolved]

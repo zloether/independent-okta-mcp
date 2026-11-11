@@ -524,18 +524,48 @@ def test_failure_modes(spec: SpecIndex, cmd: dict[str, Any], message: str) -> No
     assert message in str(e.value)
 
 
-def test_reviewed_filter_loads_and_satisfies_check_6(spec: SpecIndex) -> None:
-    cmd = {
+def _users(rule: dict[str, Any], arg: str = "search") -> dict[str, Any]:
+    return {
         "operation": "listUsers",
         "summary": "Users",
-        "args": {
-            "search": {"query": "search", "arg_rule": {"reviewed": "matches returned fields"}}
-        },
+        "args": {arg: {"query": arg, "arg_rule": rule}},
         "paginate": "link",
         "view": ["id"],
         "data_classes": ["pii"],
     }
-    rule = _build(spec, list=cmd).domains["users"].commands["list"].entry.args["search"].arg_rule
+
+
+@pytest.mark.parametrize("operation", ["listUsers", "listGroups", "listGroupUsers"])
+def test_profile_search_cannot_be_reviewed(spec: SpecIndex, operation: str) -> None:
+    cmd = _users({"reviewed": "narrows the list"})
+    cmd["operation"] = operation
+    if operation == "listGroupUsers":
+        cmd["args"]["group"] = {"path_param": "groupId"}
+    cmd["page_size"] = 200
+    with pytest.raises(RegistryError) as e:
+        _build(spec, list=cmd)
+    assert e.value.errors == [
+        f"users.yaml: list: arg search: search on {operation} matches any profile attribute, "
+        "so it can't be reviewed; use forbidden"
+    ]
+    for rule in ({"forbidden": True}, {"raises_sensitivity_to": "sensitive"}):
+        cmd["args"]["search"]["arg_rule"] = rule
+        _build(spec, list=cmd)
+
+
+def test_same_operation_differing_only_in_reviewed_reason_is_one_classification(
+    spec: SpecIndex,
+) -> None:
+    a, b = _users({"reviewed": "matches name"}, "q"), _users({"reviewed": "matches the name"}, "q")
+    with pytest.raises(RegistryError, match="share a classification"):
+        _build(spec, list=a, find=b)
+    # A different rule form is a different classification.
+    _build(spec, list=a, find=_users({"raises_sensitivity_to": "sensitive"}, "q"))
+
+
+def test_reviewed_filter_loads_and_satisfies_check_6(spec: SpecIndex) -> None:
+    cmd = _users({"reviewed": "matches returned fields"}, "q")
+    rule = _build(spec, list=cmd).domains["users"].commands["list"].entry.args["q"].arg_rule
     assert rule is not None
     assert (rule.reviewed, rule.raises_sensitivity_to, rule.forbidden) == (
         "matches returned fields",

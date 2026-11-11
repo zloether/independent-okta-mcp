@@ -10,11 +10,9 @@ from okta_mcp.policy.loader import PolicyError, build_policy, load_policy
 from okta_mcp.registry.loader import Registry, load_registry
 from okta_mcp.registry.spec import load_spec
 
-PILOT = Path(__file__).parent / "fixtures" / "pilot.yaml"
-G1, G2 = "00g1readers000000000", "00g1helpdsk000000000"
-GROUPS_NORMAL = {"list", "get", "get-members", "get-apps", "get-owners", "list-rules", "get-rule"}
-GROUPS_SENSITIVE = {"list-roles", "get-role", "list-role-app-targets", "list-role-group-targets"}
-ZONES = {("network-zones", "list"), ("network-zones", "get")}
+from ._pilot import GROUPS_NORMAL, GROUPS_SENSITIVE, HELPDESK, PILOT, READERS, ZONES
+
+G1, G2 = READERS, HELPDESK
 
 
 def _doc(**roles: dict[str, Any]) -> dict[str, Any]:

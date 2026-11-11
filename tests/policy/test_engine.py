@@ -3,7 +3,6 @@ import dataclasses
 import itertools
 import random
 from collections.abc import Iterator
-from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
@@ -16,16 +15,21 @@ from okta_mcp.policy.model import Grant, Policy
 from okta_mcp.registry.loader import Command, Domain, Registry
 from okta_mcp.registry.model import ArgRule
 
-PILOT = Path(__file__).parent / "fixtures" / "pilot.yaml"
-READERS, HELPDESK = "00g1readers000000000", "00g1helpdsk000000000"
-ANALYSTS, ADMINS = "00g1secanalyst000000", "00g1abc2defGHI3jkL45"
+from ._pilot import (
+    ADMINS,
+    ANALYSTS,
+    GROUPS_NORMAL,
+    GROUPS_SENSITIVE,
+    HELPDESK,
+    PILOT,
+    READERS,
+    ZONES,
+)
+
 STRANGERS = "00g9nobody0000000000"
 G1, G2, G3 = "00g1aaaaaaaaaaaaaaaa", "00g2bbbbbbbbbbbbbbbb", "00g3cccccccccccccccc"
 GROUP = "00g1emaKYZTWRYYRRTSK"
 
-GROUPS_NORMAL = {"list", "get", "get-members", "get-apps", "get-owners", "list-rules", "get-rule"}
-GROUPS_SENSITIVE = {"list-roles", "get-role", "list-role-app-targets", "list-role-group-targets"}
-ZONES = {("network-zones", "list"), ("network-zones", "get")}
 ALL_SCOPES = frozenset({"okta.groups.read", "okta.roles.read", "okta.networkZones.read"})
 
 ALLOWED, FORBIDDEN, UNAVAILABLE = Verdict.ALLOWED, Verdict.FORBIDDEN, Verdict.UNAVAILABLE
@@ -114,24 +118,51 @@ def test_wildcard_roles_can_use_reviewed_filters(engine: Engine) -> None:
         who = _who(group)
         for arg in ("q", "filter"):
             assert engine.check(who, "groups", "list", {arg: "x"}) is ALLOWED
-        assert engine.check(who, "groups", "get-owners", {"group": GROUP, "filter": "x"}) is (
-            ALLOWED
-        )
         assert engine.check(who, "groups", "list-rules", {"search": "x"}) is ALLOWED
     assert engine.check(_who(HELPDESK), "network-zones", "list", {"filter": "x"}) is ALLOWED
 
 
-def test_profile_search_stays_out_of_reach_of_a_plain_wildcard(engine: Engine) -> None:
-    # `search` matches any profile attribute, so it can probe one scrub.yaml redacts.
+def test_profile_search_is_refused_for_every_role(engine: Engine, pilot: Registry) -> None:
+    # `search` matches any profile attribute, so it can probe one scrub.yaml redacts, and
+    # that redaction holds whatever the role: sensitivity is the wrong gate for it.
+    named = _engine(
+        pilot,
+        r={"groups": [G1], "allow": {"groups": ["list", "get-members"]}},
+        all={"groups": [G2], "allow": {"*": ["*"]}, "include_sensitive": ["*"]},
+    )
+    callers = [(engine, _who(g)) for g in (READERS, HELPDESK, ANALYSTS, ADMINS)]
+    for e, who in [*callers, (named, _who(G1)), (named, _who(G2)), (named, _who(G1, G2))]:
+        assert e.check(who, "groups", "list", {"search": "x"}) is FORBIDDEN
+        assert e.check(who, "groups", "list", {"q": "x", "search": "x"}) is FORBIDDEN
+        assert e.check(who, "groups", "get-members", {"group": GROUP, "search": "x"}) is (FORBIDDEN)
+        assert e.check(who, "groups", "list", {"q": "x"}) is ALLOWED
+
+
+def test_owner_filter_widens_so_it_raises(engine: Engine) -> None:
+    args = {"group": GROUP, "filter": "resolved eq false"}
     for group in (READERS, HELPDESK):
-        who = _who(group)
-        assert engine.check(who, "groups", "list", {"search": "x"}) is FORBIDDEN
-        assert engine.check(who, "groups", "list", {"q": "x", "search": "x"}) is FORBIDDEN
-        assert engine.check(who, "groups", "get-members", {"group": GROUP, "search": "x"}) is (
-            FORBIDDEN
-        )
+        assert engine.check(_who(group), "groups", "get-owners", args) is FORBIDDEN
     for group in (ANALYSTS, ADMINS):
-        assert engine.check(_who(group), "groups", "list", {"search": "x"}) is ALLOWED
+        assert engine.check(_who(group), "groups", "get-owners", args) is ALLOWED
+
+
+def test_arg_that_is_not_exposed_is_refused(registry: Registry) -> None:
+    # `allowed_values: []` hides an arg; the schema rejects it, and so does the engine.
+    entry = registry.domains["groups"].commands["list"].entry
+    hidden = entry.args["sort_order"].model_copy(update={"allowed_values": ()})
+    args = MappingProxyType({**entry.args, "sort_order": hidden})
+    reg = _replace(registry, ("groups", "list"), entry=entry.model_copy(update={"args": args}))
+    e = _engine(reg, r={"groups": [G1], "allow": {"*": ["*"]}, "include_sensitive": ["*"]})
+    assert e.check(_who(G1), "groups", "list", {"sort_order": "asc"}) is FORBIDDEN
+    assert e.check(_who(G1), "groups", "list", {"sort_by": "x"}) is ALLOWED
+
+
+@pytest.mark.parametrize(
+    "groups", [["00g1readers000000000"], "00g1readers000000000", None, frozenset({1}), set()]
+)
+def test_principal_refuses_groups_that_are_not_a_frozenset_of_strings(groups: Any) -> None:
+    with pytest.raises(TypeError, match="frozenset of strings"):
+        Principal(uid="00u1", sub="a@example.com", groups=groups)
 
 
 def test_plain_wildcard_does_not_reach_a_raising_arg(engine: Engine) -> None:

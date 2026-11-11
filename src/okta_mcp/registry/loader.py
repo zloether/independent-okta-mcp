@@ -194,11 +194,19 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
         if arg.param in _WIDENING and arg.arg_rule is None and arg.allowed_values is None:
             errors.append(f"arg {arg_name}: {arg.param} needs an arg_rule or allowed_values")
         # `reviewed` records that a filter was looked at; it can't wave through anything else.
-        if arg.arg_rule is not None and arg.arg_rule.reviewed and arg.query not in _FILTERS:
-            errors.append(
-                f"arg {arg_name}: arg_rule reviewed is only for free-form filters "
-                f"({', '.join(sorted(_FILTERS))}), not {arg.param}"
-            )
+        if arg.arg_rule is not None and arg.arg_rule.reviewed:
+            if arg.query not in _FILTERS:
+                errors.append(
+                    f"arg {arg_name}: arg_rule reviewed is only for free-form filters "
+                    f"({', '.join(sorted(_FILTERS))}), not {arg.param}"
+                )
+            elif arg.query == "search" and _has_profile(op):
+                # Okta's `search` on such resources matches any profile attribute, custom
+                # ones included, and scrub.yaml redacts by key name: an oracle for those.
+                errors.append(
+                    f"arg {arg_name}: search on {op.operation_id} matches any profile "
+                    "attribute, so it can't be reviewed; use forbidden"
+                )
     for p in op.params.values():
         if p.required and p.name not in used and not (p.name == "limit" and entry.page_size):
             errors.append(f"required {p.location} param {p.name} has no arg")
@@ -209,6 +217,16 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
     for a in entry.resumable.unless_args:
         if a not in entry.args:
             errors.append(f"resumable.unless_args: unknown arg {a}")
+
+
+def _has_profile(op: Operation) -> bool:
+    """The response, or the items of a list inside it, carry a `profile` object."""
+    response = op.response
+    return any(
+        path.split(".")[0] == "profile"
+        for fields in (response.fields, *response.item_fields.values())
+        for path in fields
+    )
 
 
 def _scope_sets(
@@ -310,5 +328,10 @@ def _check_shared_operations(domains: Mapping[str, Domain]) -> list[str]:
 
 
 def _classification(c: Command) -> tuple[frozenset[str], frozenset[tuple[str, Any]]]:
-    rules = frozenset((a.param, a.arg_rule) for a in c.entry.args.values() if a.arg_rule)
+    # The rule's form, not the wording of a `reviewed` reason.
+    rules = frozenset(
+        (a.param, a.arg_rule.model_copy(update={"reviewed": a.arg_rule.reviewed and "-"}))
+        for a in c.entry.args.values()
+        if a.arg_rule
+    )
     return frozenset(c.entry.data_classes), rules

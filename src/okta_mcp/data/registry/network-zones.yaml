@@ -5,7 +5,7 @@ commands:
     operation: listNetworkZones
     summary: List network zones
     args:
-      filter: {query: filter, arg_rule: {reviewed: "matches returned zone fields only (id, usage, system)"}}
+      filter: {query: filter, arg_rule: {reviewed: "spec: filters by usage, ID or system, all returned"}}
     paginate: link
     page_size: 200
     view: [id, name, type, status, usage]

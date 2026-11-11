@@ -40,6 +40,11 @@ class Engine:
 
     def __init__(self, policy: Policy, registry: Registry, okta_scopes: frozenset[str]) -> None:
         self._policy = policy
+        roles_by_group: dict[str, set[str]] = {}
+        for role in policy.roles.values():
+            for group in role.groups:
+                roles_by_group.setdefault(group, set()).add(role.name)
+        self._roles_by_group = {g: frozenset(names) for g, names in roles_by_group.items()}
         self._commands: Mapping[Grant, Command] = {
             (d.name, c.name): c for d in registry.domains.values() for c in d.commands.values()
         }
@@ -56,8 +61,8 @@ class Engine:
 
     def roles(self, principal: Principal) -> frozenset[str]:
         """Names of the roles the principal holds: those naming any of its groups."""
-        return frozenset(
-            role.name for role in self._policy.roles.values() if role.groups & principal.groups
+        return frozenset[str]().union(
+            *(self._roles_by_group.get(group, ()) for group in principal.groups)
         )
 
     def permitted(self, principal: Principal) -> frozenset[Grant]:
@@ -68,9 +73,12 @@ class Engine:
     def check(
         self, principal: Principal, domain: str, command: str, args: Mapping[str, object]
     ) -> Verdict:
-        """Decision for one call. `args` are the caller's arguments, validated against the
-        command's schema; only their names are read. An argument counts as passed if its
-        key is present, whatever its value."""
+        """Decision for one call. An argument counts as passed if its key is present,
+        whatever its value.
+
+        Only argument names are read. Values (`allowed_values`, `pattern`) are the schema's
+        to check, so `args` must already have passed `command.validator`; this is not a
+        substitute for it."""
         grant = (domain, command)
         effective = self._effective(principal)
         entry = self._commands.get(grant)
@@ -80,9 +88,9 @@ class Engine:
             return Verdict.FORBIDDEN
         for name in args:
             arg = entry.entry.args.get(name)
-            if arg is None:
-                # Schema validation rejects unknown names first; an argument with no known
-                # rule is not let through if that ever stops being true.
+            if arg is None or arg.allowed_values == ():
+                # Unknown, or not exposed (`allowed_values: []`). Schema validation rejects
+                # both first; neither is let through if that ever stops being true.
                 return Verdict.FORBIDDEN
             rule = arg.arg_rule
             if rule is None or rule.reviewed is not None:

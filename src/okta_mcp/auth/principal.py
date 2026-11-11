@@ -1,6 +1,7 @@
 """The authenticated caller (design §8.5)."""
 
 from dataclasses import dataclass
+from typing import cast
 
 
 @dataclass(frozen=True)
@@ -16,3 +17,12 @@ class Principal:
     client_id: str | None = None
     exp: int | None = None
     """Token expiry, seconds since the epoch. Dev mode has neither."""
+
+    def __post_init__(self) -> None:
+        # A claim arrives as a JSON array, or a bare string for one group. Neither may reach
+        # the policy engine as is: a string is a set of characters to `&`.
+        groups = cast(object, self.groups)
+        if not isinstance(groups, frozenset) or not all(
+            isinstance(g, str) for g in cast(frozenset[object], groups)
+        ):
+            raise TypeError("Principal.groups must be a frozenset of strings")
