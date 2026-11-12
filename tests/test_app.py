@@ -15,7 +15,7 @@ from mcp.server.auth.provider import AccessToken
 from mcp.shared.exceptions import MCPError
 from starlette.applications import Starlette
 
-from okta_mcp.app import ORIGIN_REFUSED, build_app, serve_http, uvicorn_config
+from okta_mcp.app import NOT_READY, ORIGIN_REFUSED, build_app, serve_http, uvicorn_config
 from okta_mcp.auth.principal import Principal, VerifiedToken
 from okta_mcp.config import Config, load_config
 from okta_mcp.exec.executor import INTERNAL
@@ -534,3 +534,36 @@ async def test_serve_http_startup_error_comes_before_the_port(
     with pytest.raises(PolicyError):
         await serve_http(config, FakeVerifier(TOKENS))
     assert served == []
+
+
+@pytest.mark.anyio
+async def test_mcp_is_503_until_ready_even_with_a_valid_token(config: Config) -> None:
+    """A valid token must not get 401 while the verifier can't verify yet: clients would drop
+    it and sign in again."""
+    verifier = FakeVerifier(TOKENS, ready=False)
+    async with serving(config, verifier) as app, http_for(app) as http:
+        r = await http.post(
+            "/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
+        )
+        prm = await http.get("/.well-known/oauth-protected-resource/mcp")
+        verifier.is_ready = True
+        after = await http.post(
+            "/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
+        )
+    assert r.status_code == 503
+    assert r.json() == {"error": NOT_READY}
+    assert r.headers["retry-after"] == "5"
+    assert prm.status_code == 200
+    assert after.status_code == 200
+    assert verifier.calls == 1
+
+
+@pytest.mark.anyio
+async def test_origin_is_checked_before_readiness(config: Config) -> None:
+    verifier = FakeVerifier(TOKENS, ready=False)
+    async with (
+        serving(config, verifier) as app,
+        http_for(app, origin="https://evil.example.com") as h,
+    ):
+        r = await h.post("/mcp", json=INIT, headers=JSON_HEADERS)
+    assert r.status_code == 403

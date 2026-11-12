@@ -31,6 +31,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
     ConfigDict,
     Field,
@@ -133,12 +134,15 @@ class Config(_Model):
         host = parts.hostname or ""
         if not host.isascii() or host.endswith(".") or ":" in host:
             raise ValueError("host must be an ASCII (punycode) name with no trailing dot")
-        port = parts.port
+        port = parts.port  # raises ValueError out of range
+        if port == 0 or parts.netloc.endswith(":"):
+            raise ValueError("must not have an empty or zero port")
         default = {"https": 443, "http": 80}[parts.scheme]
-        canonical = (
-            f"{parts.scheme}://{host}{f':{port}' if port not in (None, default) else ''}/mcp"
-        )
-        if url != canonical:
+        suffix = f":{port}" if port not in (None, default) else ""
+        canonical = f"{parts.scheme}://{host}{suffix}/mcp"
+        # The second test is pydantic's normalization, which the server's PRM uses (it decodes
+        # `%2e`, expands `127.1`, ...).
+        if url != canonical or str(AnyHttpUrl(url)) != url:
             raise ValueError(f"must be {canonical}: path /mcp, lowercase host, no default port")
         return url
 

@@ -42,6 +42,8 @@ from okta_mcp.server import Runtime, build_runtime, mcp_server
 log = logging.getLogger(__name__)
 
 ORIGIN_REFUSED = "Origin not allowed"
+NOT_READY = "server not ready; retry shortly"
+RETRY_AFTER = "5"
 
 
 class Verifier(TokenVerifier, Protocol):
@@ -57,8 +59,8 @@ class _FailClosed:
     authenticated" (`None`), never a 500, and never Starlette's `AuthenticationError` path,
     which sends the error's text back as the 400 body. That middleware runs on every request
     with a bearer header, on every route it serves (PRM, and anything that falls through to the
-    SDK app). Logged by type and frames only: the message could hold the token. The not-ready
-    503 on `/mcp` (§11.3) is 4.3's, from `ready()`, before this runs."""
+    SDK app). Logged by type and frames only: the message could hold the token. A verifier that
+    isn't ready yet is `ReadyGate`'s (503), before this runs; a raise here is a verifier bug."""
 
     def __init__(self, inner: Verifier) -> None:
         self.inner = inner
@@ -105,6 +107,26 @@ class OriginGuard:
                 response = PlainTextResponse(ORIGIN_REFUSED, status_code=403)
                 await response(scope, receive, send)
                 return
+        await self.app(scope, receive, send)
+
+
+class ReadyGate:
+    """ASGI middleware: 503 on `/mcp` while `ready()` is false (§11.3: JWKS not loaded), before
+    the SDK's auth middleware runs. Without it a verifier that can't verify yet would answer a
+    valid token with 401 `invalid_token`, and clients would throw the token away and sign in
+    again in a loop. `ready()` reads state and never fetches."""
+
+    def __init__(self, app: ASGIApp, ready: Callable[[], bool]) -> None:
+        self.app = app
+        self.ready = ready
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"] == MCP_PATH and not self.ready():
+            response = JSONResponse(
+                {"error": NOT_READY}, status_code=503, headers={"Retry-After": RETRY_AFTER}
+            )
+            await response(scope, receive, send)
+            return
         await self.app(scope, receive, send)
 
 
@@ -168,7 +190,10 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
     )
     return Starlette(
         routes=[*_health_routes(verifier.ready), Mount("", app=mcp)],
-        middleware=[Middleware(OriginGuard, allowed=config.allowed_origins)],
+        middleware=[
+            Middleware(OriginGuard, allowed=config.allowed_origins),
+            Middleware(ReadyGate, ready=verifier.ready),
+        ],
         lifespan=_lifespan_of(mcp),
     )
 

@@ -17,6 +17,7 @@ from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -169,6 +170,10 @@ class Config(BaseModel):
         canonical = _url(f"{parts.scheme}://{parts.netloc}", origin_only=True, http_loopback=True)
         if v != canonical + MCP_PATH:
             raise ValueError(f"must be in canonical form: {canonical}{MCP_PATH}")
+        # And unchanged by the SDK's own normalization (`AnyHttpUrl`, as PRM is built), which
+        # also decodes `%2e`, expands `127.1` and the like.
+        if str(AnyHttpUrl(v)) != v:
+            raise ValueError("must be in canonical form (no encoded or shorthand host)")
         return v
 
     @field_validator("issuer")

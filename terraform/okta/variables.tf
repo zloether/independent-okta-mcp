@@ -12,8 +12,11 @@ variable "mcp_public_url" {
   description = "Canonical external URL of the MCP endpoint (MCP_PUBLIC_URL); becomes the authorization server audience."
   type        = string
 
+  # A rough pre-check: the server's MCP_PUBLIC_URL check is the authority. The last host label
+  # starts with a letter, so numeric shorthand hosts (`127.1`) that the server would rewrite
+  # never pass; ports 1-65535.
   validation {
-    condition     = can(regex("^(https://[a-z0-9-]+(\\.[a-z0-9-]+)*|http://(127\\.0\\.0\\.1|localhost))(:[1-9][0-9]*)?/mcp$", var.mcp_public_url))
+    condition     = can(regex("^(https://([a-z0-9-]+\\.)*[a-z][a-z0-9-]*|http://(127\\.0\\.0\\.1|localhost))(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?/mcp$", var.mcp_public_url))
     error_message = "Must be an https URL ending in /mcp, the endpoint the server serves, with a lowercase host and no credentials (http only for 127.0.0.1/localhost)."
   }
 
