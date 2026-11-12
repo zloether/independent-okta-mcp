@@ -1,4 +1,5 @@
-"""Committed fixtures name only reserved hosts, mail domains and IPs (design §14, AGENTS.md).
+"""Committed fixtures name only reserved hosts, mail domains and IPs (design §14, AGENTS.md:
+`example.okta.com` for the Okta org, `*.example.com` for other hosts and for emails).
 
 The rules here are written independently of scripts/fixturelib.py, which produces fixtures, so
 a bug in one doesn't hide in the other. sanitize-fixture.py runs `violations` on its output.
@@ -14,7 +15,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 ORG_HOSTS = frozenset({"example.okta.com", "example-admin.okta.com"})
 LOOPBACK = frozenset({"localhost", "127.0.0.1", "[::1]"})
-RESERVED = re.compile(r"^(?:[a-z0-9-]+\.)*example\.(?:com|net|org)$")
+RESERVED = re.compile(r"^(?:[a-z0-9-]+\.)*example\.com$")
 OKTA = re.compile(
     r"(?<![\w.-])(?:[a-z0-9-]+\.)+(?:(?:okta|oktapreview|okta-emea|okta-gov|oktacdn|trexcloud)"
     r"\.com|okta\.mil)(?![\w-])",
@@ -24,6 +25,10 @@ URL_HOST = re.compile(
     r"[a-z][a-z0-9+.-]*://(?:[^/?#@\s\"']*@)?(\[[0-9A-Fa-f:.]+\]|[^/:?#\s\"'\\]+)", re.IGNORECASE
 )
 EMAIL = re.compile(r"[\w.+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
+HOST_KEY = re.compile(
+    r"\"(?:domain|host|hostname|fqdn)\"\s*:\s*\"((?:[A-Za-z0-9-]+\.)+[A-Za-z0-9-]+)\"",
+    re.IGNORECASE,
+)
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 IPV6 = re.compile(r"(?<![0-9A-Fa-f:])[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?![0-9A-Fa-f:])")
 
@@ -52,6 +57,10 @@ def violations(text: str) -> list[str]:
             if h in ORG_HOSTS or h in LOOPBACK or RESERVED.match(h) or _ip(h.strip("[]")):
                 continue  # An IP host is left to the IP rule below.
             found.append(f"{n}: host {host}")
+        for host in HOST_KEY.findall(line):
+            h = host.lower()
+            if not (h in ORG_HOSTS or RESERVED.match(h) or _ip(h)):
+                found.append(f"{n}: host {host}")
         for host in OKTA.findall(line):
             if host.lower() not in ORG_HOSTS:
                 found.append(f"{n}: Okta host {host}")
@@ -79,10 +88,11 @@ def test_fixture_is_clean(path: Path) -> None:
 
 
 CLEAN = """
-{"login": "alice@example.com", "other": "bob@mail.example.org", "n": "c@example.net",
+{"login": "alice@example.com", "other": "bob@mail.example.com", "domain": "acme",
  "href": "https://example.okta.com/api/v1/users/00u1", "admin": "https://example-admin.okta.com/",
  "idp": "https://idp.example.com/sso", "dev": "http://localhost:8080/cb", "lo": "http://127.0.0.1/",
  "zone": ["203.0.113.4/32", "198.51.100.0-198.51.100.9", "192.0.2.1", "10.0.0.0/8", "0.0.0.0/0"],
+ "host": "login.example.com", "scope": "okta.users.read",
  "v6": ["2001:db8::1/128", "::1", "fe80::1"], "at": "2015-02-06T10:11:28.000Z",
  "mac": "aa:bb:cc:dd:ee:ff", "ip_url": "http://203.0.113.9:8080/x", "v6_url": "http://[::1]/"}
 """
@@ -97,6 +107,10 @@ def test_reserved_values_pass() -> None:
     [
         ('"login": "jane.doe@acme-corp.test"', "mail domain acme-corp.test"),
         ('"e": "x@example.com.evil.test"', "mail domain example.com.evil.test"),
+        ('"e": "x@example.net"', "mail domain example.net"),
+        ('"href": "https://example.org/"', "host example.org"),
+        ('"domain": "login.acme-corp.test"', "host login.acme-corp.test"),
+        ('"hostname": "Acme.Test"', "host Acme.Test"),
         ('"href": "https://dev-000000.okta.com/api/v1/users"', "host dev-000000.okta.com"),
         ('"href": "https://dev-000000.okta.com/api/v1/users"', "Okta host dev-000000.okta.com"),
         ('"sub": "acme.oktapreview.com"', "Okta host acme.oktapreview.com"),

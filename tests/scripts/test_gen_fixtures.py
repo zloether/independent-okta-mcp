@@ -137,6 +137,15 @@ def test_body_is_synthesized_without_examples(raw: dict[str, Any], registry: Reg
     assert body["created"] == "2026-01-01T00:00:00.000Z"
 
 
+def test_empty_example_falls_back_to_schema(raw: dict[str, Any], registry: Registry) -> None:
+    command = registry.domains["groups"].commands["get"]
+    stripped = json.loads(json.dumps(raw))
+    content = stripped["paths"][command.operation.path]["get"]["responses"]["200"]["content"]
+    content["application/json"]["examples"] = {"Empty": {"value": {}}}
+    stripped["components"]["schemas"]["Group"]["properties"]["id"].pop("example")
+    assert OKTA_ID.match(gen.body(stripped, command)["id"])
+
+
 def test_response_override_wraps_object_in_list(raw: dict[str, Any], registry: Registry) -> None:
     command = registry.domains["groups"].commands["get"]
     override = ResponseOverride(kind="list", reason="test")
@@ -155,7 +164,7 @@ def test_neutralizer_rewrites_consistently() -> None:
             "a": "https://{yourOktaDomain}/api/v1/users",
             "b": "${yourOktaDomain}",
             "c": ["https://acme.test/x", "http://acme.test:8443/y", "https://other.test"],
-            "d": "jane@acme.test, Jane@ACME.test, bob@acme.test, ok@example.com",
+            "d": "jane@acme.test, Jane@ACME.test, bob@acme.test, ok@example.com, n@example.net",
             "e": "https://dev-1.okta.com/a https://dev-1-admin.okta.com/b dev-1.oktapreview.com",
             "f": "8.8.4.4/32 8.8.4.4-8.8.8.8 10.0.0.1 2606:4700::1111 2001:db8::5",
             "g": "https://user:pw@acme.test/",
@@ -170,7 +179,8 @@ def test_neutralizer_rewrites_consistently() -> None:
         "https://host-2.example.com",
     ]
     assert out["d"] == (
-        "user-1@example.com, user-1@example.com, user-2@example.com, ok@example.com"
+        "user-1@example.com, user-1@example.com, user-2@example.com, ok@example.com, "
+        "user-3@example.com"
     )
     assert out["e"] == (
         "https://example.okta.com/a https://example-admin.okta.com/b example.okta.com"
@@ -195,6 +205,9 @@ def test_main_writes_then_check_is_clean(tmp_path: Path) -> None:
     assert doc["source"] == "generated" and doc["operation"] == "listNetworkZones"
     assert gen.main(["--domain", "network-zones", "--check"], root=tmp_path) == 0
     assert gen.main(["--check"], root=tmp_path) == 1  # groups missing
+    (tmp_path / "groups").mkdir()
+    (tmp_path / "groups" / "gone.json").write_text("{}")
+    assert gen.main(["--domain", "network-zones", "--check"], root=tmp_path) == 0
 
 
 def test_check_reports_stale_missing_and_orphans(
@@ -222,6 +235,18 @@ def test_recorded_fixture_is_never_overwritten(tmp_path: Path) -> None:
     assert gen.main(["--domain", "network-zones"], root=tmp_path) == 0
     assert recorded.read_text() == text
     assert gen.main(["--domain", "network-zones", "--check"], root=tmp_path) == 0
+
+
+def test_malformed_fixture_is_reported_then_regenerated(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bad = tmp_path / "network-zones" / "get.json"
+    bad.parent.mkdir()
+    bad.write_text("[1,")
+    assert gen.main(["--domain", "network-zones", "--check"], root=tmp_path) == 1
+    assert "network-zones/get.json: out of date" in capsys.readouterr().out
+    assert gen.main(["--domain", "network-zones"], root=tmp_path) == 0
+    assert json.loads(bad.read_text())["source"] == "generated"
 
 
 def test_unknown_domain(tmp_path: Path) -> None:

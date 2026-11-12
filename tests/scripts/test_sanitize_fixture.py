@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -65,17 +66,51 @@ def test_sanitized_recording_passes_hygiene() -> None:
     assert violations(json.dumps(sanitize(RECORDING), indent=2)) == []
 
 
+OKTA_ID = re.compile(r"^[0-9a-z]{3}[0-9A-Za-z]{17}$")
+
+
 def test_ids_are_remapped_consistently_and_keep_their_prefix() -> None:
-    out = sanitize(RECORDING)
-    jane, roe = out
-    assert jane["id"] == "00uEXAMPLE0000000001"
-    assert roe["id"] == "00uEXAMPLE0000000002"
-    assert jane["_links"]["self"]["href"] == (
-        "https://example.okta.com/api/v1/users/00uEXAMPLE0000000001"
-    )
+    jane, roe = sanitize(RECORDING)
+    a, b = jane["id"], roe["id"]
+    assert OKTA_ID.match(a) and a.startswith("00u") and a != "00u8abcdEFGH1234ijk5"
+    assert OKTA_ID.match(b) and a != b
+    assert jane["_links"]["self"]["href"] == f"https://example.okta.com/api/v1/users/{a}"
     assert jane["_links"]["manager"]["href"].startswith("https://example-admin.okta.com/")
-    assert roe["notes"].endswith("see 00uEXAMPLE0000000001")
-    assert roe["lastLogin"]["zone"].startswith("nzoEXAMPLE")
+    assert roe["notes"].endswith(f"see {a}")
+    assert roe["lastLogin"]["zone"].startswith("nzo")
+    assert "nzo1a2b3c4d5e6f7g8h9" not in json.dumps(roe)
+
+
+def test_ids_agree_across_separate_recordings() -> None:
+    first = sanitize({"id": "00g1aaaaBBBBccccDDDD"})
+    second = sanitize({"members": "/api/v1/groups/00g1aaaaBBBBccccDDDD/users"})
+    assert second["members"] == f"/api/v1/groups/{first['id']}/users"
+
+
+def test_manager_id_is_remapped_as_an_id() -> None:
+    out = sanitize(
+        [{"id": "00u1aaaaBBBBccccDDDD"}, {"profile": {"managerId": "00u1aaaaBBBBccccDDDD"}}]
+    )
+    assert out[1]["profile"]["managerId"] == out[0]["id"]
+    assert sanitize({"managerId": "E-77"}) == {"managerId": "employee 1"}
+
+
+def test_bare_host_keys_are_rewritten() -> None:
+    out = sanitize(
+        {"domain": "login.acme-corp.test", "app": {"domain": "acme"}, "host": "x.example.com"}
+    )
+    assert out == {
+        "domain": "host-1.example.com",
+        "app": {"domain": "acme"},
+        "host": "x.example.com",
+    }
+
+
+def test_too_many_values_fail_rather_than_collide() -> None:
+    with pytest.raises(ValueError, match="phone"):
+        sanitize([{"mobilePhone": f"+1 206 555 {i:04d}"} for i in range(100)])
+    with pytest.raises(ValueError, match="IPv4"):
+        sanitize([f"8.8.{i // 250}.{i % 250 + 1}" for i in range(763)])
 
 
 def test_person_fields_are_replaced_consistently() -> None:

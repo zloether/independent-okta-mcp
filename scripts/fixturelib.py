@@ -1,8 +1,8 @@
 """What a committed fixture may contain (design §14); shared by the two fixture scripts.
 
-A fixture names only reserved hosts and mail domains: `example.okta.com` (and its `-admin`
-host) for the Okta org, RFC 2606 `example.com`/`.net`/`.org` and their subdomains for anything
-else, plus loopback. Public IP addresses become RFC 5737 / RFC 3849 documentation addresses.
+A fixture names only reserved hosts and mail domains (AGENTS.md): `example.okta.com` (and its
+`-admin` host) for the Okta org, `example.com` and its subdomains for anything else, plus
+loopback. Public IP addresses become RFC 5737 / RFC 3849 documentation addresses.
 
 `Neutralizer` rewrites every string of a JSON value to that rule, consistently within one
 instance: the same host, address or IP always maps to the same replacement, so links and
@@ -10,6 +10,7 @@ references inside one fixture still line up. tests/test_fixture_hygiene.py check
 with its own, independent rules.
 """
 
+import hashlib
 import ipaddress
 import re
 from collections.abc import Callable
@@ -25,7 +26,7 @@ OKTA_FAMILY = re.compile(
 )
 """Okta's own domains: an org, its admin host, a cell's CDN. All of them map to the example org."""
 
-_RESERVED = re.compile(r"^(?:[a-z0-9-]+\.)*example\.(?:com|net|org)$", re.IGNORECASE)
+_RESERVED = re.compile(r"^(?:[a-z0-9-]+\.)*example\.com$", re.IGNORECASE)
 _LOOPBACK = frozenset({"localhost", "127.0.0.1", "[::1]"})
 
 _PLACEHOLDER = re.compile(r"\$?\{yourOktaDomain\}(?:\.okta\.com)?", re.IGNORECASE)
@@ -44,8 +45,27 @@ _BARE_OKTA = re.compile(
     r"|(?<![\w.-])(?:[a-z0-9-]+\.)+okta\.mil(?![\w-])",
     re.IGNORECASE,
 )
+_BARE_HOST = re.compile(r"^(?:[a-z0-9-]+\.)+[a-z0-9-]+$", re.IGNORECASE)
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 _IPV6 = re.compile(r"(?<![0-9A-Fa-f:])[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?![0-9A-Fa-f:])")
+
+
+BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+HOST_KEYS = frozenset({"domain", "host", "hostname", "fqdn"})
+"""Keys whose dotted string value is a bare hostname (a custom URL domain, an email domain).
+Other bare hostnames can't be told from dotted names such as scopes (`okta.users.read`)."""
+
+
+def okta_id(seed: str, prefix: str = "00x") -> str:
+    """An ID with Okta's shape (3-character prefix, 17 base-62 characters), the same for the
+    same seed, so fixtures made at different times agree."""
+    n = int.from_bytes(hashlib.sha256(seed.encode()).digest()[:16])
+    body = ""
+    for _ in range(17):
+        n, r = divmod(n, 62)
+        body += BASE62[r]
+    return prefix + body
 
 
 def is_reserved_host(host: str) -> bool:
@@ -84,8 +104,16 @@ class Neutralizer:
         self.emails: dict[str, str] = {}
         self.ips: dict[str, str] = {}
 
-    def __call__(self, value: Any) -> Any:
-        return walk_strings(value, self.text)
+    def __call__(self, value: Any, key: str | None = None) -> Any:
+        if isinstance(value, dict):
+            return {k: self(v, k) for k, v in cast(dict[str, Any], value).items()}
+        if isinstance(value, list):
+            return [self(v, key) for v in cast(list[Any], value)]
+        if isinstance(value, str):
+            if key is not None and key.casefold() in HOST_KEYS and _BARE_HOST.match(value):
+                return self.host(value)
+            return self.text(value)
+        return value
 
     def text(self, s: str) -> str:
         s = _PLACEHOLDER.sub(ORG_HOST, s)
@@ -129,8 +157,10 @@ class Neutralizer:
         key = str(ip)
         if key not in self.ips:
             n = len([k for k in self.ips if ":" not in k])
+            if n >= 3 * 254:
+                raise ValueError("more public IPv4 addresses than documentation addresses")
             # 203.0.113.0/24, then 198.51.100.0/24, then 192.0.2.0/24 (RFC 5737).
-            net = ("203.0.113", "198.51.100", "192.0.2")[min(n // 254, 2)]
+            net = ("203.0.113", "198.51.100", "192.0.2")[n // 254]
             self.ips[key] = f"{net}.{n % 254 + 1}"
         return self.ips[key]
 

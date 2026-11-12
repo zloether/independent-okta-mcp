@@ -201,7 +201,8 @@ independent-okta-mcp/
 │   ├── update-spec.py           # fetch + pin Okta spec
 │   ├── coverage-report.py       # spec GET ops vs registry; okta-skills checklist diff
 │   ├── gen-fixtures.py          # default fixtures from spec response schemas/examples (§14)
-│   └── sanitize-fixture.py      # scrub recorded dev-org responses (§14)
+│   ├── sanitize-fixture.py      # scrub recorded dev-org responses (§14)
+│   └── fixturelib.py            # reserved hosts/mail/IP rewriting shared by the two above
 ├── tests/
 ├── Dockerfile
 ├── .dockerignore

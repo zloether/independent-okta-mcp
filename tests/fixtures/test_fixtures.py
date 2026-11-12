@@ -70,7 +70,11 @@ def test_fixture_fits_command(command: Command) -> None:
         items = cast(list[Any], body)
     assert isinstance(items, list) and items, "a fixture needs at least one item"
     cols = columns(None, entry.view)
+    rows: list[Any] = []
     for item in items:
         assert isinstance(item, dict)
-        render(item, RULES, links=False, cols=cols)
-        render(item, RULES, links=True, cols=None)
+        rows.append(render(item, RULES, links=False, cols=cols))
+        assert render(item, RULES, links=True, cols=None)
+    if cols is not None:
+        empty = [c for i, c in enumerate(cols) if all(row[i] is None for row in rows)]
+        assert not empty, f"no item has the view paths {empty}"

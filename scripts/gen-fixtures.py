@@ -17,7 +17,6 @@ left over from a command that no longer exists. Exit status 2: invalid spec or r
 
 import argparse
 import functools
-import hashlib
 import json
 import sys
 from collections.abc import Mapping
@@ -25,14 +24,13 @@ from pathlib import Path
 from typing import Any, cast
 
 import yaml
-from fixturelib import Neutralizer
+from fixturelib import Neutralizer, okta_id
 
 from okta_mcp.registry.loader import Command, Registry, RegistryError, load_registry
-from okta_mcp.registry.spec import SPEC, SpecError, load_spec, ref_target
+from okta_mcp.registry.spec import SPEC, Resolver, SpecError, load_spec
 
 FIXTURES = Path(__file__).parents[1] / "tests" / "fixtures"
 MAX_DEPTH = 8
-BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 SCALARS: Mapping[str, Any] = {
     "date-time": "2026-01-01T00:00:00.000Z",
     "date": "2026-01-01",
@@ -45,33 +43,13 @@ SCALARS: Mapping[str, Any] = {
 }
 
 
-def okta_id(seed: str, prefix: str = "00x") -> str:
-    """An ID with Okta's shape, the same for the same seed."""
-    n = int.from_bytes(hashlib.sha256(seed.encode()).digest()[:16])
-    body = ""
-    for _ in range(17):
-        n, r = divmod(n, 62)
-        body += BASE62[r]
-    return prefix + body
-
-
-class Synth:
+class Synth(Resolver):
     """Builds a value from a spec schema. A schema met again on its own path, or below
     MAX_DEPTH, is left out, so recursive schemas terminate."""
 
     def __init__(self, spec: Mapping[str, Any], seed: str) -> None:
-        self._spec = spec
+        super().__init__(spec)
         self._seed = seed
-
-    def deref(self, node: Any) -> Any:
-        seen: set[str] = set()
-        while isinstance(node, dict) and "$ref" in node:
-            ref = cast(str, cast(dict[str, Any], node)["$ref"])
-            if ref in seen:
-                raise SpecError(f"$ref cycle: {ref}")
-            seen.add(ref)
-            node = ref_target(self._spec, ref)
-        return cast(Any, node)
 
     def value(self, node: Any, path: str = "", stack: tuple[int, ...] = ()) -> Any:
         schema = self.deref(node)
@@ -86,7 +64,7 @@ class Synth:
         for key in ("oneOf", "anyOf"):
             if variants := cast(list[Any], schema.get(key) or []):
                 return self.value(variants[0], path, stack)
-        if self._is_object(schema):
+        if self.is_object(schema):
             return self._object(schema, path, stack)
         kind = schema.get("type")
         if kind == "array":
@@ -104,20 +82,9 @@ class Synth:
             return self._string(schema, path)
         return None
 
-    def _is_object(self, schema: dict[str, Any]) -> bool:
-        return schema.get("type") == "object" or "properties" in schema or "allOf" in schema
-
-    def _properties(self, schema: dict[str, Any], stack: tuple[int, ...]) -> dict[str, Any]:
-        props = dict(cast(dict[str, Any], schema.get("properties", {})))
-        for part in cast(list[Any], schema.get("allOf", [])):
-            sub = self.deref(part)
-            if isinstance(sub, dict) and id(sub) not in stack:
-                props.update(self._properties(cast(dict[str, Any], sub), (*stack, id(sub))))
-        return props
-
     def _object(self, schema: dict[str, Any], path: str, stack: tuple[int, ...]) -> Any:
         out: dict[str, Any] = {}
-        for name, sub in self._properties(schema, stack).items():
+        for name, sub in self.properties(schema).items():
             if isinstance(s := self.deref(sub), dict) and cast(dict[str, Any], s).get("writeOnly"):
                 continue  # Never in a response.
             v = self.value(sub, f"{path}.{name}" if path else name, stack)
@@ -144,26 +111,18 @@ def raw_spec() -> dict[str, Any]:
     return cast(dict[str, Any], yaml.load(SPEC.read_bytes(), Loader=yaml.CSafeLoader))
 
 
-def _operation(spec: Mapping[str, Any], operation_id: str) -> dict[str, Any]:
-    for item in cast(dict[str, Any], spec["paths"]).values():
-        op = cast(dict[str, Any], item).get("get")
-        if isinstance(op, dict) and cast(dict[str, Any], op).get("operationId") == operation_id:
-            return cast(dict[str, Any], op)
-    raise SpecError(f"no GET operation {operation_id}")
-
-
 def body(spec: Mapping[str, Any], command: Command) -> Any:
     """The fixture body: the first spec example of the 200 response, else a synthesized one;
     wrapped in a list when the registry reads the response as one (`response_override`)."""
     synth = Synth(spec, f"{command.domain}.{command.name}")
-    op = _operation(spec, command.operation.operation_id)
+    op = cast(dict[str, Any], spec["paths"][command.operation.path]["get"])
     ok = synth.deref(op.get("responses", {}).get("200", {}))
     content = cast(dict[str, Any], ok.get("content", {}).get("application/json", {}))
-    examples = cast(dict[str, Any], content.get("examples") or {})
-    if examples:
-        value = synth.deref(next(iter(examples.values()))).get("value")
-    elif "example" in content:
-        value = content["example"]
+    # An empty list or object exercises nothing; such an example falls back to the schema.
+    examples = [synth.deref(e).get("value") for e in (content.get("examples") or {}).values()]
+    examples += [content["example"]] if "example" in content else []
+    if found := [e for e in examples if e]:
+        value = found[0]
     else:
         value = synth.value(content.get("schema"))
         value = None if value is _OMIT else value
@@ -199,14 +158,25 @@ def plan(
             continue
         for command in d.commands.values():
             path = path_of(root, command)
-            if path.exists() and json.loads(path.read_text()).get("source") == "recorded":
+            if _recorded(path):
                 kept.append(path)
                 continue
             wanted[path] = dumps(fixture(spec, command))
     return wanted, kept
 
 
-def problems(registry: Registry, wanted: Mapping[Path, str], root: Path) -> list[str]:
+def _recorded(path: Path) -> bool:
+    """A readable fixture made by sanitize-fixture.py. A malformed file is regenerated."""
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(doc, dict) and cast(dict[str, Any], doc).get("source") == "recorded"
+
+
+def problems(
+    registry: Registry, wanted: Mapping[Path, str], root: Path, domain: str | None = None
+) -> list[str]:
     out = [
         f"{p.relative_to(root)}: {'missing' if not p.exists() else 'out of date'}"
         for p, text in wanted.items()
@@ -215,7 +185,7 @@ def problems(registry: Registry, wanted: Mapping[Path, str], root: Path) -> list
     known = {path_of(root, c) for d in registry.domains.values() for c in d.commands.values()}
     out += [
         f"{p.relative_to(root)}: no such command"
-        for p in sorted(root.glob("*/*.json"))
+        for p in sorted(root.glob(f"{domain or '*'}/*.json"))
         if p not in known
     ]
     return out
@@ -241,7 +211,7 @@ def main(argv: list[str] | None = None, root: Path = FIXTURES) -> int:
         return 2
     wanted, kept = plan(registry, spec, root, args.domain)
     if args.check:
-        found = problems(registry, wanted, root)
+        found = problems(registry, wanted, root, args.domain)
         for line in found:
             print(line)
         return 1 if found else 0

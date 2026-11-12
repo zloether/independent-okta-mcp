@@ -10,10 +10,12 @@ overwrites. Rewritten, consistently across the file (the same input always maps 
 output, so IDs inside links still match the `id` they point to):
 
 - hosts, mail addresses and IPs, as for generated fixtures (fixturelib.py): the org and any
-  Okta host become example.okta.com, other hosts host-N.example.com, addresses
+  Okta host become example.okta.com, other hosts (in URLs, and the value of a `domain`, `host`,
+  `hostname` or `fqdn` key) host-N.example.com, addresses
   user-N@example.com, public IPs documentation addresses;
 - the org's subdomain label (`dev-123456`) wherever it appears on its own, e.g. `subdomain`;
-- Okta IDs (3-character prefix + 17 base-62 characters): the prefix is kept, the rest numbered;
+- Okta IDs (3-character prefix + 17 base-62 characters): the prefix is kept, the rest replaced
+  by a hash of the ID, so separately sanitized recordings still agree on shared IDs;
 - values of person fields (names, phones, addresses, employee data) at any depth;
 - every `--replace OLD=NEW` string, before anything else, for what no rule can know (a company
   name, a custom domain, a group or app named after a person).
@@ -31,7 +33,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from fixturelib import OKTA_FAMILY, Neutralizer, okta_labels, walk_strings
+from fixturelib import OKTA_FAMILY, Neutralizer, okta_id, okta_labels, walk_strings
 
 OKTA_ID = re.compile(
     r"(?<![A-Za-z0-9])(?P<prefix>[0-9a-z]{3})(?P<body>[0-9A-Za-z]{17})(?![A-Za-z0-9])"
@@ -48,6 +50,7 @@ PERSON_FIELDS = {
         "phone": ("mobilePhone", "primaryPhone", "phoneNumber", "phone"),
         "address": ("streetAddress", "postalAddress", "city", "state", "zipCode", "postalCode"),
         "employee": ("employeeNumber", "managerId", "costCenter", "department", "division"),
+        # managerId usually holds a user ID; an ID-shaped value is left to the ID rule below.
         "org": ("organization", "companyName", "company"),
     }.items()
     for k in keys
@@ -92,12 +95,16 @@ class Sanitizer:
     def _person(self, label: str, value: str) -> str:
         if label == "user" and "@" in value:
             return self.neutral.text(value)  # One numbering for addresses wherever they appear.
+        if OKTA_ID.fullmatch(value):
+            return value  # A user ID (managerId): remapped with every other ID.
         k = (label, value.casefold())
         if k not in self.people:
             n = sum(1 for lbl, _ in self.people if lbl == label) + 1
+            if label == "phone" and n > 99:
+                raise ValueError("more phone numbers than 555-0101..0199 holds")
             self.people[k] = {
                 "user": f"login-{n}",
-                "phone": f"+1 555-01{n % 100:02d}",  # 555-0100..0199: fictional (NANPA)
+                "phone": f"+1 555-01{n:02d}",  # 555-0100..0199: fictional (NANPA)
             }.get(label, f"{label} {n}")
         return self.people[k]
 
@@ -108,9 +115,9 @@ class Sanitizer:
         whole = m.group(0)
         if not any(c.isdigit() for c in whole):
             return whole
-        if whole not in self.ids:
-            n = len(self.ids) + 1
-            self.ids[whole] = f"{m.group('prefix')}EXAMPLE{n:010d}"
+        # A hash, not a counter: recordings sanitized separately agree on every ID they share,
+        # and two different IDs never meet the same replacement.
+        self.ids[whole] = okta_id(f"recorded:{whole}", m.group("prefix"))
         return self.ids[whole]
 
     def _labels(self, s: str) -> str:
