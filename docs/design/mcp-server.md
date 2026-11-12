@@ -744,7 +744,7 @@ ENTRYPOINT ["okta-mcp"]
 | `MCP_CURSOR_KEY` / `_FILE` | ✔ | — | Base64 HMAC key (≥32 bytes) |
 | `MCP_ALLOWED_ORIGINS` |  | empty | Comma list. A request **with** an `Origin` header not in the list is rejected (403); requests without `Origin` (non-browser clients) are allowed |
 | `MCP_HOST` / `MCP_PORT` |  | `127.0.0.1` / `8080` | Bind (image sets `0.0.0.0`) |
-| `MCP_TRUST_PROXY` |  | `false` | Honor `X-Forwarded-*` |
+| `MCP_TRUST_PROXY` |  | `false` | Honor `X-Forwarded-*` from any peer. Turn on only when nothing but the proxy can reach the port (§11.4) |
 | `MCP_ENV` |  | `development` | `production` refuses dev mode and SSWS (image default) |
 | `MCP_DEV_MODE` / `MCP_DEV_PRINCIPAL_FILE` |  | off | stdio dev mode (§8.6) |
 | `MCP_DEFAULT_LIMIT` / `MCP_MAX_ITEMS` / `MCP_MAX_BYTES` |  | `50` / `1000` / `65536` | Output budgets ([T1](t1-tool-surface.md) D7); `MCP_MAX_BYTES` ≥ 1024, so the envelope always fits |
@@ -773,6 +773,7 @@ Startup fails fast on missing/invalid values, unreadable key, invalid policy, or
 - **Health:** `/healthz` (process up); `/readyz` (policy loaded, registry valid, JWKS loaded, service token obtained within the last refresh cycle — not fetched per probe). Unauthenticated, data-free.
 - **Upgrades:** stateless; replace the container. Pin image tags and the MCP SDK.
 - **Secrets:** files; rotation = new secret + restart (service key, cursor key).
+- **Network exposure:** only the TLS proxy may reach the container's port. The app does not check which peer sent `X-Forwarded-*` (`MCP_TRUST_PROXY`); that is the network's job: no published port, or one bound to loopback (`127.0.0.1:8080:8080`; Docker's published ports bypass host firewalls such as ufw). Identity never comes from the client address (limits, audit and cursors key on `uid`), so a forged one mislabels a log line, nothing more.
 - **Replicas:** safe (stateless), but limiters and the service token are per replica.
 - **Exposure decision** (before rollout): internal-only vs internet-facing; record it in the runbook and the compatibility matrix.
 - **Kill switch:** (1) stop the container / pull from proxy; (2) deactivate the service app in Okta; (3) rotate the service key; (4) deactivate the custom AS or remove clients from its policy; (5) rotate `MCP_CURSOR_KEY`.
