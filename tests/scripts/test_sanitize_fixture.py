@@ -106,6 +106,32 @@ def test_bare_host_keys_are_rewritten() -> None:
     }
 
 
+def test_host_key_variants_are_rewritten() -> None:
+    out = sanitize(
+        {
+            "host": "8.8.8.8",
+            "hostname": "ldap.acme-corp.test:636",
+            "emailDomain": "acme-corp.test",
+            "domains": ["acme-corp.test", "ok.example.com"],
+        }
+    )
+    assert out == {
+        "host": "203.0.113.1",
+        "hostname": "host-1.example.com:636",
+        "emailDomain": "host-2.example.com",
+        "domains": ["host-2.example.com", "ok.example.com"],
+    }
+    assert violations(json.dumps(out, indent=2)) == []
+
+
+def test_replacement_ips_avoid_documentation_addresses_in_the_input() -> None:
+    assert sanitize(["8.8.8.8", "203.0.113.1"]) == ["203.0.113.2", "203.0.113.1"]
+
+
+def test_id_shaped_person_value_without_a_digit_is_still_replaced() -> None:
+    assert sanitize({"city": "llanfairpwllgwyngyll"}) == {"city": "address 1"}
+
+
 def test_too_many_values_fail_rather_than_collide() -> None:
     with pytest.raises(ValueError, match="phone"):
         sanitize([{"mobilePhone": f"+1 206 555 {i:04d}"} for i in range(100)])

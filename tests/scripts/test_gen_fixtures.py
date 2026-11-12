@@ -249,5 +249,16 @@ def test_malformed_fixture_is_reported_then_regenerated(
     assert json.loads(bad.read_text())["source"] == "generated"
 
 
+def test_spec_error_while_planning_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def broken(*_: Any) -> Any:
+        raise gen.SpecError("allOf cycle")
+
+    monkeypatch.setattr(gen, "plan", broken)
+    assert gen.main(["--check"], root=tmp_path) == 2
+    assert "allOf cycle" in capsys.readouterr().err
+
+
 def test_unknown_domain(tmp_path: Path) -> None:
     assert gen.main(["--domain", "nope"], root=tmp_path) == 2

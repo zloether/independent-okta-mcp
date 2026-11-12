@@ -6,8 +6,10 @@ a bug in one doesn't hide in the other. sanitize-fixture.py runs `violations` on
 """
 
 import ipaddress
+import json
 import re
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -25,10 +27,9 @@ URL_HOST = re.compile(
     r"[a-z][a-z0-9+.-]*://(?:[^/?#@\s\"']*@)?(\[[0-9A-Fa-f:.]+\]|[^/:?#\s\"'\\]+)", re.IGNORECASE
 )
 EMAIL = re.compile(r"[\w.+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
-HOST_KEY = re.compile(
-    r"\"(?:domain|host|hostname|fqdn)\"\s*:\s*\"((?:[A-Za-z0-9-]+\.)+[A-Za-z0-9-]+)\"",
-    re.IGNORECASE,
-)
+HOST_KEY = re.compile(r"(?:domain|host|hostname|fqdn)s?$", re.IGNORECASE)
+"""Keys (`domain`, `emailDomain`, `hosts`) whose values are bare hostnames, as `host[:port]`."""
+BARE_HOST = re.compile(r"^((?:[A-Za-z0-9-]+\.)+[A-Za-z0-9-]+)(?::\d+)?$")
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 IPV6 = re.compile(r"(?<![0-9A-Fa-f:])[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?![0-9A-Fa-f:])")
 
@@ -45,9 +46,30 @@ def _global_ip(text: str) -> bool:
     return ip is not None and ip.is_global
 
 
+def _host_values(value: Any, key: str = "") -> list[str]:
+    """Bare hostnames under host keys, at any depth, in strings or lists of them."""
+    if isinstance(value, dict):
+        items = cast(dict[str, Any], value).items()
+        return [h for k, v in items for h in _host_values(v, k)]
+    if isinstance(value, list):
+        return [h for v in cast(list[Any], value) for h in _host_values(v, key)]
+    if isinstance(value, str) and HOST_KEY.search(key) and (m := BARE_HOST.match(value)):
+        return [m.group(1)]
+    return []
+
+
 def violations(text: str) -> list[str]:
-    """`line: problem` for each disallowed host, mail domain or public IP in `text`."""
+    """`line: problem` for each disallowed host, mail domain or public IP in `text`; for JSON,
+    also `key: problem` for a bare hostname under a host key."""
     found: list[str] = []
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        doc = None
+    for host in _host_values(doc):
+        h = host.lower()
+        if not (h in ORG_HOSTS or RESERVED.match(h) or _ip(h)):
+            found.append(f"key: host {host}")
     for n, line in enumerate(text.splitlines(), 1):
         for domain in EMAIL.findall(line):
             if not RESERVED.match(domain.lower()):
@@ -57,10 +79,6 @@ def violations(text: str) -> list[str]:
             if h in ORG_HOSTS or h in LOOPBACK or RESERVED.match(h) or _ip(h.strip("[]")):
                 continue  # An IP host is left to the IP rule below.
             found.append(f"{n}: host {host}")
-        for host in HOST_KEY.findall(line):
-            h = host.lower()
-            if not (h in ORG_HOSTS or RESERVED.match(h) or _ip(h)):
-                found.append(f"{n}: host {host}")
         for host in OKTA.findall(line):
             if host.lower() not in ORG_HOSTS:
                 found.append(f"{n}: Okta host {host}")
@@ -93,6 +111,7 @@ CLEAN = """
  "idp": "https://idp.example.com/sso", "dev": "http://localhost:8080/cb", "lo": "http://127.0.0.1/",
  "zone": ["203.0.113.4/32", "198.51.100.0-198.51.100.9", "192.0.2.1", "10.0.0.0/8", "0.0.0.0/0"],
  "host": "login.example.com", "scope": "okta.users.read",
+ "hosts": ["a.example.com:443", "10.0.0.1"],
  "v6": ["2001:db8::1/128", "::1", "fe80::1"], "at": "2015-02-06T10:11:28.000Z",
  "mac": "aa:bb:cc:dd:ee:ff", "ip_url": "http://203.0.113.9:8080/x", "v6_url": "http://[::1]/"}
 """
@@ -109,8 +128,11 @@ def test_reserved_values_pass() -> None:
         ('"e": "x@example.com.evil.test"', "mail domain example.com.evil.test"),
         ('"e": "x@example.net"', "mail domain example.net"),
         ('"href": "https://example.org/"', "host example.org"),
-        ('"domain": "login.acme-corp.test"', "host login.acme-corp.test"),
-        ('"hostname": "Acme.Test"', "host Acme.Test"),
+        ('{"domain": "login.acme-corp.test"}', "key: host login.acme-corp.test"),
+        ('{"hostname": "Acme.Test"}', "key: host Acme.Test"),
+        ('{"host": "ldap.acme-corp.test:636"}', "key: host ldap.acme-corp.test"),
+        ('{"a": {"domains": ["ok.example.com", "acme-corp.test"]}}', "key: host acme-corp.test"),
+        ('{"emailDomain": "acme-corp.test"}', "key: host acme-corp.test"),
         ('"href": "https://dev-000000.okta.com/api/v1/users"', "host dev-000000.okta.com"),
         ('"href": "https://dev-000000.okta.com/api/v1/users"', "Okta host dev-000000.okta.com"),
         ('"sub": "acme.oktapreview.com"', "Okta host acme.oktapreview.com"),
@@ -124,4 +146,5 @@ def test_reserved_values_pass() -> None:
     ],
 )
 def test_unreserved_values_fail(text: str, kind: str) -> None:
-    assert f"1: {kind}" in violations(text)
+    found = violations(text)
+    assert (kind if kind.startswith("key:") else f"1: {kind}") in found

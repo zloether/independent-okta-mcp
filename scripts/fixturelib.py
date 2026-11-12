@@ -45,16 +45,21 @@ _BARE_OKTA = re.compile(
     r"|(?<![\w.-])(?:[a-z0-9-]+\.)+okta\.mil(?![\w-])",
     re.IGNORECASE,
 )
-_BARE_HOST = re.compile(r"^(?:[a-z0-9-]+\.)+[a-z0-9-]+$", re.IGNORECASE)
+_BARE_HOST = re.compile(r"^(?P<host>(?:[a-z0-9-]+\.)+[a-z0-9-]+)(?P<port>:\d+)?$", re.IGNORECASE)
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 _IPV6 = re.compile(r"(?<![0-9A-Fa-f:])[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}(?![0-9A-Fa-f:])")
 
 
 BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-HOST_KEYS = frozenset({"domain", "host", "hostname", "fqdn"})
-"""Keys whose dotted string value is a bare hostname (a custom URL domain, an email domain).
-Other bare hostnames can't be told from dotted names such as scopes (`okta.users.read`)."""
+HOST_KEY_SUFFIXES = ("domain", "domains", "host", "hosts", "hostname", "hostnames", "fqdn")
+"""A key ending in one of these (`domain`, `emailDomain`, `trustDomain`, `domains`) holds bare
+hostnames (`host[:port]`), in a string or a list of them. Other bare hostnames can't be told
+from dotted names such as scopes (`okta.users.read`)."""
+
+
+def is_host_key(key: str) -> bool:
+    return key.casefold().endswith(HOST_KEY_SUFFIXES)
 
 
 def okta_id(seed: str, prefix: str = "00x") -> str:
@@ -103,15 +108,28 @@ class Neutralizer:
         self.hosts: dict[str, str] = {}
         self.emails: dict[str, str] = {}
         self.ips: dict[str, str] = {}
+        self._taken: set[str] = set()
+        """Documentation addresses already in the input, never handed out as a replacement."""
 
-    def __call__(self, value: Any, key: str | None = None) -> Any:
+    def __call__(self, value: Any) -> Any:
+        def note(s: str) -> str:
+            for literal in _IPV4.findall(s) + _IPV6.findall(s):
+                if (ip := _ip(literal)) is not None and not ip.is_global:
+                    self._taken.add(str(ip))
+            return s
+
+        walk_strings(value, note)
+        return self._walk(value, None)
+
+    def _walk(self, value: Any, key: str | None) -> Any:
         if isinstance(value, dict):
-            return {k: self(v, k) for k, v in cast(dict[str, Any], value).items()}
+            return {k: self._walk(v, k) for k, v in cast(dict[str, Any], value).items()}
         if isinstance(value, list):
-            return [self(v, key) for v in cast(list[Any], value)]
+            return [self._walk(v, key) for v in cast(list[Any], value)]
         if isinstance(value, str):
-            if key is not None and key.casefold() in HOST_KEYS and _BARE_HOST.match(value):
-                return self.host(value)
+            if key is not None and is_host_key(key) and (m := _BARE_HOST.match(value)):
+                # An IP host comes back unchanged from host(); text() rewrites it.
+                return self.text(self.host(m.group("host"))) + (m.group("port") or "")
             return self.text(value)
         return value
 
@@ -156,12 +174,7 @@ class Neutralizer:
             return m.group(0)
         key = str(ip)
         if key not in self.ips:
-            n = len([k for k in self.ips if ":" not in k])
-            if n >= 3 * 254:
-                raise ValueError("more public IPv4 addresses than documentation addresses")
-            # 203.0.113.0/24, then 198.51.100.0/24, then 192.0.2.0/24 (RFC 5737).
-            net = ("203.0.113", "198.51.100", "192.0.2")[n // 254]
-            self.ips[key] = f"{net}.{n % 254 + 1}"
+            self.ips[key] = self._free(_IPV4_POOL, "IPv4")
         return self.ips[key]
 
     def _ipv6(self, m: re.Match[str]) -> str:
@@ -170,9 +183,23 @@ class Neutralizer:
             return m.group(0)
         key = str(ip)
         if key not in self.ips:
-            n = len([k for k in self.ips if ":" in k])
-            self.ips[key] = f"2001:db8::{n + 1:x}"  # RFC 3849
+            self.ips[key] = self._free(_IPV6_POOL, "IPv6")
         return self.ips[key]
+
+    def _free(self, pool: tuple[str, ...], kind: str) -> str:
+        """The first pool address neither handed out nor already in the input."""
+        used = self._taken | set(self.ips.values())
+        for address in pool:
+            if address not in used:
+                return address
+        raise ValueError(f"more public {kind} addresses than documentation addresses")
+
+
+# RFC 5737: 203.0.113.0/24, then 198.51.100.0/24, then 192.0.2.0/24; RFC 3849 for IPv6.
+_IPV4_POOL = tuple(
+    f"{net}.{n}" for net in ("203.0.113", "198.51.100", "192.0.2") for n in range(1, 255)
+)
+_IPV6_POOL = tuple(f"2001:db8::{n:x}" for n in range(1, 4096))
 
 
 def _ip(s: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:

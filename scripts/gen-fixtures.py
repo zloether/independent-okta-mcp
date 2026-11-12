@@ -209,7 +209,11 @@ def main(argv: list[str] | None = None, root: Path = FIXTURES) -> int:
     if args.domain is not None and args.domain not in registry.domains:
         print(f"error: no registry domain {args.domain}", file=sys.stderr)
         return 2
-    wanted, kept = plan(registry, spec, root, args.domain)
+    try:
+        wanted, kept = plan(registry, spec, root, args.domain)
+    except (SpecError, KeyError) as e:  # A $ref/allOf cycle, or a path the raw spec lacks.
+        print(f"error: {e!r}", file=sys.stderr)
+        return 2
     if args.check:
         found = problems(registry, wanted, root, args.domain)
         for line in found:

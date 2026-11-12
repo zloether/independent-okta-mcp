@@ -51,6 +51,13 @@ def _load(command: Command) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text()))
 
 
+def _blank(cell: Any) -> bool:
+    """No value: `pick` gives a list through an array, so `[]` and `[None]` are blank too."""
+    if isinstance(cell, list):
+        return all(_blank(c) for c in cast(list[Any], cell))
+    return cell is None
+
+
 @pytest.mark.parametrize("command", COMMANDS, ids=lambda c: f"{c.domain}-{c.name}")
 def test_fixture_fits_command(command: Command) -> None:
     doc = _load(command)
@@ -76,5 +83,5 @@ def test_fixture_fits_command(command: Command) -> None:
         rows.append(render(item, RULES, links=False, cols=cols))
         assert render(item, RULES, links=True, cols=None)
     if cols is not None:
-        empty = [c for i, c in enumerate(cols) if all(row[i] is None for row in rows)]
+        empty = [c for i, c in enumerate(cols) if all(_blank(row[i]) for row in rows)]
         assert not empty, f"no item has the view paths {empty}"

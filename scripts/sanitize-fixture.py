@@ -95,8 +95,8 @@ class Sanitizer:
     def _person(self, label: str, value: str) -> str:
         if label == "user" and "@" in value:
             return self.neutral.text(value)  # One numbering for addresses wherever they appear.
-        if OKTA_ID.fullmatch(value):
-            return value  # A user ID (managerId): remapped with every other ID.
+        if OKTA_ID.fullmatch(value) and any(c.isdigit() for c in value):
+            return value  # A user ID (managerId): remapped with every other ID, by the same rule.
         k = (label, value.casefold())
         if k not in self.people:
             n = sum(1 for lbl, _ in self.people if lbl == label) + 1
@@ -104,7 +104,7 @@ class Sanitizer:
                 raise ValueError("more phone numbers than 555-0101..0199 holds")
             self.people[k] = {
                 "user": f"login-{n}",
-                "phone": f"+1 555-01{n:02d}",  # 555-0100..0199: fictional (NANPA)
+                "phone": f"+1 555-01{n:02d}",  # 555-0101..0199 (NANPA reserves 0100..0199)
             }.get(label, f"{label} {n}")
         return self.people[k]
 
@@ -117,7 +117,8 @@ class Sanitizer:
             return whole
         # A hash, not a counter: recordings sanitized separately agree on every ID they share,
         # and two different IDs never meet the same replacement.
-        self.ids[whole] = okta_id(f"recorded:{whole}", m.group("prefix"))
+        if whole not in self.ids:
+            self.ids[whole] = okta_id(f"recorded:{whole}", m.group("prefix"))
         return self.ids[whole]
 
     def _labels(self, s: str) -> str:
