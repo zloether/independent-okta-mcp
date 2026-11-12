@@ -648,3 +648,32 @@ async def test_gate_is_the_endpoints_under_a_root_path(config: Config) -> None:
             )
     assert r.status_code == 503
     assert verifier.calls == 1  # the SDK's auth middleware, before the endpoint
+
+
+class BecomesReady(FakeVerifier):
+    """Not ready on the first reading, ready after: the keys load mid-request."""
+
+    def __init__(self, tokens: dict[str, AccessToken]) -> None:
+        super().__init__(tokens, ready=False)
+        self.readings = 0
+
+    def ready(self) -> bool:
+        self.readings += 1
+        return self.readings > 1
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        self.calls += 1
+        return None  # as the real verifier answers while not ready
+
+
+@pytest.mark.anyio
+async def test_keys_loading_mid_request_is_503_not_401(config: Config) -> None:
+    """One readiness reading per request: the verifier answered `None` because it wasn't
+    ready, so the gate must not let the request through to a 401 because it became ready."""
+    verifier = BecomesReady(TOKENS)
+    async with serving(config, verifier) as app, http_for(app) as http:
+        r = await http.post(
+            "/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
+        )
+    assert r.status_code == 503
+    assert verifier.calls == 1

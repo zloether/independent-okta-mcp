@@ -548,10 +548,10 @@ Okta Cross App Access (IETF *Identity Assertion JWT Authorization Grant*; MCP "e
 | Check | Rule |
 |---|---|
 | Format/alg | JWT ≤ 16 KiB; `alg` ∈ {`RS256`, `ES256`} and matching the key's; reject `none`/HS*; a `kid` is required; `crit` and `b64` headers refused |
-| Signature | Issuer JWKS (from the RFC 8414 metadata at `{MCP_ISSUER}/.well-known/oauth-authorization-server`, whose `issuer` must equal `MCP_ISSUER` and whose `jwks_uri` must be on the issuer's origin). Only `sig` keys: RSA ≥ 2048 bits for RS256, P-256 for ES256; a `kid` listed twice is dropped. Refreshed every 30 min in the background and trusted for 1 h, so a warm cache rides out an issuer outage of at least 30 min; on unknown `kid` refetch at most once per 60 s |
+| Signature | Issuer JWKS (from the RFC 8414 metadata at `{MCP_ISSUER}/.well-known/oauth-authorization-server`, whose `issuer` must equal `MCP_ISSUER` and whose `jwks_uri` must be on the issuer's origin; each document read up to 256 KiB). Only `sig` keys: RSA ≥ 2048 bits for RS256, P-256 for ES256; a `kid` listed twice is dropped. Refreshed every 30 min in the background and trusted for 1 h, so a warm cache rides out an issuer outage of at least 30 min; on unknown `kid` refetch at most once per 60 s |
 | `iss` | Exactly `MCP_ISSUER` |
 | `aud` | Contains `MCP_AUDIENCE` (default `MCP_PUBLIC_URL`) |
-| `exp`/`nbf`/`iat` | ≤60s skew; `exp` and `iat` required; `iat` no older than `MCP_MAX_TOKEN_AGE` |
+| `exp`/`nbf`/`iat` | `nbf`/`iat` ≤60s skew; `exp` strict (the SDK also checks it, with no skew); `exp` and `iat` required; `iat` no older than `MCP_MAX_TOKEN_AGE` |
 | `scp`/`scope` | Contains `MCP_REQUIRED_SCOPE` (order varies between tokens; V13). Okta's `scp` array or RFC 9068's space-separated `scope`; malformed → 401. A well-formed token without the scope gets `403 insufficient_scope` (the SDK's check, §8.1), not 401 |
 | `cid`/`client_id` | In `MCP_ALLOWED_CLIENT_IDS`; if both claims are present they must agree |
 | `uid` / `sub` | Principal ID = `uid` (stable `00u…`, must be an Okta user ID); reject if absent. `sub` (login, mutable; required) kept for display only (V13) |

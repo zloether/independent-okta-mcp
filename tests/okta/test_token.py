@@ -266,6 +266,32 @@ async def test_keep_fresh_renews_before_expiry(key: rsa.RSAPrivateKey) -> None:
 
 
 @pytest.mark.anyio
+async def test_keep_fresh_survives_an_unexpected_exception(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """It shares a task group with the server: a bug must not stop the server."""
+
+    class Broken(FakeTokenProvider):
+        async def token(self) -> ServiceToken:
+            self.calls += 1
+            raise RuntimeError("bug")
+
+    p = Broken()
+    sleeps = 0
+
+    async def sleep(seconds: float) -> None:
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps == 3:
+            raise anyio.get_cancelled_exc_class()
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await keep_fresh(p, sleep=sleep)
+    assert p.calls == 3
+    assert "internal error in service token refresh: RuntimeError" in caplog.text
+
+
+@pytest.mark.anyio
 async def test_ssws_is_always_ready() -> None:
     assert SSWSProvider(SecretStr("x")).ready()
 

@@ -14,7 +14,6 @@ A `TokenProvider` returns the `ServiceToken` whose `authorization` value goes in
 assertions, keys or response bodies.
 """
 
-import contextlib
 import logging
 import re
 import secrets
@@ -33,6 +32,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr
 
 from okta_mcp.config import ConfigError
+from okta_mcp.logs import log_internal
 from okta_mcp.okta.dpop import DPoP
 
 log = logging.getLogger(__name__)
@@ -86,10 +86,16 @@ async def keep_fresh(
 ) -> None:
     """Ask `provider` for a token every `every` seconds until cancelled, so `ready()` reflects
     a token obtained within the last refresh cycle without a probe ever fetching one (§11.4).
-    Served from the cache while it is fresh; a failure is the provider's to log."""
+    Served from the cache while it is fresh; a failure is the provider's to log. Anything
+    else (a bug) is logged and retried: this shares a task group with the server, so letting
+    it out would stop the server rather than just leave it not ready."""
     while True:
-        with contextlib.suppress(TokenError):
+        try:
             await provider.token()
+        except TokenError:
+            pass
+        except Exception as e:
+            log_internal(log, "service token refresh", e)
         await sleep(every)
 
 

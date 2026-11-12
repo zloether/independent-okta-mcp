@@ -4,7 +4,7 @@ issuer."""
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
@@ -231,7 +231,7 @@ async def test_valid_es256_token(make: Make) -> None:
         {"cid": CLIENT, "client_id": CLIENT},
         {"nbf": int(NOW) + LEEWAY - 1},
         {"iat": int(NOW) + LEEWAY - 1},
-        {"exp": int(NOW) - LEEWAY + 1},
+        {"exp": int(NOW) + 1},
         {"iat": int(NOW) - 86400},
         {"exp": NOW + 10.5, "iat": NOW - 0.5},
     ],
@@ -402,7 +402,9 @@ async def test_kid_required(make: Make, issuer: Issuer, kid: str | None) -> None
         ({"aud": [AUDIENCE, 5]}, "aud"),
         ({"aud": {"v": AUDIENCE}}, "aud"),
         ({"aud": DROP}, "aud"),
-        ({"exp": int(NOW) - LEEWAY}, "expired"),
+        ({"exp": int(NOW)}, "expired"),  # no skew on exp: the SDK has none
+        ({"exp": 10**400}, "exp or iat"),
+        ({"iat": -(10**400)}, "exp or iat"),
         ({"exp": DROP}, "exp or iat"),
         ({"exp": True}, "exp or iat"),
         ({"exp": "9999999999"}, "exp or iat"),
@@ -812,3 +814,99 @@ async def test_in_the_app(issuer: Issuer, clock: Clock, tmp_path: Path) -> None:
     assert "resource_metadata=" in forged.headers["www-authenticate"]
     assert readyz.status_code == 503  # keys loaded, no service token yet
     assert readyz_warm.status_code == 200
+
+
+# --- review regressions -----------------------------------------------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("alg", [["RS256"], {"a": 1}, 256, None, True])
+async def test_unhashable_or_odd_alg_is_rejected_not_raised(
+    make: Make, caplog: pytest.LogCaptureFixture, alg: Any
+) -> None:
+    v = await loaded(make)
+    head = base64url_encode(json.dumps({"alg": alg, "kid": "k1"}).encode()).decode()
+    assert await rejected_for(v, f"{head}.e30.c2ln", caplog) == "alg not RS256 or ES256"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "jwks_uri",
+    [
+        "https://example.okta.com:99999/keys",
+        "https://[::1/keys",
+        "https://example.okta.com:x/keys",
+        "https://example.okta.com/ke ys",
+        "",
+    ],
+)
+async def test_malformed_jwks_uri_fails_the_fetch_without_raising(
+    make: Make, issuer: Issuer, jwks_uri: str
+) -> None:
+    issuer.metadata = {"issuer": ISSUER, "jwks_uri": jwks_uri}
+    v = make()
+    assert not await v.refresh()
+    assert issuer.other == []
+
+
+@pytest.mark.anyio
+async def test_jwks_uri_with_the_default_port_is_the_issuers_origin(
+    make: Make, issuer: Issuer
+) -> None:
+    issuer.metadata = {"issuer": ISSUER, "jwks_uri": "https://EXAMPLE.okta.com:443/oauth2/v1/keys"}
+    v = make()
+    assert await v.refresh()
+    assert issuer.other == ["https://example.okta.com/oauth2/v1/keys"]
+
+
+@pytest.mark.anyio
+async def test_an_endless_jwks_body_is_cut_off(issuer: Issuer, config: Config) -> None:
+    """The size limit holds while reading, not after buffering the whole body."""
+    sent = 0
+
+    async def endless() -> AsyncIterator[bytes]:
+        nonlocal sent
+        while True:
+            sent += 64 * 1024
+            yield b" " * (64 * 1024)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if str(request.url) == JWKS_URI:
+            return httpx2.Response(200, content=endless())
+        return issuer(request)
+
+    http = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    v = JWTVerifier(http, config)
+    assert not await v.refresh()
+    assert sent <= 512 * 1024
+
+
+@pytest.mark.anyio
+async def test_run_survives_an_unexpected_exception(
+    make: Make, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`run` shares a task group with the server: a bug in a refresh must not stop it."""
+    v = make()
+    calls = 0
+    real = v.refresh
+
+    async def flaky() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("bug")
+        return await real()
+
+    monkeypatch.setattr(v, "refresh", flaky)
+    sleeps: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise anyio.get_cancelled_exc_class()
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await v.run(sleep)
+    assert sleeps == [RETRY_MIN, REFRESH_EVERY]
+    assert v.ready()
+    assert "internal error in JWKS refresh: RuntimeError" in caplog.text

@@ -7,11 +7,11 @@ authorization server and returns a `VerifiedToken` (the SDK's `AccessToken` plus
 
 Checks, in order: size; header (`alg` RS256 or ES256, a `kid`, no `crit`/`b64`); a JWKS key
 with that `kid` and the same algorithm; signature; `iss` exactly `MCP_ISSUER`; `aud` contains
-`MCP_AUDIENCE`; `exp`, `nbf`, `iat` with 60 s skew and `iat` no older than
-`MCP_MAX_TOKEN_AGE`; `cid` (or `client_id`) in `MCP_ALLOWED_CLIENT_IDS`; `uid` an Okta user ID;
-`sub` a string; `scp` (or `scope`) well formed. The required scope itself is the SDK's check
-(`RequireAuthMiddleware`), so a token without it gets 403 `insufficient_scope`, not 401. The
-groups claim is an array of strings or counts as no groups.
+`MCP_AUDIENCE`; `exp` (strict, as the SDK checks it too), `nbf`, `iat` with 60 s skew and
+`iat` no older than `MCP_MAX_TOKEN_AGE`; `cid` (or `client_id`) in `MCP_ALLOWED_CLIENT_IDS`;
+`uid` an Okta user ID; `sub` a string; `scp` (or `scope`) well formed. The required scope
+itself is the SDK's check (`RequireAuthMiddleware`), so a token without it gets 403
+`insufficient_scope`, not 401. The groups claim is an array of strings or counts as no groups.
 
 Keys: discovered from the issuer's RFC 8414 metadata (`issuer` must match, `jwks_uri` on the
 issuer's origin), refreshed in the background (`run`) every half TTL and held for one TTL
@@ -23,12 +23,12 @@ Nothing here logs a token, a claim value or a response body; a rejection is logg
 with a fixed reason.
 """
 
+import json
 import logging
 import math
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
-from urllib.parse import urlsplit
 
 import anyio
 import httpx2
@@ -38,12 +38,14 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from okta_mcp.auth.principal import Principal, VerifiedToken
 from okta_mcp.config import Config
 from okta_mcp.exec.resolve import USER_ID
+from okta_mcp.logs import log_internal
+from okta_mcp.okta.client import on_origin
 
 log = logging.getLogger(__name__)
 
 ALGORITHMS = frozenset({"RS256", "ES256"})
 LEEWAY = 60
-"""Clock skew allowed on `exp`, `nbf` and `iat` (s)."""
+"""Clock skew allowed on `nbf`, `iat` and the token age (s); none on `exp` (see `_accept`)."""
 JWKS_TTL = 3600.0
 """How long fetched keys are trusted without a successful refresh (s)."""
 REFRESH_EVERY = JWKS_TTL / 2
@@ -72,7 +74,10 @@ def _number(value: object) -> float | None:
     """A JWT NumericDate: a finite int or float, not a bool."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    f = float(value)
+    try:
+        f = float(value)
+    except OverflowError:  # an int beyond float range
+        return None
     return f if math.isfinite(f) else None
 
 
@@ -128,11 +133,6 @@ def parse_jwks(document: object) -> dict[str, jwt.PyJWK]:
     return found
 
 
-def _origin(url: str) -> tuple[str, str, int | None]:
-    parts = urlsplit(url)
-    return parts.scheme, (parts.hostname or ""), parts.port
-
-
 class JWTVerifier:
     """The SDK `TokenVerifier` for HTTP (design §8.5), plus `ready()` and the background `run`
     that keeps its keys fresh. `clock` is wall time (token dates); `monotonic` times the key
@@ -151,8 +151,7 @@ class JWTVerifier:
         self._http = http
         self._issuer = config.issuer
         self._audience = config.audience
-        self._clients = frozenset(config.allowed_client_ids)
-        self._any_client = config.allowed_client_ids == ("*",)
+        self._clients = frozenset(config.allowed_client_ids)  # `*` only ever alone (Config)
         self._groups_claim = config.groups_claim
         self._max_age = config.max_token_age
         self._clock = clock
@@ -171,10 +170,17 @@ class JWTVerifier:
 
     async def run(self, sleep: Callable[[float], Awaitable[None]] = anyio.sleep) -> None:
         """Load the keys, then keep them fresh, until cancelled. A failed fetch is retried with
-        backoff; the old keys keep serving until their TTL runs out."""
+        backoff; the old keys keep serving until their TTL runs out. An unexpected exception (a
+        bug) is logged and retried the same way: it shares a task group with the server, so
+        letting it out would stop the server rather than just leave it not ready."""
         delay = RETRY_MIN
         while True:
-            if await self.refresh():
+            try:
+                ok = await self.refresh()
+            except Exception as e:
+                log_internal(log, "JWKS refresh", e)
+                ok = False
+            if ok:
                 delay = RETRY_MIN
                 await sleep(REFRESH_EVERY)
             else:
@@ -209,14 +215,18 @@ class JWTVerifier:
         return True
 
     async def _get_json(self, url: str) -> object:
-        response = await self._http.get(url, headers={"accept": "application/json"})
-        if response.status_code != 200:
-            raise _FetchError(f"HTTP {response.status_code}")
-        if len(response.content) > MAX_DOCUMENT_BYTES:
-            raise _FetchError("response too large")
+        """GET `url` as JSON, reading at most `MAX_DOCUMENT_BYTES` of the body."""
+        body = bytearray()
+        async with self._http.stream("GET", url, headers={"accept": "application/json"}) as r:
+            if r.status_code != 200:
+                raise _FetchError(f"HTTP {r.status_code}")
+            async for chunk in r.aiter_bytes():
+                body += chunk
+                if len(body) > MAX_DOCUMENT_BYTES:
+                    raise _FetchError("response too large")
         try:
-            return response.json()
-        except ValueError:
+            return json.loads(body)
+        except (ValueError, RecursionError):
             raise _FetchError("response is not JSON") from None
 
     async def _fetch_keys(self) -> dict[str, jwt.PyJWK]:
@@ -227,12 +237,19 @@ class JWTVerifier:
         if m.get("issuer") != self._issuer:
             raise _FetchError("metadata issuer is not MCP_ISSUER")
         jwks_uri = m.get("jwks_uri")
-        # Same scheme, host and port as the issuer: keys come from the issuer, nowhere else.
-        if not isinstance(jwks_uri, str) or _origin(jwks_uri) != _origin(self._issuer):
-            raise _FetchError("metadata jwks_uri is not on the issuer's origin")
-        if any(c.isspace() or not c.isprintable() for c in jwks_uri) or "@" in jwks_uri:
+        if not isinstance(jwks_uri, str) or any(
+            c.isspace() or not c.isprintable() for c in jwks_uri
+        ):
             raise _FetchError("metadata jwks_uri is malformed")
-        return parse_jwks(await self._get_json(jwks_uri))
+        try:
+            url = httpx2.URL(jwks_uri)
+        except (httpx2.InvalidURL, ValueError):
+            raise _FetchError("metadata jwks_uri is malformed") from None
+        # Same scheme, host and port as the issuer, no userinfo: keys come from the issuer,
+        # nowhere else.
+        if not on_origin(url, httpx2.URL(self._issuer)):
+            raise _FetchError("metadata jwks_uri is not on the issuer's origin")
+        return parse_jwks(await self._get_json(str(url)))
 
     async def _key(self, kid: str) -> jwt.PyJWK | None:
         if (key := self._keys.get(kid)) is not None:
@@ -266,7 +283,7 @@ class JWTVerifier:
             raise _Rejected("not a JWT of acceptable size")
         header = jwt.get_unverified_header(token)
         alg, kid = header.get("alg"), header.get("kid")
-        if alg not in ALGORITHMS:
+        if not isinstance(alg, str) or alg not in ALGORITHMS:
             raise _Rejected("alg not RS256 or ES256")
         if _FORBIDDEN_HEADERS & header.keys():
             raise _Rejected("crit or b64 header")
@@ -281,7 +298,7 @@ class JWTVerifier:
         claims: dict[str, object] = jwt.decode(
             token,
             key=key,
-            algorithms=[cast(str, alg)],
+            algorithms=[alg],
             options={
                 "verify_signature": True,
                 "verify_exp": False,
@@ -310,7 +327,8 @@ class JWTVerifier:
         exp, iat = _number(claims.get("exp")), _number(claims.get("iat"))
         if exp is None or iat is None:
             raise _Rejected("exp or iat missing or not a number")
-        if exp <= now - LEEWAY:
+        # No skew on `exp`: the SDK checks `expires_at` against its own clock with none.
+        if exp <= now:
             raise _Rejected("expired")
         if iat > now + LEEWAY:
             raise _Rejected("iat in the future")
@@ -355,7 +373,7 @@ class JWTVerifier:
         if len(set(cast(list[str], given))) != 1:
             raise _Rejected("cid and client_id disagree")
         client_id = cast(str, given[0])
-        if not self._any_client and client_id not in self._clients:
+        if "*" not in self._clients and client_id not in self._clients:
             raise _Rejected("cid not in MCP_ALLOWED_CLIENT_IDS")
         return client_id
 
