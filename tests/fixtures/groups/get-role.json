@@ -1,0 +1,18 @@
+{
+  "source": "generated",
+  "operation": "getGroupAssignedRole",
+  "body": {
+    "id": "grasraHPx7i79ajaJ0g3",
+    "label": "Organization Administrator",
+    "type": "ORG_ADMIN",
+    "status": "ACTIVE",
+    "created": "2019-02-27T14:56:55.000Z",
+    "lastUpdated": "2019-02-27T14:56:55.000Z",
+    "assignmentType": "GROUP",
+    "_links": {
+      "assignee": {
+        "href": "https://example.okta.com/api/v1/groups/00gsr2IepS8YhHRFf0g3"
+      }
+    }
+  }
+}

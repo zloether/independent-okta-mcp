@@ -94,7 +94,7 @@ def ref_target(spec: Mapping[str, Any], ref: str) -> Any:
     return node
 
 
-class _Resolver:
+class Resolver:
     def __init__(self, spec: Mapping[str, Any]) -> None:
         self._spec = spec
 
@@ -173,7 +173,7 @@ class _Resolver:
 
 
 def _params(
-    r: _Resolver, path: str, path_item: dict[str, Any], op: dict[str, Any]
+    r: Resolver, path: str, path_item: dict[str, Any], op: dict[str, Any]
 ) -> dict[str, Param]:
     # Operation-level parameters override path-level ones with the same name and location.
     merged: dict[tuple[str, str], dict[str, Any]] = {}
@@ -218,7 +218,7 @@ def _scope_sets(op: dict[str, Any]) -> tuple[frozenset[str], ...]:
     return tuple(sorted(sets, key=sorted))
 
 
-def _response(r: _Resolver, op: dict[str, Any]) -> Response:
+def _response(r: Resolver, op: dict[str, Any]) -> Response:
     ok = r.deref(op.get("responses", {}).get("200", {}))
     schema = r.deref(ok.get("content", {}).get("application/json", {}).get("schema"))
     if not isinstance(schema, dict):
@@ -293,7 +293,7 @@ def build_index(spec: Mapping[str, Any]) -> SpecIndex:
 
 
 def _build_index(spec: Mapping[str, Any]) -> SpecIndex:
-    r = _Resolver(spec)
+    r = Resolver(spec)
     operations: dict[str, Operation] = {}
     non_get: dict[str, str] = {}
     all_paths = [_segments(path) for path in cast(dict[str, Any], spec["paths"])]
