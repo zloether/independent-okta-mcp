@@ -172,14 +172,23 @@ Make = Callable[..., JWTVerifier]
 
 
 @pytest.fixture
-def make(issuer: Issuer, clock: Clock, config: Config) -> Make:
-    def build(cfg: Config | None = None) -> JWTVerifier:
-        http = httpx2.AsyncClient(transport=httpx2.MockTransport(issuer), follow_redirects=False)
+async def make(issuer: Issuer, clock: Clock, config: Config) -> AsyncIterator[Make]:
+    """Builds verifiers on the mocked issuer (or `handler`), closing their clients after."""
+    clients: list[httpx2.AsyncClient] = []
+
+    def build(
+        cfg: Config | None = None, handler: Callable[[httpx2.Request], Any] | None = None
+    ) -> JWTVerifier:
+        transport = httpx2.MockTransport(handler or issuer)
+        http = httpx2.AsyncClient(transport=transport, follow_redirects=False)
+        clients.append(http)
         return JWTVerifier(
             http, cfg or config, clock=lambda: clock.wall, monotonic=lambda: clock.mono
         )
 
-    return build
+    yield build
+    for http in clients:
+        await http.aclose()
 
 
 async def loaded(make: Make, cfg: Config | None = None) -> JWTVerifier:
@@ -587,7 +596,9 @@ async def test_warm_cache_serves_until_ttl(make: Make, issuer: Issuer, clock: Cl
     assert v.ready()
     clock.advance(1)
     assert not v.ready()
-    assert await v.verify_token(sign()) is None
+    # Past the TTL it is the gate that refuses (503); the verifier itself still answers, so
+    # that the gate's readings are the only readiness readings (`test_app`).
+    assert await v.verify_token(sign(claims(exp=int(clock.wall) + 600))) is not None
 
 
 @pytest.mark.anyio
@@ -745,7 +756,7 @@ def test_needs_the_http_auth_settings(tmp_path: Path) -> None:
     }
     cfg = load_config(values)
     with pytest.raises(ValueError, match="MCP_ISSUER"):
-        JWTVerifier(httpx2.AsyncClient(), cfg)
+        JWTVerifier(httpx2.AsyncClient(), cfg)  # raises before the client is used
 
 
 # --- in the app -------------------------------------------------------------------------
@@ -860,7 +871,7 @@ async def test_jwks_uri_with_the_default_port_is_the_issuers_origin(
 
 
 @pytest.mark.anyio
-async def test_an_endless_jwks_body_is_cut_off(issuer: Issuer, config: Config) -> None:
+async def test_an_endless_jwks_body_is_cut_off(make: Make, issuer: Issuer) -> None:
     """The size limit holds while reading, not after buffering the whole body."""
     sent = 0
 
@@ -875,8 +886,7 @@ async def test_an_endless_jwks_body_is_cut_off(issuer: Issuer, config: Config) -
             return httpx2.Response(200, content=endless())
         return issuer(request)
 
-    http = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    v = JWTVerifier(http, config)
+    v = make(handler=handler)
     assert not await v.refresh()
     assert sent <= 512 * 1024
 
@@ -886,8 +896,6 @@ async def test_run_survives_an_unexpected_exception(
     make: Make, issuer: Issuer, caplog: pytest.LogCaptureFixture
 ) -> None:
     """`run` shares a task group with the server: a bug in a fetch must not stop it."""
-    v = make()
-    real = issuer.__call__
     calls = 0
 
     def flaky(request: httpx2.Request) -> httpx2.Response:
@@ -895,9 +903,9 @@ async def test_run_survives_an_unexpected_exception(
         calls += 1
         if calls == 1:
             raise RuntimeError("bug")
-        return real(request)
+        return issuer(request)
 
-    v._http = httpx2.AsyncClient(transport=httpx2.MockTransport(flaky))  # pyright: ignore[reportPrivateUsage]
+    v = make(handler=flaky)
     sleeps: list[float] = []
 
     async def sleep(seconds: float) -> None:
@@ -917,12 +925,16 @@ async def test_unknown_kid_refetch_bug_is_none_not_a_raise(
     make: Make, issuer: Issuer, clock: Clock, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Any sender can reach the refetch with a new `kid`; a bug there must not escape."""
-    v = await loaded(make)
+    broken = False
 
-    def broken(request: httpx2.Request) -> httpx2.Response:
-        raise RuntimeError("bug")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if broken:
+            raise RuntimeError("bug")
+        return issuer(request)
 
-    v._http = httpx2.AsyncClient(transport=httpx2.MockTransport(broken))  # pyright: ignore[reportPrivateUsage]
+    v = make(handler=handler)
+    assert await v.refresh()
+    broken = True
     clock.advance(UNKNOWN_KID_INTERVAL)
     assert await v.verify_token(sign(kid="new")) is None
     assert "internal error in JWKS refresh: RuntimeError" in caplog.text
@@ -930,19 +942,26 @@ async def test_unknown_kid_refetch_bug_is_none_not_a_raise(
 
 
 @pytest.mark.anyio
-async def test_compressed_documents_are_refused(issuer: Issuer, config: Config) -> None:
-    """The cap counts raw bytes; a compressed body would expand past it before the check."""
+@pytest.mark.parametrize("pad", [0, 300_000])
+async def test_compressed_documents_are_decoded_and_capped(
+    make: Make, issuer: Issuer, caplog: pytest.LogCaptureFixture, pad: int
+) -> None:
+    """Asked for uncompressed; a compressed answer is still taken (refusing it would leave
+    `/mcp` at 503 behind a compressing proxy), and the cap counts decoded bytes."""
     import gzip
 
     seen: list[str] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(request.headers.get("accept-encoding", ""))
-        if str(request.url) == METADATA:
-            body = gzip.compress(json.dumps(issuer.metadata).encode())
+        if str(request.url) == JWKS_URI:
+            doc = {"keys": issuer.keys, "pad": " " * pad}
+            body = gzip.compress(json.dumps(doc).encode())
             return httpx2.Response(200, content=body, headers={"content-encoding": "gzip"})
         return issuer(request)
 
-    v = JWTVerifier(httpx2.AsyncClient(transport=httpx2.MockTransport(handler)), config)
-    assert not await v.refresh()
-    assert seen == ["identity"]
+    v = make(handler=handler)
+    assert await v.refresh() is (pad == 0)
+    assert seen == ["identity", "identity"]
+    if pad:
+        assert "JWKS fetch from the issuer failed: response too large" in caplog.text

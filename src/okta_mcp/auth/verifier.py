@@ -16,8 +16,9 @@ itself is the SDK's check (`RequireAuthMiddleware`), so a token without it gets 
 Keys: discovered from the issuer's RFC 8414 metadata (`issuer` must match, `jwks_uri` on the
 issuer's origin), refreshed in the background (`run`) every half TTL and held for one TTL
 (1 h), so a warm cache outlives an issuer outage by at least 30 min. An unknown `kid` refetches
-at most once per 60 s. `ready()` is true while keys are held and not past their TTL; until then
-`okta_mcp.app.ReadyGate` answers `/mcp` with 503. Startup doesn't wait for the issuer.
+at most once per 60 s. `ready()` is true while keys are held and not past their TTL; otherwise
+`okta_mcp.app.ReadyGate` answers `/mcp` with 503 (the gate, not `verify_token`, applies the
+TTL). Startup doesn't wait for the issuer.
 
 Nothing here logs a token, a claim value or a response body; a rejection is logged at DEBUG
 with a fixed reason.
@@ -170,10 +171,17 @@ class JWTVerifier:
 
     async def run(self, sleep: Callable[[float], Awaitable[None]] = anyio.sleep) -> None:
         """Load the keys, then keep them fresh, until cancelled. A failed fetch is retried with
-        backoff; the old keys keep serving until their TTL runs out."""
+        backoff; the old keys keep serving until their TTL runs out. `refresh` catches a fetch
+        bug itself (the unknown-kid path needs that too); this second guard covers the rest,
+        since `run` shares a task group with the server and a raise would stop it."""
         delay = RETRY_MIN
         while True:
-            if await self.refresh():
+            try:
+                ok = await self.refresh()
+            except Exception as e:
+                log_internal(log, "JWKS refresh loop", e)
+                ok = False
+            if ok:
                 delay = RETRY_MIN
                 await sleep(REFRESH_EVERY)
             else:
@@ -213,16 +221,16 @@ class JWTVerifier:
         return True
 
     async def _get_json(self, url: str) -> object:
-        """GET `url` as JSON, reading at most `MAX_DOCUMENT_BYTES` of the body. Uncompressed
-        only: a decoder expands each chunk before the cap could see it."""
+        """GET `url` as JSON, at most `MAX_DOCUMENT_BYTES` of decoded body. Asks for an
+        uncompressed body; one that comes compressed anyway is still taken (refusing it would
+        leave `/mcp` at 503 behind any proxy that compresses), and the cap then holds to within
+        one decoded network chunk."""
         body = bytearray()
         headers = {"accept": "application/json", "accept-encoding": "identity"}
         async with self._http.stream("GET", url, headers=headers) as r:
             if r.status_code != 200:
                 raise _FetchError(f"HTTP {r.status_code}")
-            if r.headers.get("content-encoding", "identity").strip().lower() != "identity":
-                raise _FetchError("response is compressed")
-            async for chunk in r.aiter_bytes():  # identity: no decoder runs
+            async for chunk in r.aiter_bytes():
                 body += chunk
                 if len(body) > MAX_DOCUMENT_BYTES:
                     raise _FetchError("response too large")
@@ -269,8 +277,13 @@ class JWTVerifier:
     # --- verification -----------------------------------------------------------------------
 
     async def verify_token(self, token: str) -> VerifiedToken | None:
-        if not self.ready():
-            return None  # `ReadyGate` answers 503 before any handler; never 401 for this
+        """Readiness (the keys' TTL) is not checked here: `okta_mcp.app.ReadyGate` decides it
+        from its own two readings around the SDK's auth, and every request that reaches a
+        handler passes it. A third reading here would let the three disagree mid-request and
+        give a valid token 401 (ready, expired here, reloaded by the gate). With no keys at all
+        there is nothing to verify against."""
+        if not self._keys:
+            return None
         try:
             return await self._verify(token)
         except _Rejected as e:

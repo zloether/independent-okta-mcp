@@ -652,8 +652,8 @@ async def test_gate_is_the_endpoints_under_a_root_path(config: Config) -> None:
 
 class ReadinessSequence(FakeVerifier):
     """Readiness changes mid-request: `readings` are the successive `ready()` answers (the last
-    repeats). Like the real verifier, `verify_token` reads readiness itself and answers `None`
-    when not ready."""
+    repeats). Like the real verifier, `verify_token` doesn't read readiness: the gate's two
+    readings are the only ones."""
 
     def __init__(self, tokens: dict[str, AccessToken], readings: list[bool]) -> None:
         super().__init__(tokens)
@@ -664,42 +664,27 @@ class ReadinessSequence(FakeVerifier):
         self.read += 1
         return self.readings[min(self.read, len(self.readings)) - 1]
 
-    async def verify_token(self, token: str) -> AccessToken | None:
-        self.calls += 1
-        return self.tokens.get(token) if self.ready() else None
-
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    "readings",
+    ("readings", "status"),
     [
-        [False, True],  # keys load between the snapshot and the verifier
-        [False, False, True],  # ... between the verifier and the gate
-        [True, False],  # keys expire between the snapshot and the verifier
-        [True, True, False],  # ... between the verifier and the gate
+        ([False, True], 503),  # keys load during the request
+        ([True, False], 503),  # keys expire during the request
+        ([False, False], 503),
+        ([True, True], 200),
     ],
 )
-async def test_readiness_changing_mid_request_is_503_not_401(
-    config: Config, readings: list[bool]
+async def test_readiness_changing_mid_request_is_never_a_401(
+    config: Config, readings: list[bool], status: int
 ) -> None:
-    """Whatever the verifier saw, a request is never answered 401 for readiness: the gate
-    needs the verifier ready both before the SDK's auth (snapshot) and after it."""
+    """The gate reads readiness before the SDK's auth (snapshot) and at the endpoint; both must
+    be true, and nothing else reads it, so a valid token is never 401 for readiness."""
     verifier = ReadinessSequence(TOKENS, readings)
     async with serving(config, verifier) as app, http_for(app) as http:
         r = await http.post(
             "/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
         )
-    assert r.status_code == 503
+    assert r.status_code == status
     assert verifier.calls == 1
-    # snapshot, verifier, then the gate's own reading (skipped if the snapshot said no)
-    assert verifier.read == (3 if readings[0] else 2)
-
-
-@pytest.mark.anyio
-async def test_ready_throughout_serves(config: Config) -> None:
-    verifier = ReadinessSequence(TOKENS, [True])
-    async with serving(config, verifier) as app, http_for(app) as http:
-        r = await http.post(
-            "/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
-        )
-    assert r.status_code == 200
+    assert verifier.read == (2 if readings[0] else 1)

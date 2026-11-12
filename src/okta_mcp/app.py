@@ -172,9 +172,9 @@ class ReadyGate:
     503 + `Retry-After` unless the verifier was ready both when the request arrived
     (`ReadySnapshot`, before the SDK's auth) and is still ready now (§11.3: JWKS loaded).
     Without it a verifier that can't verify would answer a valid token with 401
-    `invalid_token`, and clients would throw the token away and sign in again in a loop. The
-    verifier reads readiness in between; checking on both sides of it covers keys loading
-    (not ready, then ready) and expiring (ready, then not) during the request. Wrapping the
+    `invalid_token`, and clients would throw the token away and sign in again in a loop. These
+    two readings are the only ones (the verifier doesn't read readiness), so keys loading or
+    expiring mid-request can only mean 503, never 401 for a valid token. Wrapping the
     endpoint, not matching paths, means the gate sees exactly the requests the endpoint
     serves. No snapshot (a wiring bug) is not ready."""
 
