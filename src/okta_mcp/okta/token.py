@@ -18,7 +18,7 @@ import logging
 import re
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol
@@ -32,6 +32,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr
 
 from okta_mcp.config import ConfigError
+from okta_mcp.logs import log_internal
 from okta_mcp.okta.dpop import DPoP
 
 log = logging.getLogger(__name__)
@@ -68,6 +69,36 @@ class TokenProvider(Protocol):
         ...
 
 
+KEEP_FRESH_EVERY = 30.0
+"""Less than `_REFRESH_MARGIN`, so the cached token is renewed before it expires."""
+
+
+class RefreshableTokens(TokenProvider, Protocol):
+    def ready(self) -> bool:
+        """A usable token is held now (for `/readyz`); reads state, never fetches."""
+        ...
+
+
+async def keep_fresh(
+    provider: TokenProvider,
+    every: float = KEEP_FRESH_EVERY,
+    sleep: Callable[[float], Awaitable[None]] = anyio.sleep,
+) -> None:
+    """Ask `provider` for a token every `every` seconds until cancelled, so `ready()` reflects
+    a token obtained within the last refresh cycle without a probe ever fetching one (§11.4).
+    Served from the cache while it is fresh; a failure is the provider's to log. Anything
+    else (a bug) is logged and retried: this shares a task group with the server, so letting
+    it out would stop the server rather than just leave it not ready."""
+    while True:
+        try:
+            await provider.token()
+        except TokenError:
+            pass
+        except Exception as e:
+            log_internal(log, "service token refresh", e)
+        await sleep(every)
+
+
 def load_private_key(path: Path) -> rsa.RSAPrivateKey:
     """The service app's signing key from `OKTA_PRIVATE_KEY_FILE`; Okta needs RSA ≥ 2048 bits
     for RS256. The error names the file, never its contents."""
@@ -94,6 +125,9 @@ class SSWSProvider:
 
     def invalidate(self, token: ServiceToken) -> None:
         pass  # nothing to fetch again
+
+    def ready(self) -> bool:
+        return True
 
 
 class ClientCredentialsProvider:
@@ -157,6 +191,11 @@ class ClientCredentialsProvider:
         if token == self._token:
             self._token = None
             self._expires_at = 0.0
+
+    def ready(self) -> bool:
+        """A token is held and hasn't expired (§11.4: obtained within the last refresh cycle).
+        Reads state; never fetches."""
+        return self._token is not None and self._monotonic() < self._expires_at
 
     def _cached(self) -> ServiceToken | None:
         if self._monotonic() < self._expires_at - _REFRESH_MARGIN:

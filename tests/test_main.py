@@ -10,12 +10,12 @@ from mcp import Client, StdioServerParameters
 
 from okta_mcp import __main__ as entry
 from okta_mcp.__main__ import (
-    HTTP_NOT_BUILT,
     HTTP_REFUSES_DEV_MODE,
     STARTUP_FAILED,
     STDIO_NEEDS_DEV_MODE,
     main,
 )
+from okta_mcp.config import Config
 
 PILOT = Path(__file__).parent / "policy" / "fixtures" / "pilot.yaml"
 READERS = "00g1readers000000000"
@@ -102,11 +102,26 @@ def test_http_refuses_dev_mode_even_without_ssws(
     assert failed(capsys, main([])) == [HTTP_REFUSES_DEV_MODE]
 
 
-def test_http_not_built_yet(
+def test_http_serves_without_dev_mode(clean_env: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    served: list[Config] = []
+
+    async def serve(config: Config) -> None:
+        served.append(config)
+
+    clean_env.setattr(entry, "serve_http", serve)
+    set_env(clean_env, env(tmp_path, dev=False))
+    assert main([]) == 0
+    (config,) = served
+    assert not config.dev_mode
+
+
+def test_http_startup_errors_are_listed(
     clean_env: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """The real `serve_http`: the unreadable key fails before the port opens, as exit 2."""
     set_env(clean_env, env(tmp_path, dev=False))
-    assert failed(capsys, main([])) == [HTTP_NOT_BUILT]
+    (line,) = failed(capsys, main([]))
+    assert line.startswith("OKTA_PRIVATE_KEY_FILE:")
 
 
 def test_stdio_needs_dev_mode(

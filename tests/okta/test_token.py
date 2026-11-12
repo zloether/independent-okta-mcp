@@ -18,11 +18,13 @@ from pydantic import SecretStr
 from okta_mcp.config import ConfigError
 from okta_mcp.okta.dpop import DPoP
 from okta_mcp.okta.token import (
+    KEEP_FRESH_EVERY,
     ClientCredentialsProvider,
     ServiceToken,
     SSWSProvider,
     TokenError,
     TokenProvider,
+    keep_fresh,
     load_private_key,
 )
 
@@ -219,6 +221,79 @@ async def test_cached_then_refreshed_under_a_minute(key: rsa.RSAPrivateKey) -> N
     clock.now += 1
     await p.token()
     assert len(okta.requests) == 2
+
+
+@pytest.mark.anyio
+async def test_ready_while_a_token_is_held(key: rsa.RSAPrivateKey) -> None:
+    """`/readyz` (§11.4): reads state, never fetches."""
+    clock = Clock()
+    okta = Okta(ok(expires_in=3600), httpx2.Response(500))
+    p = provider(okta, key, monotonic=clock)
+    assert not p.ready()
+    assert okta.requests == []
+    token = await p.token()
+    assert p.ready()
+    clock.now += 3599
+    assert p.ready()
+    clock.now += 1
+    assert not p.ready()
+    p.invalidate(token)
+    assert not p.ready()
+    with pytest.raises(TokenError):
+        await p.token()
+    assert not p.ready()
+
+
+@pytest.mark.anyio
+async def test_keep_fresh_renews_before_expiry(key: rsa.RSAPrivateKey) -> None:
+    clock = Clock()
+    okta = Okta(ok(expires_in=3600), httpx2.Response(500), ok(expires_in=3600))
+    p = provider(okta, key, monotonic=clock)
+    ready: list[bool] = []
+
+    async def sleep(seconds: float) -> None:
+        assert seconds == KEEP_FRESH_EVERY
+        ready.append(p.ready())
+        clock.now += 3600 - 60  # into the refresh margin each time
+        if len(ready) == 3:
+            raise anyio.get_cancelled_exc_class()
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await keep_fresh(p, sleep=sleep)
+    # fetched; refetch failed (old token still valid for 60 s); fetched again
+    assert ready == [True, True, True]
+    assert len(okta.requests) == 3
+
+
+@pytest.mark.anyio
+async def test_keep_fresh_survives_an_unexpected_exception(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """It shares a task group with the server: a bug must not stop the server."""
+
+    class Broken(FakeTokenProvider):
+        async def token(self) -> ServiceToken:
+            self.calls += 1
+            raise RuntimeError("bug")
+
+    p = Broken()
+    sleeps = 0
+
+    async def sleep(seconds: float) -> None:
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps == 3:
+            raise anyio.get_cancelled_exc_class()
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await keep_fresh(p, sleep=sleep)
+    assert p.calls == 3
+    assert "internal error in service token refresh: RuntimeError" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_ssws_is_always_ready() -> None:
+    assert SSWSProvider(SecretStr("x")).ready()
 
 
 @pytest.mark.anyio

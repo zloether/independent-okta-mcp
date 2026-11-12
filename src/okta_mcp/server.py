@@ -41,8 +41,8 @@ from okta_mcp.okta.dpop import DPoP
 from okta_mcp.okta.ratelimit import RequestLimiter
 from okta_mcp.okta.token import (
     ClientCredentialsProvider,
+    RefreshableTokens,
     SSWSProvider,
-    TokenProvider,
     load_private_key,
 )
 from okta_mcp.policy.engine import Engine
@@ -72,9 +72,11 @@ INSTRUCTIONS = (
 class Runtime:
     tools: Tools
     resources: Resources
+    tokens: RefreshableTokens
+    """The service-app token provider, for `/readyz` and its background refresh (§11.4)."""
 
 
-def _tokens(config: Config, http: httpx2.AsyncClient) -> tuple[TokenProvider, DPoP | None]:
+def _tokens(config: Config, http: httpx2.AsyncClient) -> tuple[RefreshableTokens, DPoP | None]:
     if config.okta_api_token is not None:
         # `Config` accepts SSWS only in dev mode, outside production (§8.6).
         return SSWSProvider(config.okta_api_token), None
@@ -142,7 +144,7 @@ def build_runtime(config: Config, http: httpx2.AsyncClient) -> Runtime:
         max_items=config.max_items,
         guides=resources.guides,
     )
-    return Runtime(tools=tools, resources=resources)
+    return Runtime(tools=tools, resources=resources, tokens=tokens)
 
 
 def _text(text: str) -> list[types.ContentBlock]:
