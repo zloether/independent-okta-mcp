@@ -14,6 +14,7 @@ and the policy refuses at call time without an Okta request.
 """
 
 import json
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -60,6 +61,9 @@ AS_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 """The mock authorization server's signing key; its public half is the JWKS."""
 FORGED_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 SERVICE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+EXPIRED: Any = object()
+"""Stands for an `exp` two minutes before the test runs."""
 
 MODES = {"2026-07-28": "2026-07-28", "legacy": "2025-11-25"}
 """Client `mode` → the protocol version it must end up speaking (design §5.2)."""
@@ -272,14 +276,18 @@ INIT = {
 JSON_HEADERS = {"accept": "application/json, text/event-stream", "content-type": "application/json"}
 
 
+CHALLENGE_PARAM = re.compile(r'([a-z_]+)="([^"\\]*)"(?:, |$)')
+
+
 def challenge_params(header: str) -> dict[str, str]:
+    """The auth-params of a `Bearer` challenge. The whole header must be `name="value"` pairs
+    joined by `, ` with no quote or backslash in a value (what `RequireToken` promises), or
+    the parse fails rather than skipping a malformed part."""
     scheme, _, rest = header.partition(" ")
     assert scheme == "Bearer"
-    params: dict[str, str] = {}
-    for part in rest.split(", "):
-        name, _, value = part.partition("=")
-        params[name] = value.strip('"')
-    return params
+    pairs = list(CHALLENGE_PARAM.finditer(rest))
+    assert "".join(m.group(0) for m in pairs) == rest, header
+    return {m.group(1): m.group(2) for m in pairs}
 
 
 # --- 401 → discovery → token → call -----------------------------------------------------
@@ -290,7 +298,8 @@ async def test_a_client_follows_the_401_to_a_token_that_works(
     running: Running, config: Config, world: World
 ) -> None:
     """The path a client takes (design §8.1): 401 names the PRM URL and the scope; PRM names
-    the issuer; the issuer's metadata is the mocked AS's; a token that AS signs is accepted."""
+    the issuer; a token that issuer signs (the key the verifier found through its metadata) is
+    accepted."""
     async with running(config, world) as app, http_for(app) as http:
         refused = await http.post("/mcp", json=INIT, headers=JSON_HEADERS)
         assert refused.status_code == 401
@@ -309,11 +318,6 @@ async def test_a_client_follows_the_401_to_a_token_that_works(
         root = await http.get("/.well-known/oauth-protected-resource")
         assert root.json() == prm.json()
 
-        # The client's own fetch of the AS metadata, on the same mocked AS the verifier uses.
-        async with httpx2.AsyncClient(transport=httpx2.MockTransport(world)) as outside:
-            as_metadata = (await outside.get(AS_METADATA)).json()
-        assert as_metadata["issuer"] == issuer
-
         token = access_token(READERS)
         accepted = await http.post(
             "/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": f"Bearer {token}"}
@@ -324,21 +328,30 @@ async def test_a_client_follows_the_401_to_a_token_that_works(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("token", "status", "error"),
+    ("overrides", "status", "error"),
+    # Overrides, not tokens: a token minted at collection would age with the run.
     [
-        (access_token(READERS, key=FORGED_KEY), 401, "invalid_token"),
-        (access_token(READERS, kid="nope"), 401, "invalid_token"),
-        (access_token(READERS, aud="https://other.example.com/mcp"), 401, "invalid_token"),
-        (access_token(READERS, iss=ORG), 401, "invalid_token"),
-        (access_token(READERS, cid="0oa1otherclient00000"), 401, "invalid_token"),
-        (access_token(READERS, exp=int(time.time()) - 120), 401, "invalid_token"),
-        (access_token(READERS, scp=["openid"]), 403, "insufficient_scope"),
+        ({"key": FORGED_KEY}, 401, "invalid_token"),
+        ({"kid": "nope"}, 401, "invalid_token"),
+        ({"aud": "https://other.example.com/mcp"}, 401, "invalid_token"),
+        ({"iss": ORG}, 401, "invalid_token"),
+        ({"cid": "0oa1otherclient00000"}, 401, "invalid_token"),
+        ({"exp": EXPIRED}, 401, "invalid_token"),
+        ({"scp": ["openid"]}, 403, "insufficient_scope"),
     ],
     ids=["forged", "unknown-kid", "wrong-aud", "wrong-iss", "other-client", "expired", "scope"],
 )
 async def test_tokens_the_verifier_refuses(
-    running: Running, config: Config, world: World, token: str, status: int, error: str
+    running: Running,
+    config: Config,
+    world: World,
+    overrides: dict[str, Any],
+    status: int,
+    error: str,
 ) -> None:
+    if overrides.get("exp") is EXPIRED:
+        overrides = {**overrides, "exp": int(time.time()) - 120}
+    token = access_token(READERS, **overrides)
     async with (
         running(config, world) as app,
         http_for(app, authorization=f"Bearer {token}") as http,
@@ -354,10 +367,11 @@ async def test_tokens_the_verifier_refuses(
 
 @pytest.mark.anyio
 async def test_mcp_is_503_until_the_issuer_answers(
-    running: Running, config: Config, world: World
+    running: Running, config: Config, world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A cold JWKS is 503 for a valid token, never 401 (§11.3); once the background refresh
-    gets the keys (after its first 1 s backoff), the same token works."""
+    gets the keys (after its first backoff, shortened here), the same token works."""
+    monkeypatch.setattr("okta_mcp.auth.verifier.RETRY_MIN", 0.01)
     world.issuer_up = False
     token = access_token(READERS)
     async with (
@@ -523,8 +537,9 @@ async def test_protocol_smoke(running: Running, config: Config, world: World, mo
     assert isinstance(block, types.TextContent)
     assert "search" in block.text
     assert resources.resources
-    # Every request after the first names the negotiated version (the 2025-11-25 transport
-    # rule; 2026-07-28 sends it on every request).
-    versions = {h.get("mcp-protocol-version") for h in recorder.headers[1:]}
-    assert versions == {MODES[mode]}
+    # 2026-07-28 has no handshake (the client adopts the pinned version, so
+    # `client.protocol_version` alone proves nothing): every request must carry the version.
+    # 2025-11-25 sends it on every request after `initialize`, whose result negotiated it.
+    sent = recorder.headers if mode != "legacy" else recorder.headers[1:]
+    assert {h.get("mcp-protocol-version") for h in sent} == {MODES[mode]}
     assert all("mcp-session-id" not in h for h in recorder.headers)

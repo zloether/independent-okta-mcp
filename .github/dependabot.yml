@@ -9,6 +9,9 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+        # Its own PR: `app._gate_endpoint` depends on SDK internals and refuses to build when
+        # they change, so an mcp bump must be bisectable from the rest.
+        exclude-patterns: [mcp]
 
   - package-ecosystem: github-actions
     directory: /
