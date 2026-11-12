@@ -13,8 +13,15 @@ variable "mcp_public_url" {
   type        = string
 
   validation {
-    condition     = can(regex("^(https://[^/]+|http://(127\\.0\\.0\\.1|localhost)(:[0-9]+)?)/mcp$", var.mcp_public_url))
-    error_message = "Must be an https URL ending in /mcp, the endpoint the server serves (http only for 127.0.0.1/localhost)."
+    condition     = can(regex("^(https://[a-z0-9-]+(\\.[a-z0-9-]+)*|http://(127\\.0\\.0\\.1|localhost))(:[1-9][0-9]*)?/mcp$", var.mcp_public_url))
+    error_message = "Must be an https URL ending in /mcp, the endpoint the server serves, with a lowercase host and no credentials (http only for 127.0.0.1/localhost)."
+  }
+
+  # The server refuses a default port (MCP_PUBLIC_URL must be canonical), so the audience must
+  # not carry one either.
+  validation {
+    condition     = !can(regex("^(https://[^/]+:443|http://[^/]+:80)/mcp$", var.mcp_public_url))
+    error_message = "Leave out the default port (:443 for https, :80 for http)."
   }
 }
 

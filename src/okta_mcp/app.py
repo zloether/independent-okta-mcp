@@ -22,7 +22,7 @@ from typing import Protocol
 
 import uvicorn
 from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.auth.provider import TokenVerifier
+from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
@@ -35,6 +35,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from okta_mcp.auth.principal import Principal, VerifiedToken
 from okta_mcp.config import MCP_PATH, Config
+from okta_mcp.logs import log_internal
 from okta_mcp.okta.client import new_http_client
 from okta_mcp.server import Runtime, build_runtime, mcp_server
 
@@ -49,6 +50,25 @@ class Verifier(TokenVerifier, Protocol):
     it."""
 
     def ready(self) -> bool: ...
+
+
+class _FailClosed:
+    """The verifier as the SDK's auth middleware sees it: an exception means "not
+    authenticated" (`None`), never a 500, and never Starlette's `AuthenticationError` path,
+    which sends the error's text back as the 400 body. That middleware runs on every request
+    with a bearer header, on every route it serves (PRM, and anything that falls through to the
+    SDK app). Logged by type and frames only: the message could hold the token. The not-ready
+    503 on `/mcp` (§11.3) is 4.3's, from `ready()`, before this runs."""
+
+    def __init__(self, inner: Verifier) -> None:
+        self.inner = inner
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        try:
+            return await self.inner.verify_token(token)
+        except Exception as e:
+            log_internal(log, "token verification", e)
+            return None
 
 
 def http_principal() -> Principal:
@@ -125,7 +145,8 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
     Two layers: an outer app with `OriginGuard` and the health routes, and the SDK's app (its
     auth middleware, `/mcp` and PRM) mounted under it. The health routes are outside the SDK's
     `AuthenticationMiddleware`, which runs the verifier on any request with a bearer header,
-    so a probe never verifies a token and stays 200 while the verifier can't."""
+    so a GET or HEAD probe never verifies a token. Anything else falls through to the SDK app,
+    where `_FailClosed` keeps a failing verifier from turning it into a 500."""
     if config.dev_mode:
         raise ValueError("dev mode is stdio only; the HTTP app always authenticates")
     if config.public_url is None or config.issuer is None:
@@ -143,7 +164,7 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
             # Okta ignores RFC 8707 `resource` (V9); the verifier checks `aud` (§8.5).
             validate_token_resource=False,
         ),
-        token_verifier=verifier,
+        token_verifier=_FailClosed(verifier),
     )
     return Starlette(
         routes=[*_health_routes(verifier.ready), Mount("", app=mcp)],

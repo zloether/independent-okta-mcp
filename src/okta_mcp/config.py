@@ -161,9 +161,14 @@ class Config(BaseModel):
     def _public_url(cls, v: str) -> str:
         v = _url(v, http_loopback=True)
         # The one path the HTTP app serves; PRM `resource`, its URL in a 401, and the expected
-        # `aud` are all this value (design §8.1).
-        if urlsplit(v).path != MCP_PATH:
+        # `aud` are all this value (design §8.1), so it must be canonical too: the SDK
+        # canonicalizes it for PRM, while `aud` is compared as written.
+        parts = urlsplit(v)
+        if parts.path != MCP_PATH:
             raise ValueError(f"path must be {MCP_PATH}, the endpoint the server serves")
+        canonical = _url(f"{parts.scheme}://{parts.netloc}", origin_only=True, http_loopback=True)
+        if v != canonical + MCP_PATH:
+            raise ValueError(f"must be in canonical form: {canonical}{MCP_PATH}")
         return v
 
     @field_validator("issuer")

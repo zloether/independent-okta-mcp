@@ -126,10 +126,20 @@ class Config(_Model):
         loopback = parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost")
         if not (parts.scheme == "https" or loopback) or not parts.netloc:
             raise ValueError("must be an https URL (http only for 127.0.0.1/localhost)")
-        # The server refuses any other path (its MCP_PUBLIC_URL check), so an audience with one
-        # would never match.
-        if parts.path != "/mcp" or parts.query or parts.fragment:
-            raise ValueError("path must be /mcp, the endpoint the server serves")
+        # The server's MCP_PUBLIC_URL check refuses anything but this canonical form, so an
+        # audience in any other would never match.
+        if any(c.isspace() or not c.isprintable() for c in url) or "@" in parts.netloc:
+            raise ValueError("must not contain whitespace, control characters or credentials")
+        host = parts.hostname or ""
+        if not host.isascii() or host.endswith(".") or ":" in host:
+            raise ValueError("host must be an ASCII (punycode) name with no trailing dot")
+        port = parts.port
+        default = {"https": 443, "http": 80}[parts.scheme]
+        canonical = (
+            f"{parts.scheme}://{host}{f':{port}' if port not in (None, default) else ''}/mcp"
+        )
+        if url != canonical:
+            raise ValueError(f"must be {canonical}: path /mcp, lowercase host, no default port")
         return url
 
     @field_validator("groups")

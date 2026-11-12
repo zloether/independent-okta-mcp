@@ -57,6 +57,7 @@ def verified(principal: Principal, scopes: list[str] | None = None) -> VerifiedT
         token="t",  # noqa: S106
         client_id="0oa1client0000000000",
         subject=principal.uid,
+        claims={"iss": ISSUER},
         scopes=[SCOPE] if scopes is None else scopes,
         principal=principal,
     )
@@ -402,10 +403,14 @@ async def test_uvicorn_config(tmp_path: Path, trust: bool) -> None:
     assert settings.lifespan == "on"
 
 
+SECRET = "-".join(["token", "said", "secret"])
+"""Built at run time, so a logged traceback's source lines don't hold it."""
+
+
 class RaisingVerifier(FakeVerifier):
     async def verify_token(self, token: str) -> AccessToken | None:
         self.calls += 1
-        raise RuntimeError("JWKS not loaded")
+        raise RuntimeError(SECRET)
 
 
 @pytest.mark.anyio
@@ -421,6 +426,33 @@ async def test_health_never_runs_the_verifier(config: Config, path: str) -> None
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("method", "path", "status"),
+    [
+        ("GET", "/.well-known/oauth-protected-resource/mcp", 200),
+        ("POST", "/healthz", 404),
+        ("GET", "/healthz/", 404),
+        ("POST", "/mcp", 401),
+    ],
+)
+async def test_a_failing_verifier_is_never_a_500(
+    config: Config, method: str, path: str, status: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Routes other than the GET health probes are behind the SDK's auth middleware, which runs
+    the verifier on any bearer header; a raise there means "not authenticated"."""
+    verifier = RaisingVerifier(TOKENS)
+    async with serving(config, verifier) as app, http_for(app) as http:
+        r = await http.request(
+            method, path, json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
+        )
+    assert r.status_code == status
+    assert verifier.calls == 1
+    assert SECRET not in r.text
+    assert SECRET not in caplog.text
+    assert "internal error in token verification: RuntimeError" in caplog.text
+
+
+@pytest.mark.anyio
 async def test_prm_is_served_at_the_path_url(config: Config) -> None:
     async with serving(config) as app, http_for(app) as http:
         r = await http.get("/.well-known/oauth-protected-resource/mcp")
@@ -432,15 +464,40 @@ def test_verified_token_must_name_its_principal() -> None:
     p = Principal(uid="00u1httpuser00000000", sub="user@example.com", groups=frozenset())
     for subject in (None, "user@example.com", "00u1other0000000000"):
         with pytest.raises(ValueError, match="must match its principal"):
-            VerifiedToken(token="t", client_id="0oa1", scopes=[], subject=subject, principal=p)  # noqa: S106
+            VerifiedToken(
+                token="t",  # noqa: S106
+                client_id="0oa1",
+                scopes=[],
+                subject=subject,
+                claims={"iss": ISSUER},
+                principal=p,
+            )
     bound = Principal(uid=p.uid, sub=p.sub, groups=frozenset(), client_id="0oa1client0000000000")
     with pytest.raises(ValueError, match="must match its principal"):
-        VerifiedToken(token="t", client_id="0oa2", scopes=[], subject=p.uid, principal=bound)  # noqa: S106
+        VerifiedToken(
+            token="t",  # noqa: S106
+            client_id="0oa2",
+            scopes=[],
+            subject=p.uid,
+            claims={"iss": ISSUER},
+            principal=bound,
+        )
+    for claims in (None, {}, {"iss": ""}, {"iss": 1}):
+        with pytest.raises(ValueError, match="iss"):
+            VerifiedToken(
+                token="t",  # noqa: S106
+                client_id="0oa1client0000000000",
+                scopes=[],
+                subject=p.uid,
+                claims=claims,
+                principal=bound,
+            )
     VerifiedToken(
         token="t",  # noqa: S106
         client_id="0oa1client0000000000",
         scopes=[],
         subject=p.uid,
+        claims={"iss": ISSUER},
         principal=bound,
     )
 

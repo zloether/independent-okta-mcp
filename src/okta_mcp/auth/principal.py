@@ -48,4 +48,7 @@ class VerifiedToken(AccessToken):
         p = self.principal
         if self.subject != p.uid or (p.client_id is not None and self.client_id != p.client_id):
             raise ValueError("VerifiedToken subject and client_id must match its principal")
+        iss = (self.claims or {}).get("iss")
+        if not isinstance(iss, str) or not iss:
+            raise ValueError("VerifiedToken claims must hold the token's iss")
         return self
