@@ -37,6 +37,17 @@ Tool list: the okta-skills catalogue has ~324 commands outside ai-agents. Droppi
 | B. Gateway: `okta_commands` / `okta_help` / `okta_call` | ~0.6k fixed, plus ~0.3–1.5k per domain discovered | same |
 | C. Domain tools, enum only (synopses moved to `okta_help`) | ~4–5k | ~0.4k |
 
+**Live check (plan 4.1, 2026-11-12).** A fresh Claude Code session ran 8 help-desk tasks against the dev org through `okta-mcp --stdio`, as the helpdesk principal (`groups` and `network-zones`, 11 commands). It started with this repo's `CLAUDE.md` in context but no knowledge of the tools. The brief said "okta-dev tools only".
+- **Tool list:** `/context` reported 1399 tokens (`okta_groups` 698, `okta_network_zones` 459, `okta_help` 139, `okta_status` 103) for 3354 bytes of definitions. That is ≈ 2.4 bytes per token, not the 4 assumed above, so the estimates in this section are about 1.7× low. D1's 40 KB budget is about 17k tokens, not 10k.
+- **Results:** 19 calls, 6133 bytes in all, replayed afterwards for exact sizes. That is ≈ 2.5k tokens at the same ratio, and no single result went over 906 bytes. `okta_help` accounted for 3 of the calls and 1858 of the bytes.
+- **Behaviour:** the model read the tables correctly in every task. Before the first per-group call it read `okta_help` for `list` and `get-members`. When the default view lacked what it needed, it read `okta_help` for `list-roles`, where it found `expand`. It used `select` correctly (`profile.login`, `profile.name,id`, `*`). It chose `search ... eq`/`sw` over `q`, and it reported the `forbidden`/`upstream_error` messages accurately. It used `links: true` once, while trying to find role targets.
+- **Cost points:**
+  - Every per-group command needs an ID, and group-name resolution is out of v1 (design §5.6). That cost an extra lookup in 3 of the 8 tasks.
+  - `list-rules`' default view leaves out the rule's target groups, so the model needed a follow-up `get-rule`.
+  - On an empty `expand` result, the model couldn't tell whether the server had kept `_embedded`. It does (D5/D6); Okta sends none for an untargeted role.
+- **Not exercised:** pagination and cursors (no list was longer than one page), and the `okta://guide/*` resources (the brief's "tools only" kept the model from reading them).
+- **Outcome:** D1–D11 stand.
+
 ## 1. Tool surface
 
 **D1 — Keep domain tools (A), with the trims below.** *Accepted.*
