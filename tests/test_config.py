@@ -434,6 +434,24 @@ def test_unreadable_file(env: dict[str, str], tmp_path: Path, name: str) -> None
     assert _errors(env) == [f"{name}: cannot read {tmp_path / 'missing'}"]
 
 
+def test_stat_refused_is_unreadable(
+    env: dict[str, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A sandbox or a mode-000 parent makes stat() fail with EPERM/EACCES, which Python 3.12's
+    # `is_file` raises rather than returning False.
+    denied = tmp_path / "denied.pem"
+    is_file = Path.is_file
+
+    def refuse(self: Path) -> bool:
+        if self == denied:
+            raise PermissionError(1, "Operation not permitted", str(self))
+        return is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", refuse)
+    env["OKTA_PRIVATE_KEY_FILE"] = str(denied)
+    assert _errors(env) == [f"OKTA_PRIVATE_KEY_FILE: cannot read {denied}"]
+
+
 def test_directory_is_not_a_readable_file(env: dict[str, str], tmp_path: Path) -> None:
     env["MCP_POLICY_FILE"] = str(tmp_path)
     assert _errors(env) == [f"MCP_POLICY_FILE: cannot read {tmp_path}"]

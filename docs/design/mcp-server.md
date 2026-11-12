@@ -292,7 +292,7 @@ All failures are `isError: true` with `{ "error": { "code", "message", "request_
 | `forbidden_by_policy` | Roles don't permit the command or an argument. One fixed sentence that does **not** reveal role names or other commands; for a permitted command refused with an expression argument it adds the caller's own `search_attributes` for that command |
 | `unavailable` | Service app lacks a required scope (never executed) |
 | `not_found` | Resolver found no user with that exact login or ID |
-| `upstream_error` | Okta error; includes status and `errorSummary`. 401/403 rewritten to "contact the MCP administrator" |
+| `upstream_error` | Okta error; includes status and `errorSummary`. 401/403 rewritten to "contact the MCP administrator"; `E0000015` without a token challenge also names the likely cause (feature not enabled on the org, or the service app's role doesn't cover it) and is the one 401 that keeps the service token |
 | `rate_limited` | Okta 429 beyond max wait, or per-principal limiter |
 | `timeout` | Per-call deadline exceeded (partial data returned only if resumable) |
 | `result_too_large` | Non-list result over `MCP_MAX_BYTES` |

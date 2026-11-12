@@ -103,7 +103,10 @@ def _cursor_key(v: str) -> bytes:
 
 
 def _readable(path: Path) -> bool:
-    return path.is_file() and os.access(path, os.R_OK)
+    try:
+        return path.is_file() and os.access(path, os.R_OK)
+    except OSError:  # stat refused (EPERM/EACCES): Python 3.12's is_file raises those
+        return False
 
 
 class Config(BaseModel):
