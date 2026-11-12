@@ -124,7 +124,9 @@ def build(
 
 @pytest.fixture(scope="module")
 def registry() -> Registry:
-    return load_registry(load_spec())
+    """The shipped pilot domains, which these tests assert on; they need no resolver."""
+    shipped = load_registry(load_spec())
+    return Registry(MappingProxyType({d: shipped.domains[d] for d in ("groups", "network-zones")}))
 
 
 @pytest.fixture

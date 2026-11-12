@@ -1,0 +1,18 @@
+{
+  "source": "generated",
+  "operation": "getUserProvisioningConnectionJWKS",
+  "body": {
+    "jwks": {
+      "keys": [
+        {
+          "kid": "-rZYtf4RZWc_tVTlmrvLPcDwvO4SwbWeztzB7AjHyLA",
+          "kty": "RSA",
+          "alg": "RSA",
+          "use": "sig",
+          "e": "AQAB",
+          "n": "AJncrKuine49_CEVR4GPn.....zOrouIUCSMlRL0HU="
+        }
+      ]
+    }
+  }
+}

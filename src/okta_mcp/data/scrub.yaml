@@ -28,6 +28,7 @@ paths:
   - device_secret
   - credentials.password.value
   - credentials.password.hash
+  - credentials.recovery_question.answer       # users list/get (spec: never returned)
   - activationToken
   - recoveryToken
   - sessionToken

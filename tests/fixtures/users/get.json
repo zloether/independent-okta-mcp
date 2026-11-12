@@ -1,0 +1,54 @@
+{
+  "source": "generated",
+  "operation": "getUser",
+  "body": {
+    "id": "00ub0oNGTSWTBKOLGLNR",
+    "status": "ACTIVE",
+    "created": "2013-06-24T16:39:18.000Z",
+    "activated": "2013-06-24T16:39:19.000Z",
+    "statusChanged": "2013-06-24T16:39:19.000Z",
+    "lastLogin": "2013-06-24T17:39:19.000Z",
+    "lastUpdated": "2013-07-02T21:36:25.344Z",
+    "passwordChanged": "2013-07-02T21:36:25.344Z",
+    "profile": {
+      "login": "isaac.brock@example.com",
+      "firstName": "Isaac",
+      "lastName": "Brock",
+      "nickName": "issac",
+      "displayName": "Isaac Brock",
+      "email": "isaac.brock@example.com",
+      "secondEmail": "user-1@example.com",
+      "profileUrl": "http://www.example.com/profile",
+      "preferredLanguage": "en-US",
+      "userType": "Employee",
+      "organization": "Okta",
+      "title": "Director",
+      "division": "R&D",
+      "department": "Engineering",
+      "costCenter": "10",
+      "employeeNumber": "187",
+      "mobilePhone": "+1-555-415-1337",
+      "primaryPhone": "+1-555-514-1337",
+      "streetAddress": "301 Brannan St.",
+      "city": "San Francisco",
+      "state": "CA",
+      "zipCode": "94107",
+      "countryCode": "US"
+    },
+    "credentials": {
+      "password": {},
+      "recovery_question": {
+        "question": "What's my childhood elementary school?"
+      },
+      "provider": {
+        "type": "OKTA",
+        "name": "OKTA"
+      }
+    },
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/users/00u1f96ECLNVOKVMUSEA"
+      }
+    }
+  }
+}

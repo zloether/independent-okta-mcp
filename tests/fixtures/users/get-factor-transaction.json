@@ -1,0 +1,34 @@
+{
+  "source": "generated",
+  "operation": "getFactorTransactionStatus",
+  "body": {
+    "expiresAt": "2015-04-01T15:57:32.000Z",
+    "factorResult": "WAITING",
+    "profile": {
+      "credentialId": "jane.doe@example.com"
+    },
+    "_links": {
+      "poll": {
+        "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors/opfh52xcuft3J4uZc0g3/transactions/v2mst.GldKV5VxTrifyeZmWSQguA",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      },
+      "cancel": {
+        "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors/opfh52xcuft3J4uZc0g3/transactions/v2mst.GldKV5VxTrifyeZmWSQguA",
+        "hints": {
+          "allow": [
+            "DELETE"
+          ]
+        }
+      }
+    },
+    "_embedded": {
+      "challenge": {
+        "correctAnswer": 72
+      }
+    }
+  }
+}

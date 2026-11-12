@@ -1,0 +1,68 @@
+{
+  "source": "generated",
+  "operation": "getRefreshTokenForUserAndClient",
+  "body": {
+    "clientId": "00xkHWxHTTC5oquvy38z",
+    "created": "2017-03-28T01:11:10.000Z",
+    "expiresAt": "2026-01-01T00:00:00.000Z",
+    "id": "oar579Mcp7OUsNTlo0g3",
+    "issuer": "https://example.okta.com/oauth2/ausain6z9zIedDCxB0h7",
+    "lastUpdated": "2026-01-01T00:00:00.000Z",
+    "scopes": [
+      "offline_access"
+    ],
+    "status": "ACTIVE",
+    "userId": "00u5t60iloOHN9pBi0h7",
+    "_embedded": {
+      "scopes": [
+        {
+          "description": "Requests a refresh token by default, used to obtain more access tokens without re-prompting the user for authentication",
+          "displayName": "displayName",
+          "id": "scppb56cIl4GvGxy70g3",
+          "name": "offline_access",
+          "_links": {
+            "scope": {
+              "href": "https://example.okta.com/api/v1/authorizationServers/ausain6z9zIedDCxB0h7/scopes/scppb56cIl4GvGxy70g3",
+              "title": "offline_access"
+            }
+          }
+        }
+      ]
+    },
+    "_links": {
+      "self": {
+        "hints": {
+          "allow": [
+            "DELETE"
+          ]
+        },
+        "href": "https://example.okta.com/",
+        "name": "name",
+        "templated": false,
+        "type": "type"
+      },
+      "app": {
+        "href": "https://example.okta.com/api/v1/apps/0oabskvc6442nkvQO0h7",
+        "title": "My App"
+      },
+      "revoke": {
+        "href": "https://example.okta.com/api/v1/users/00u5t60iloOHN9pBi0h7/clients/0oabskvc6442nkvQO0h7/tokens/oar579Mcp7OUsNTlo0g3",
+        "hints": {
+          "allow": "allow"
+        }
+      },
+      "client": {
+        "href": "https://example.okta.com/api/v1/apps/0oabskvc6442nkvQO0h7",
+        "title": "My App"
+      },
+      "user": {
+        "href": "https://example.okta.com/api/v1/users/00u5t60iloOHN9pBi0h7",
+        "title": "SAML Jackson"
+      },
+      "authorizationServer": {
+        "href": "https://example.okta.com/api/v1/authorizationServers/ausain6z9zIedDCxB0h7",
+        "title": "Example Authorization Server"
+      }
+    }
+  }
+}

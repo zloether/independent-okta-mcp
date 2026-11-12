@@ -1,0 +1,317 @@
+domain: users
+description: Read Okta users, their groups, apps, factors, grants and admin roles (read-only).
+# Every `user` arg except `get`'s takes an ID (00u…) or an exact login: the resolver turns a
+# login into an ID first (design §5.6), so a login shortname never reaches those endpoints.
+# Other IDs: where Okta's prefix varies by type (factors, enrollments, tokens, grants), only the
+# character set is fixed; §6.4 and the spec's reserved segments apply to every path value.
+commands:
+  list:
+    operation: listUsers
+    summary: List or search users
+    args:
+      q: {query: q, arg_rule: {reviewed: "matches firstName, lastName and email, all returned"}}
+      filter:
+        query: filter
+        arg_rule:
+          reviewed: "closed set (status, lastUpdated, id, profile.login, profile.email, profile.firstName, profile.lastName), all returned"
+      # `search` matches any profile attribute, custom ones too, and `sw` reads a value back a
+      # character at a time. The engine checks the attributes named (design §9.2).
+      search: {query: search, arg_rule: {attribute_expression: true}}
+      sort_by: {query: sortBy, arg_rule: {attribute_expression: true}}
+      sort_order: {query: sortOrder, allowed_values: [asc, desc]}
+      # `classification` is what `get-classification` returns, same class.
+      expand: {query: expand, allowed_values: [classification]}
+    paginate: link
+    page_size: 200
+    # Okta doesn't page `q` (it also leaves out DEPROVISIONED users): one page, never resumed.
+    unpaged_args: [q]
+    view: [id, status, profile.login, profile.firstName, profile.lastName]
+    data_classes: [pii]
+
+  # Okta accepts an ID, a login or an unambiguous login shortname here, so no resolver.
+  get:
+    operation: getUser
+    summary: Get a user by ID or login
+    args:
+      user: {path_param: id}
+    data_classes: [pii]
+
+  get-groups:
+    operation: listUserGroups
+    summary: Groups the user belongs to
+    args:
+      user: {path_param: id, resolve: user_id}
+    paginate: link
+    page_size: 200
+    # The spec's example has no `type`, and generated fixtures must carry every view path.
+    view: [id, profile.name]
+    data_classes: [pii]
+
+  get-apps:
+    operation: listAppLinks
+    summary: App links shown to the user
+    args:
+      user: {path_param: id, resolve: user_id}
+    view: [id, appInstanceId, appName, label]
+    data_classes: [pii]
+
+  # Unknown-device sign-in blocks: security state, kept with risk data.
+  get-blocks:
+    operation: listUserBlocks
+    summary: Sign-in blocks on the user
+    args:
+      user: {path_param: id, resolve: user_id}
+    view: [type, appliesTo]
+    data_classes: [pii, risk]
+
+  # IdP objects carry `protocol.credentials` (client secrets), as `identity-providers get` does
+  # (design §9.2, V14); scrub.yaml redacts them as well.
+  get-idps:
+    operation: listUserIdentityProviders
+    summary: Identity providers linked to the user
+    args:
+      user: {path_param: id, resolve: user_id}
+    view: [id, type, name, status]
+    data_classes: [pii, credential-material]
+
+  get-factors:
+    operation: listFactors
+    summary: MFA factors enrolled by a user
+    args:
+      user: {path_param: userId, resolve: user_id}
+    view: [id, factorType, provider, status]
+    data_classes: [mfa-state, pii]
+
+  get-factor:
+    operation: getFactor
+    summary: Get one of a user's factors
+    args:
+      user: {path_param: userId, resolve: user_id}
+      factor: {path_param: factorId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [mfa-state, pii]
+
+  get-factor-transaction:
+    operation: getFactorTransactionStatus
+    summary: Verify status
+    args:
+      user: {path_param: userId, resolve: user_id}
+      factor: {path_param: factorId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      txn: {path_param: transactionId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [mfa-state]
+
+  get-factors-catalog:
+    operation: listSupportedFactors
+    summary: Factors the user may enroll
+    args:
+      user: {path_param: userId, resolve: user_id}
+    view: [factorType, provider, vendorName]
+    data_classes: [mfa-state]
+
+  get-enrollments:
+    operation: listAuthenticatorEnrollments
+    summary: Authenticator enrollments
+    args:
+      user: {path_param: userId, resolve: user_id}
+      # Unmasks phone numbers.
+      disclose_identifiers:
+        query: discloseIdentifiers
+        arg_rule: {raises_sensitivity_to: sensitive}
+    response_override: {kind: list, reason: "spec declares one AuthenticatorEnrollment (V8)"}
+    view: [id, type, status, name]
+    data_classes: [mfa-state, pii]
+
+  get-enrollment:
+    operation: getAuthenticatorEnrollment
+    summary: An enrollment
+    args:
+      user: {path_param: userId, resolve: user_id}
+      enrollment: {path_param: enrollmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      disclose_identifiers:
+        query: discloseIdentifiers
+        arg_rule: {raises_sensitivity_to: sensitive}
+    data_classes: [mfa-state, pii]
+
+  get-classification:
+    operation: getUserClassification
+    summary: Classification (LITE/STANDARD)
+    args:
+      user: {path_param: userId, resolve: user_id}
+    data_classes: [pii]
+
+  get-devices:
+    operation: listUserDevices
+    summary: Devices enrolled by the user
+    args:
+      user: {path_param: userId, resolve: user_id}
+    view: [device.id, device.status, device.profile.displayName, device.profile.platform]
+    data_classes: [pii]
+
+  get-risk:
+    operation: getUserRisk
+    summary: Risk level of the user
+    args:
+      user: {path_param: userId, resolve: user_id}
+    data_classes: [risk]
+
+  # OAuth clients the user has grants or refresh tokens for. Custom client IDs exist, so only
+  # the character set is fixed.
+  get-clients:
+    operation: listUserClients
+    summary: OAuth clients the user has used
+    args:
+      user: {path_param: userId, resolve: user_id}
+    view: [client_id, client_name]
+    data_classes: [pii]
+
+  get-client-grants:
+    operation: listGrantsForUserAndClient
+    summary: Client grants
+    args:
+      user: {path_param: userId, resolve: user_id}
+      client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
+      expand: {query: expand, allowed_values: [scope]}
+    paginate: link
+    page_size: 200
+    view: [id, scopeId, status, source]
+    data_classes: [pii]
+
+  # Refresh-token metadata is session state.
+  get-client-tokens:
+    operation: listRefreshTokensForUserAndClient
+    summary: Refresh tokens
+    args:
+      user: {path_param: userId, resolve: user_id}
+      client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
+      expand: {query: expand, allowed_values: [scope]}
+    paginate: link
+    page_size: 200
+    view: [id, status, expiresAt, scopes]
+    data_classes: [pii, session]
+
+  get-client-token:
+    operation: getRefreshTokenForUserAndClient
+    summary: One refresh token
+    args:
+      user: {path_param: userId, resolve: user_id}
+      client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
+      token: {path_param: tokenId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [pii, session]
+
+  get-grants:
+    operation: listUserGrants
+    summary: User's consent grants
+    args:
+      user: {path_param: userId, resolve: user_id}
+      scope_id: {query: scopeId}
+      expand: {query: expand, allowed_values: [scope]}
+    paginate: link
+    page_size: 200
+    view: [id, clientId, scopeId, status]
+    data_classes: [pii]
+
+  get-grant:
+    operation: getUserGrant
+    summary: One of the user's grants
+    args:
+      user: {path_param: userId, resolve: user_id}
+      grant: {path_param: grantId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      expand: {query: expand, allowed_values: [scope]}
+    data_classes: [pii]
+
+  get-subscriptions:
+    operation: listSubscriptionsUser
+    summary: User's notification subscriptions
+    args:
+      user: {path_param: userId, resolve: user_id}
+    view: [notificationType, status, channels]
+    data_classes: [pii]
+
+  get-subscription:
+    operation: getSubscriptionsNotificationTypeUser
+    summary: A notification subscription
+    args:
+      user: {path_param: userId, resolve: user_id}
+      type: {path_param: notificationType}
+    data_classes: [pii]
+
+  # Role commands follow `groups`: role assignment IDs are base32 role types or irb…/ra….
+  list-roles:
+    operation: listAssignedRolesForUser
+    summary: Admin roles assigned to a user
+    args:
+      user: {path_param: userId, resolve: user_id}
+      expand: {query: expand, allowed_values: [targets/groups, targets/catalog/apps]}
+    view: [id, type, label, status, assignmentType]
+    data_classes: [admin-roles]
+
+  get-role:
+    operation: getUserAssignedRole
+    summary: Get a user's admin role assignment
+    args:
+      user: {path_param: userId, resolve: user_id}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [admin-roles]
+
+  list-role-app-targets:
+    operation: listApplicationTargetsForApplicationAdministratorRoleForUser
+    summary: Role app targets
+    args:
+      user: {path_param: userId, resolve: user_id}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    paginate: link
+    page_size: 20
+    view: [id, name, displayName, status]
+    data_classes: [admin-roles]
+
+  list-role-group-targets:
+    operation: listGroupTargetsForRole
+    summary: Role group targets
+    args:
+      user: {path_param: userId, resolve: user_id}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    paginate: link
+    page_size: 20
+    view: [id, type, profile.name]
+    data_classes: [admin-roles]
+
+  # A role ID (custom role) or the base32 of a standard role's name.
+  list-role-targets:
+    operation: getRoleTargetsByUserIdAndRoleId
+    summary: Targets of a role
+    args:
+      user: {path_param: userId, resolve: user_id}
+      role: {path_param: roleIdOrEncodedRoleId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      assignment_type: {query: assignmentType}
+    paginate: link
+    page_size: 20
+    view: [orn, assignmentType]
+    data_classes: [admin-roles]
+
+  get-role-governance:
+    operation: getUserAssignedRoleGovernance
+    summary: Governance of a role
+    args:
+      user: {path_param: userId, resolve: user_id}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [admin-roles]
+
+  get-governance-grant:
+    operation: getRoleAssignmentGovernanceGrant
+    summary: Governance grant
+    args:
+      user: {path_param: userId, resolve: user_id}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      grant: {path_param: grantId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [admin-roles]
+
+  get-governance-resources:
+    operation: getRoleAssignmentGovernanceGrantResources
+    summary: Resources
+    args:
+      user: {path_param: userId, resolve: user_id}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      grant: {path_param: grantId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    paginate: link_or_body
+    items_key: resources
+    view: [label, resource]
+    data_classes: [admin-roles]

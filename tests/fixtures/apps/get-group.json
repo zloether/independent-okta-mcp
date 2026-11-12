@@ -1,0 +1,70 @@
+{
+  "source": "generated",
+  "operation": "getApplicationGroupAssignment",
+  "body": {
+    "id": "00g15acRUy0SYb9GT0g4",
+    "priority": 0,
+    "lastUpdated": "2024-06-02T13:17:57.000Z",
+    "profile": {
+      "preferredLanguage": "English",
+      "manager": "Donald Glover",
+      "securityQuestion": "Who is the footballer to have played the game",
+      "securityAnswer": "Ronaldinho",
+      "timezone": "Canada/Eastern",
+      "initialStatus": "active_with_pass",
+      "managerId": "user-1@example.com",
+      "locale": "en_US",
+      "division": "top",
+      "organization": "wazobia",
+      "userType": null,
+      "department": "marketing"
+    },
+    "_links": {
+      "app": {
+        "href": "http://example.okta.com/api/v1/apps/0oa15anjcUHSI6hTB0g4"
+      },
+      "self": {
+        "href": "http://example.okta.com/api/v1/apps/0oa15anjcUHSI6hTB0g4/groups/00g15acRUy0SYb9GT0g4"
+      },
+      "group": {
+        "href": "http://example.okta.com/api/v1/groups/00g15acRUy0SYb9GT0g4"
+      }
+    },
+    "_embedded": {
+      "group": {
+        "id": "00g15acRUy0SYb9GT0g4",
+        "created": "2024-06-02T13:02:12.000Z",
+        "lastUpdated": "2024-06-02T13:02:12.000Z",
+        "lastMembershipUpdated": "2024-06-02T13:03:13.000Z",
+        "objectClass": [
+          "okta:user_group"
+        ],
+        "type": "OKTA_GROUP",
+        "profile": {
+          "name": "Football Group",
+          "description": "Group with professional footballers"
+        },
+        "_links": {
+          "logo": [
+            {
+              "name": "medium",
+              "href": "http://example.okta.com/assets/img/logos/groups/odyssey/okta-medium.30ce6d4085dff29412984e4c191bc874.png",
+              "type": "image/png"
+            },
+            {
+              "name": "large",
+              "href": "http://example.okta.com/assets/img/logos/groups/odyssey/okta-large.c3cb8cda8ae0add1b4fe928f5844dbe3.png",
+              "type": "image/png"
+            }
+          ],
+          "users": {
+            "href": "http://example.okta.com/api/v1/groups/00g15acRUy0SYb9GT0g4/users"
+          },
+          "apps": {
+            "href": "http://example.okta.com/api/v1/groups/00g15acRUy0SYb9GT0g4/apps"
+          }
+        }
+      }
+    }
+  }
+}

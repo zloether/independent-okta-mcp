@@ -1,0 +1,49 @@
+{
+  "source": "generated",
+  "operation": "listApplicationTargetsForApplicationAdministratorRoleForUser",
+  "body": [
+    {
+      "category": "SOCIAL",
+      "description": "description",
+      "displayName": "displayName",
+      "features": [
+        "features"
+      ],
+      "id": "00xOiM2xLdXYJwppzoV2",
+      "lastUpdated": "2024-09-19T23:37:37.000Z",
+      "name": "name",
+      "signOnModes": [
+        "signOnModes"
+      ],
+      "status": "ACTIVE",
+      "verificationStatus": "OKTA_VERIFIED",
+      "website": "website",
+      "_links": {
+        "logo": [
+          {
+            "hints": {
+              "allow": [
+                "DELETE"
+              ]
+            },
+            "href": "https://example.okta.com/",
+            "name": "name",
+            "templated": false,
+            "type": "type"
+          }
+        ],
+        "self": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        }
+      }
+    }
+  ]
+}

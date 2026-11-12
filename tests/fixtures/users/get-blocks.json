@@ -1,0 +1,10 @@
+{
+  "source": "generated",
+  "operation": "listUserBlocks",
+  "body": [
+    {
+      "type": "DEVICE_BASED",
+      "appliesTo": "UNKNOWN_DEVICES"
+    }
+  ]
+}

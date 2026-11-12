@@ -1,0 +1,289 @@
+domain: apps
+description: Read Okta apps, their assignments, credentials metadata, grants and tokens (read-only).
+# App IDs are `0oa` + 17. Other IDs vary by type, so only the character set is fixed; §6.4 and
+# the spec's reserved segments (`export`, `types`, … after /apps/) apply to every path value.
+# Not exposed: `expand=user/{userId}` on list/get (a value allowed_values can't close), and
+# `useOptimization`, `alwaysIncludeVpnSettings`, `includeNonDeleted` on list (they change the
+# shape or add rows; `select` covers narrowing).
+commands:
+  list:
+    operation: listApplications
+    summary: List or search apps
+    args:
+      q: {query: q, arg_rule: {reviewed: "matches the app name or label, both returned"}}
+      # Spec: id, status, name, credentials.signing.kid, settings.slo.enabled,
+      # cimd.client.linkable. Okta also takes `user.id eq` and `group.id eq`, which select by
+      # assignment, not by a returned field, so the engine checks the attributes named.
+      filter: {query: filter, arg_rule: {attribute_expression: true}}
+    paginate: link
+    page_size: 200
+    view: [id, label, status, signOnMode]
+    data_classes: [org-config]
+
+  # V14: the spec shows `credentials.oauthClient.client_secret` and app settings secrets only on
+  # create/update; scrub.yaml redacts them anyway. Confirm with a live fixture.
+  get:
+    operation: getApplication
+    summary: Get an app by ID
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    data_classes: [org-config]
+
+  get-users:
+    operation: listApplicationUsers
+    summary: Users assigned to an app
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      q:
+        query: q
+        arg_rule: {reviewed: "prefix of the app user's userName, firstName, lastName or email, all returned"}
+      # Embeds the Okta user: personal data, as this command already returns.
+      expand: {query: expand, allowed_values: [user]}
+    paginate: link
+    page_size: 200
+    view: [id, status, scope, credentials.userName, syncState]
+    data_classes: [pii]
+
+  get-user:
+    operation: getApplicationUser
+    summary: A user's app assignment
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      user: {path_param: userId, resolve: user_id}
+      expand: {query: expand, allowed_values: [user]}
+    data_classes: [pii]
+
+  get-groups:
+    operation: listApplicationGroupAssignments
+    summary: Groups assigned to an app
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      # Group names are `groups list` data of the same class; `expand: group` returns them.
+      q: {query: q, arg_rule: {reviewed: "prefix of the group name, returned with expand=group"}}
+      expand: {query: expand, allowed_values: [group, metadata]}
+    paginate: link
+    page_size: 200
+    view: [id, priority]
+    data_classes: [org-config]
+
+  get-group:
+    operation: getApplicationGroupAssignment
+    summary: A group's app assignment
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+      expand: {query: expand, allowed_values: [group, metadata]}
+    data_classes: [org-config]
+
+  # Auth scheme and base URL; a TOKEN scheme's token is write-only (and scrubbed as `token`).
+  get-connection:
+    operation: getDefaultProvisioningConnectionForApplication
+    summary: Provisioning connection
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    data_classes: [org-config]
+
+  # Keys, JWKs, CSRs and secrets: credential material (design §9.2), public halves included.
+  get-connection-jwks:
+    operation: getUserProvisioningConnectionJWKS
+    summary: Provisioning connection JWKS
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    data_classes: [credential-material]
+
+  list-csrs:
+    operation: listCsrsForApplication
+    summary: Certificate signing requests
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    view: [id, kty, created]
+    data_classes: [credential-material]
+
+  get-csr:
+    operation: getCsrForApplication
+    summary: One CSR
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      csr: {path_param: csrId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [credential-material]
+
+  # `list-jwks` (listJwk) is left out: Okta returns `{"keys": [...]}` where the spec has an
+  # array, which the registry can't declare yet (catalogue gotcha).
+  get-jwk:
+    operation: getJwk
+    summary: One client JWK
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      key: {path_param: keyId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [credential-material]
+
+  list-keys:
+    operation: listApplicationKeys
+    summary: Signing key credentials
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    view: [kid, kty, use, expiresAt]
+    data_classes: [credential-material]
+
+  get-key:
+    operation: getApplicationKey
+    summary: One signing key credential
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      key: {path_param: keyId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [credential-material]
+
+  # `client_secret` and `secret_hash` are redacted by scrub.yaml; metadata only leaves.
+  list-secrets:
+    operation: listOAuth2ClientSecrets
+    summary: Client secrets (metadata)
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    view: [id, status, created, lastUpdated]
+    data_classes: [credential-material]
+
+  get-secret:
+    operation: getOAuth2ClientSecret
+    summary: One client secret (metadata)
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      secret: {path_param: secretId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [credential-material]
+
+  # Cross App Access (XAA) connections.
+  list-cwo-connections:
+    operation: getAllCrossAppAccessConnections
+    summary: XAA connections
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      status: {query: status}
+      requesting_app: {query: requestingAppId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      resource_app: {query: resourceAppId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      active_apps_only: {query: activeAppsOnly}
+      # Match app names, `list` data of the same class.
+      requesting_app_name: {query: requestingAppName}
+      resource_app_name: {query: resourceAppName}
+    paginate: link
+    page_size: 200
+    view: [id, status, requestingAppInstanceId, resourceAppInstanceId]
+    data_classes: [org-config]
+
+  get-cwo-connection:
+    operation: getCrossAppAccessConnection
+    summary: One XAA connection
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      connection: {path_param: connectionId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [org-config]
+
+  list-features:
+    operation: listFeaturesForApplication
+    summary: Provisioning features
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    view: [name, status]
+    data_classes: [org-config]
+
+  get-feature:
+    operation: getFeatureForApplication
+    summary: One provisioning feature
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      feature: {path_param: featureName}
+    data_classes: [org-config]
+
+  list-federated-claims:
+    operation: listFederatedClaims
+    summary: Federated claims
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    view: [id, name, expression]
+    data_classes: [org-config]
+
+  get-federated-claim:
+    operation: getFederatedClaim
+    summary: One federated claim
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      claim: {path_param: claimId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [org-config]
+
+  # Scopes granted to the app (for a service app, the Okta API scopes it may use): permission
+  # assignments, so `admin-roles`.
+  list-grants:
+    operation: listScopeConsentGrants
+    summary: Scope grants for an app
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      expand: {query: expand, allowed_values: [scope]}
+    view: [id, scopeId, issuer, status]
+    data_classes: [admin-roles]
+
+  get-grant:
+    operation: getScopeConsentGrant
+    summary: One scope grant
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      grant: {path_param: grantId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      expand: {query: expand, allowed_values: [scope]}
+    data_classes: [admin-roles]
+
+  list-push-mappings:
+    operation: listGroupPushMappings
+    summary: Group push mappings
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      last_updated: {query: lastUpdated}
+      source_group: {query: sourceGroupId, pattern: "^00g[A-Za-z0-9]{17}$"}
+      status: {query: status}
+    paginate: link
+    page_size: 200
+    view: [id, sourceGroupId, targetGroupId, status]
+    data_classes: [org-config]
+
+  get-push-mapping:
+    operation: getGroupPushMapping
+    summary: One group push mapping
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      mapping: {path_param: mappingId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [org-config]
+
+  list-interclient-allowed:
+    operation: listInterclientAllowedApplications
+    summary: Apps that may call this app
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    paginate: link
+    page_size: 200
+    data_classes: [org-config]
+
+  list-interclient-targets:
+    operation: listInterclientTargetApplications
+    summary: Apps this app may call
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    paginate: link
+    page_size: 200
+    data_classes: [org-config]
+
+  # Refresh-token metadata is session state.
+  list-tokens:
+    operation: listOAuth2TokensForApplication
+    summary: Refresh tokens issued by an app
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      expand: {query: expand, allowed_values: [scope]}
+    paginate: link
+    page_size: 200
+    view: [id, userId, status, expiresAt]
+    data_classes: [pii, session]
+
+  get-token:
+    operation: getOAuth2TokenForApplication
+    summary: One refresh token
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      token: {path_param: tokenId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      expand: {query: expand, allowed_values: [scope]}
+    data_classes: [pii, session]

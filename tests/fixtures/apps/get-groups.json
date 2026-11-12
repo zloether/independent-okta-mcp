@@ -1,0 +1,199 @@
+{
+  "source": "generated",
+  "operation": "listApplicationGroupAssignments",
+  "body": [
+    {
+      "id": "00g15acRUy0SYb9GT0g4",
+      "priority": 0,
+      "lastUpdated": "2024-06-02T13:17:57.000Z",
+      "profile": {
+        "preferredLanguage": "English",
+        "manager": "Donald Glover",
+        "securityQuestion": "Who is the footballer to have played the game",
+        "securityAnswer": "Ronaldinho",
+        "timezone": "Canada/Eastern",
+        "initialStatus": "active_with_pass",
+        "managerId": "user-1@example.com",
+        "locale": "en_US",
+        "division": "top",
+        "organization": "wazobia",
+        "userType": null,
+        "department": "marketing"
+      },
+      "_links": {
+        "app": {
+          "href": "http://example.okta.com/api/v1/apps/0oa15anjcUHSI6hTB0g4"
+        },
+        "self": {
+          "href": "http://example.okta.com/api/v1/apps/0oa15anjcUHSI6hTB0g4/groups/00g15acRUy0SYb9GT0g4"
+        },
+        "group": {
+          "href": "http://example.okta.com/api/v1/groups/00g15acRUy0SYb9GT0g4"
+        }
+      },
+      "_embedded": {
+        "metadata": {
+          "credentials": {},
+          "profile": {
+            "division": {
+              "source": {
+                "type": "USER",
+                "value": [
+                  {
+                    "id": "00uzojLwDGgUynjJS0g3",
+                    "self": {
+                      "href": "http://example.okta.com/api/v1/users/00uzojLwDGgUynjJS0g3"
+                    }
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "preferredLanguage": {
+              "source": {
+                "type": "USER",
+                "value": [
+                  {
+                    "id": "00uzojLwDGgUynjJS0g3",
+                    "self": {
+                      "href": "http://example.okta.com/api/v1/users/00uzojLwDGgUynjJS0g3"
+                    }
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "manager": {
+              "source": {
+                "type": "MAPPING",
+                "value": [
+                  {
+                    "id": null
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "securityQuestion": {
+              "source": {
+                "type": "USER",
+                "value": [
+                  {
+                    "id": "00uzojLwDGgUynjJS0g3",
+                    "self": {
+                      "href": "http://example.okta.com/api/v1/users/00uzojLwDGgUynjJS0g3"
+                    }
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "securityAnswer": {
+              "source": {
+                "type": "USER",
+                "value": [
+                  {
+                    "id": "00uzojLwDGgUynjJS0g3",
+                    "self": {
+                      "href": "http://example.okta.com/api/v1/users/00uzojLwDGgUynjJS0g3"
+                    }
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "timezone": {
+              "source": {
+                "type": "USER",
+                "value": [
+                  {
+                    "id": "00uzojLwDGgUynjJS0g3",
+                    "self": {
+                      "href": "http://example.okta.com/api/v1/users/00uzojLwDGgUynjJS0g3"
+                    }
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "organization": {
+              "source": {
+                "type": "USER",
+                "value": [
+                  {
+                    "id": "00uzojLwDGgUynjJS0g3",
+                    "self": {
+                      "href": "http://example.okta.com/api/v1/users/00uzojLwDGgUynjJS0g3"
+                    }
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "initialStatus": {
+              "source": {
+                "type": "USER",
+                "value": [
+                  {
+                    "id": "00uzojLwDGgUynjJS0g3",
+                    "self": {
+                      "href": "http://example.okta.com/api/v1/users/00uzojLwDGgUynjJS0g3"
+                    }
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "managerId": {
+              "source": {
+                "type": "MAPPING",
+                "value": [
+                  {
+                    "id": null
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "userType": {
+              "source": {
+                "type": "MAPPING",
+                "value": [
+                  {
+                    "id": null
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "locale": {
+              "source": {
+                "type": "USER",
+                "value": [
+                  {
+                    "id": "00uzojLwDGgUynjJS0g3",
+                    "self": {
+                      "href": "http://example.okta.com/api/v1/users/00uzojLwDGgUynjJS0g3"
+                    }
+                  }
+                ]
+              },
+              "lastUpdated": null
+            },
+            "department": {
+              "source": {
+                "type": "MAPPING",
+                "value": [
+                  {
+                    "id": null
+                  }
+                ]
+              },
+              "lastUpdated": null
+            }
+          }
+        }
+      }
+    }
+  ]
+}

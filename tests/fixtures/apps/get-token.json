@@ -1,0 +1,74 @@
+{
+  "source": "generated",
+  "operation": "getOAuth2TokenForApplication",
+  "body": {
+    "id": "oar579Mcp7OUsNTlo0g3",
+    "status": "ACTIVE",
+    "created": "2023-03-09T03:18:06.000Z",
+    "lastUpdated": "2023-03-09T03:18:06.000Z",
+    "expiresAt": "2023-03-16T03:18:06.000Z",
+    "issuer": "https://example.okta.com/oauth2/ausain6z9zIedDCxB0h7",
+    "clientId": "0oabskvc6442nkvQO0h7",
+    "userId": "00u5t60iloOHN9pBi0h7",
+    "scopes": [
+      "offline_access",
+      "car:drive"
+    ],
+    "_embedded": {
+      "scopes": [
+        {
+          "id": "scppb56cIl4GvGxy70g3",
+          "name": "offline_access",
+          "description": "Requests a refresh token by default and is used to obtain more access tokens without re-prompting the user for authentication",
+          "_links": {
+            "scope": {
+              "href": "https://example.okta.com/api/v1/authorizationServers/ausain6z9zIedDCxB0h7/scopes/scppb56cIl4GvGxy70g3",
+              "title": "offline_access"
+            }
+          }
+        },
+        {
+          "id": "scp142iq2J8IGRUCS0g4",
+          "name": "car:drive",
+          "displayName": "Drive car",
+          "description": "Allows the user to drive a car",
+          "_links": {
+            "scope": {
+              "href": "https://example.okta.com/api/v1/authorizationServers/ausain6z9zIedDCxB0h7/scopes/scp142iq2J8IGRUCS0g4",
+              "title": "Drive car"
+            }
+          }
+        }
+      ]
+    },
+    "_links": {
+      "app": {
+        "href": "https://example.okta.com/api/v1/apps/0oabskvc6442nkvQO0h7",
+        "title": "Native"
+      },
+      "self": {
+        "href": "https://example.okta.com/api/v1/apps/0oabskvc6442nkvQO0h7/tokens/oar579Mcp7OUsNTlo0g3"
+      },
+      "revoke": {
+        "href": "https://example.okta.com/api/v1/apps/0oabskvc6442nkvQO0h7/tokens/oar579Mcp7OUsNTlo0g3",
+        "hints": {
+          "allow": [
+            "DELETE"
+          ]
+        }
+      },
+      "client": {
+        "href": "https://example.okta.com/oauth2/v1/clients/0oabskvc6442nkvQO0h7",
+        "title": "Example Client App"
+      },
+      "user": {
+        "href": "https://example.okta.com/api/v1/users/00upcgi9dyWEOeCwM0g3",
+        "title": "Saml Jackson"
+      },
+      "authorizationServer": {
+        "href": "https://example.okta.com/api/v1/authorizationServers/ausain6z9zIedDCxB0h7",
+        "title": "Example Authorization Server"
+      }
+    }
+  }
+}

@@ -3,14 +3,16 @@ from types import MappingProxyType
 
 import pytest
 
-from okta_mcp.registry.loader import Domain, Registry, load_registry
-from okta_mcp.registry.spec import load_spec
+from okta_mcp.registry.loader import Domain, Registry
+
+from ._pilot import pilot_registry
 
 
 @pytest.fixture(scope="session")
 def pilot() -> Registry:
-    """The shipped registry, as the server loads it."""
-    return load_registry(load_spec())
+    """The shipped pilot domains (groups, network-zones), as the server loads them. The tests
+    that use it assert on exactly what those domains and `fixtures/pilot.yaml` hold."""
+    return pilot_registry()
 
 
 @pytest.fixture(scope="session")

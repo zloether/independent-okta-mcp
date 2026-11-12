@@ -1,0 +1,24 @@
+{
+  "source": "generated",
+  "operation": "getRoleAssignmentGovernanceGrantResources",
+  "body": {
+    "resources": [
+      {
+        "resource": "orn:okta:directory:00ozmkUsqWxsUxhGO0g3:groups:00g114290ar1oCC5A0g5",
+        "label": "test-group-1"
+      },
+      {
+        "resource": "orn:okta:directory:00ozmkUsqWxsUxhGO0g3:groups:00g118990hl1oCC5B0g5",
+        "label": "test-group-2"
+      }
+    ],
+    "_links": {
+      "next": {
+        "href": "https://example.okta.com/api/v1/users/00u15r0i2hC4jeTne0g5/roles/KVJUKUS7IFCE2SKO/governance/grai2556vZgWesWf10g4/resources?after=orn:okta:directory:00ozmkUsqWxsUxhGO0g3:groups:00g118990hl1oCC5A0g5"
+      },
+      "self": {
+        "href": "https://example.okta.com/api/v1/users/00u15r0i2hC4jeTne0g5/roles/KVJUKUS7IFCE2SKO/governance/grai2556vZgWesWf10g4/resources"
+      }
+    }
+  }
+}

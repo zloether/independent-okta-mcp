@@ -1,0 +1,18 @@
+{
+  "source": "generated",
+  "operation": "getUserAssignedRole",
+  "body": {
+    "id": "ra1b8anIk7rx7em7L0g4",
+    "label": "Super Organization administrator",
+    "type": "SUPER_ADMIN",
+    "status": "ACTIVE",
+    "created": "2015-09-06T15:28:47.000Z",
+    "lastUpdated": "2015-09-06T15:28:47.000Z",
+    "assignmentType": "USER",
+    "_links": {
+      "assignee": {
+        "href": "https://example.okta.com/api/v1/users/00ub0oNGTSWTBKOLGLNR"
+      }
+    }
+  }
+}

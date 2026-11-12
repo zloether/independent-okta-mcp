@@ -1,0 +1,11 @@
+{
+  "source": "generated",
+  "operation": "getFederatedClaim",
+  "body": {
+    "id": "ofc893fbjaBaqdtoX0g7",
+    "name": "role",
+    "expression": "appuser.entitlements.role",
+    "created": "2024-12-25T03:00:00.000Z",
+    "lastUpdated": "2024-12-25T03:00:00.000Z"
+  }
+}

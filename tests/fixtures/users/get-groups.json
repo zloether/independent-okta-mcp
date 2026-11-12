@@ -1,0 +1,20 @@
+{
+  "source": "generated",
+  "operation": "listUserGroups",
+  "body": [
+    {
+      "id": "0gabcd1234",
+      "profile": {
+        "name": "Cloud app users",
+        "description": "Users can access cloud apps"
+      }
+    },
+    {
+      "id": "0gefgh5678",
+      "profile": {
+        "name": "Internal app users",
+        "description": "Users can access internal apps"
+      }
+    }
+  ]
+}

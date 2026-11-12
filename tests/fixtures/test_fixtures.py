@@ -79,7 +79,8 @@ def test_fixture_fits_command(command: Command) -> None:
     cols = columns(None, entry.view)
     rows: list[Any] = []
     for item in items:
-        assert isinstance(item, dict)
+        # Items that declare no properties may be plain values (interclient app IDs).
+        assert isinstance(item, dict) or entry.view is None
         rows.append(render(item, RULES, links=False, cols=cols))
         assert render(item, RULES, links=True, cols=None)
     if cols is not None:

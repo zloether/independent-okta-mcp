@@ -1,0 +1,42 @@
+{
+  "source": "generated",
+  "operation": "getScopeConsentGrant",
+  "body": {
+    "id": "oag91n9ruw3dsaXzP0h6",
+    "status": "ACTIVE",
+    "created": "2023-02-21T16:54:00.000Z",
+    "createdBy": {
+      "id": "00u6eltha0nrSc47i0h7",
+      "type": "User"
+    },
+    "lastUpdated": "2023-02-21T16:54:00.000Z",
+    "issuer": "example.okta.com",
+    "clientId": "{clientId}",
+    "scopeId": "okta.users.read",
+    "source": "ADMIN",
+    "_embedded": {
+      "scope": {
+        "id": "okta.users.read"
+      }
+    },
+    "_links": {
+      "app": {
+        "href": "https://example.okta.com/api/v1/apps/{appId}",
+        "title": "Application name"
+      },
+      "self": {
+        "href": "https://example.okta.com/api/v1/apps/{appId}/grants/oag91n9ruw3dsaXzP0h6",
+        "hints": {
+          "allow": [
+            "GET",
+            "DELETE"
+          ]
+        }
+      },
+      "client": {
+        "href": "https://example.okta.com/oauth2/v1/clients/{clientId}",
+        "title": "Client name"
+      }
+    }
+  }
+}

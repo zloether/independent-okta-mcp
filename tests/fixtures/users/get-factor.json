@@ -1,0 +1,43 @@
+{
+  "source": "generated",
+  "operation": "getFactor",
+  "body": {
+    "id": "sms2gt8gzgEBPUWBIFHN",
+    "factorType": "sms",
+    "provider": "OKTA",
+    "vendorName": "OKTA",
+    "status": "ACTIVE",
+    "created": "2014-06-27T20:27:26.000Z",
+    "lastUpdated": "2014-06-27T20:27:26.000Z",
+    "profile": {
+      "phoneNumber": "+1-555-415-1337"
+    },
+    "_links": {
+      "verify": {
+        "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors/sms2gt8gzgEBPUWBIFHN/verify",
+        "hints": {
+          "allow": [
+            "POST"
+          ]
+        }
+      },
+      "self": {
+        "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors/sms2gt8gzgEBPUWBIFHN",
+        "hints": {
+          "allow": [
+            "GET",
+            "DELETE"
+          ]
+        }
+      },
+      "user": {
+        "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      }
+    }
+  }
+}

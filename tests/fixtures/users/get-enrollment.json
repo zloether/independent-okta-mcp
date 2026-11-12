@@ -1,0 +1,44 @@
+{
+  "source": "generated",
+  "operation": "getAuthenticatorEnrollment",
+  "body": {
+    "type": "phone",
+    "id": "sms8evhwh0Ne35iPR0g7",
+    "key": "phone_number",
+    "status": "ACTIVE",
+    "name": "Phone",
+    "created": "2020-07-26T21:05:23.000Z",
+    "lastUpdated": "2020-07-29T00:21:29.000Z",
+    "profile": {
+      "phoneNumber": "+1 XXX-XXX-6065"
+    },
+    "nickname": "Joe's Work Phone",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/users/00u4za57vqNsQAN8S0g7/authenticator-enrollments/sms8evhwh0Ne35iPR0g7",
+        "hints": {
+          "allow": [
+            "GET",
+            "DELETE"
+          ]
+        }
+      },
+      "user": {
+        "href": "https://example.okta.com/api/v1/users/00u4za57vqNsQAN8S0g7",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      },
+      "authenticator": {
+        "href": "https://example.okta.com/api/v1/authenticators/auth60xfl7VbebsFr0g6",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      }
+    }
+  }
+}
