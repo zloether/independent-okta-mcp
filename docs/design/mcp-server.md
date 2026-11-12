@@ -548,7 +548,7 @@ Okta Cross App Access (IETF *Identity Assertion JWT Authorization Grant*; MCP "e
 | Check | Rule |
 |---|---|
 | Format/alg | JWT ≤ 16 KiB; `alg` ∈ {`RS256`, `ES256`} and matching the key's; reject `none`/HS*; a `kid` is required; `crit` and `b64` headers refused |
-| Signature | Issuer JWKS (from the RFC 8414 metadata at `{MCP_ISSUER}/.well-known/oauth-authorization-server`, whose `issuer` must equal `MCP_ISSUER` and whose `jwks_uri` must be on the issuer's origin; each document read up to 256 KiB). Only `sig` keys: RSA ≥ 2048 bits for RS256, P-256 for ES256; a `kid` listed twice is dropped. Refreshed every 30 min in the background and trusted for 1 h, so a warm cache rides out an issuer outage of at least 30 min; on unknown `kid` refetch at most once per 60 s |
+| Signature | Issuer JWKS (from the RFC 8414 metadata at `{MCP_ISSUER}/.well-known/oauth-authorization-server`, whose `issuer` must equal `MCP_ISSUER` and whose `jwks_uri` must be on the issuer's origin; each document read uncompressed, up to 256 KiB). Only `sig` keys: RSA ≥ 2048 bits for RS256, P-256 for ES256; a `kid` listed twice is dropped. Refreshed every 30 min in the background and trusted for 1 h, so a warm cache rides out an issuer outage of at least 30 min; on unknown `kid` refetch at most once per 60 s |
 | `iss` | Exactly `MCP_ISSUER` |
 | `aud` | Contains `MCP_AUDIENCE` (default `MCP_PUBLIC_URL`) |
 | `exp`/`nbf`/`iat` | `nbf`/`iat` ≤60s skew; `exp` strict (the SDK also checks it, with no skew); `exp` and `iat` required; `iat` no older than `MCP_MAX_TOKEN_AGE` |

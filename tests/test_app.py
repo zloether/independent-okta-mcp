@@ -650,30 +650,56 @@ async def test_gate_is_the_endpoints_under_a_root_path(config: Config) -> None:
     assert verifier.calls == 1  # the SDK's auth middleware, before the endpoint
 
 
-class BecomesReady(FakeVerifier):
-    """Not ready on the first reading, ready after: the keys load mid-request."""
+class ReadinessSequence(FakeVerifier):
+    """Readiness changes mid-request: `readings` are the successive `ready()` answers (the last
+    repeats). Like the real verifier, `verify_token` reads readiness itself and answers `None`
+    when not ready."""
 
-    def __init__(self, tokens: dict[str, AccessToken]) -> None:
-        super().__init__(tokens, ready=False)
-        self.readings = 0
+    def __init__(self, tokens: dict[str, AccessToken], readings: list[bool]) -> None:
+        super().__init__(tokens)
+        self.readings = readings
+        self.read = 0
 
     def ready(self) -> bool:
-        self.readings += 1
-        return self.readings > 1
+        self.read += 1
+        return self.readings[min(self.read, len(self.readings)) - 1]
 
     async def verify_token(self, token: str) -> AccessToken | None:
         self.calls += 1
-        return None  # as the real verifier answers while not ready
+        return self.tokens.get(token) if self.ready() else None
 
 
 @pytest.mark.anyio
-async def test_keys_loading_mid_request_is_503_not_401(config: Config) -> None:
-    """One readiness reading per request: the verifier answered `None` because it wasn't
-    ready, so the gate must not let the request through to a 401 because it became ready."""
-    verifier = BecomesReady(TOKENS)
+@pytest.mark.parametrize(
+    "readings",
+    [
+        [False, True],  # keys load between the snapshot and the verifier
+        [False, False, True],  # ... between the verifier and the gate
+        [True, False],  # keys expire between the snapshot and the verifier
+        [True, True, False],  # ... between the verifier and the gate
+    ],
+)
+async def test_readiness_changing_mid_request_is_503_not_401(
+    config: Config, readings: list[bool]
+) -> None:
+    """Whatever the verifier saw, a request is never answered 401 for readiness: the gate
+    needs the verifier ready both before the SDK's auth (snapshot) and after it."""
+    verifier = ReadinessSequence(TOKENS, readings)
     async with serving(config, verifier) as app, http_for(app) as http:
         r = await http.post(
             "/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
         )
     assert r.status_code == 503
     assert verifier.calls == 1
+    # snapshot, verifier, then the gate's own reading (skipped if the snapshot said no)
+    assert verifier.read == (3 if readings[0] else 2)
+
+
+@pytest.mark.anyio
+async def test_ready_throughout_serves(config: Config) -> None:
+    verifier = ReadinessSequence(TOKENS, [True])
+    async with serving(config, verifier) as app, http_for(app) as http:
+        r = await http.post(
+            "/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
+        )
+    assert r.status_code == 200

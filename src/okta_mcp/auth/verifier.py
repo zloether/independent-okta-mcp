@@ -170,17 +170,10 @@ class JWTVerifier:
 
     async def run(self, sleep: Callable[[float], Awaitable[None]] = anyio.sleep) -> None:
         """Load the keys, then keep them fresh, until cancelled. A failed fetch is retried with
-        backoff; the old keys keep serving until their TTL runs out. An unexpected exception (a
-        bug) is logged and retried the same way: it shares a task group with the server, so
-        letting it out would stop the server rather than just leave it not ready."""
+        backoff; the old keys keep serving until their TTL runs out."""
         delay = RETRY_MIN
         while True:
-            try:
-                ok = await self.refresh()
-            except Exception as e:
-                log_internal(log, "JWKS refresh", e)
-                ok = False
-            if ok:
+            if await self.refresh():
                 delay = RETRY_MIN
                 await sleep(REFRESH_EVERY)
             else:
@@ -208,6 +201,11 @@ class JWTVerifier:
             # Not chained or formatted: the exception text can hold the URL and headers.
             log.warning("JWKS fetch from the issuer failed: %s", type(e).__name__)
             return False
+        except Exception as e:
+            # A bug. Caught here, not in `run`: the unknown-kid path (any sender) comes here too,
+            # and `run` shares a task group with the server, which a raise would stop.
+            log_internal(log, "JWKS refresh", e)
+            return False
         if not self._keys:
             log.info("JWKS loaded (%d keys)", len(keys))
         self._keys = keys
@@ -215,12 +213,16 @@ class JWTVerifier:
         return True
 
     async def _get_json(self, url: str) -> object:
-        """GET `url` as JSON, reading at most `MAX_DOCUMENT_BYTES` of the body."""
+        """GET `url` as JSON, reading at most `MAX_DOCUMENT_BYTES` of the body. Uncompressed
+        only: a decoder expands each chunk before the cap could see it."""
         body = bytearray()
-        async with self._http.stream("GET", url, headers={"accept": "application/json"}) as r:
+        headers = {"accept": "application/json", "accept-encoding": "identity"}
+        async with self._http.stream("GET", url, headers=headers) as r:
             if r.status_code != 200:
                 raise _FetchError(f"HTTP {r.status_code}")
-            async for chunk in r.aiter_bytes():
+            if r.headers.get("content-encoding", "identity").strip().lower() != "identity":
+                raise _FetchError("response is compressed")
+            async for chunk in r.aiter_bytes():  # identity: no decoder runs
                 body += chunk
                 if len(body) > MAX_DOCUMENT_BYTES:
                     raise _FetchError("response too large")

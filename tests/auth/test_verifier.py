@@ -883,21 +883,21 @@ async def test_an_endless_jwks_body_is_cut_off(issuer: Issuer, config: Config) -
 
 @pytest.mark.anyio
 async def test_run_survives_an_unexpected_exception(
-    make: Make, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    make: Make, issuer: Issuer, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """`run` shares a task group with the server: a bug in a refresh must not stop it."""
+    """`run` shares a task group with the server: a bug in a fetch must not stop it."""
     v = make()
+    real = issuer.__call__
     calls = 0
-    real = v.refresh
 
-    async def flaky() -> bool:
+    def flaky(request: httpx2.Request) -> httpx2.Response:
         nonlocal calls
         calls += 1
         if calls == 1:
             raise RuntimeError("bug")
-        return await real()
+        return real(request)
 
-    monkeypatch.setattr(v, "refresh", flaky)
+    v._http = httpx2.AsyncClient(transport=httpx2.MockTransport(flaky))  # pyright: ignore[reportPrivateUsage]
     sleeps: list[float] = []
 
     async def sleep(seconds: float) -> None:
@@ -910,3 +910,39 @@ async def test_run_survives_an_unexpected_exception(
     assert sleeps == [RETRY_MIN, REFRESH_EVERY]
     assert v.ready()
     assert "internal error in JWKS refresh: RuntimeError" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_unknown_kid_refetch_bug_is_none_not_a_raise(
+    make: Make, issuer: Issuer, clock: Clock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Any sender can reach the refetch with a new `kid`; a bug there must not escape."""
+    v = await loaded(make)
+
+    def broken(request: httpx2.Request) -> httpx2.Response:
+        raise RuntimeError("bug")
+
+    v._http = httpx2.AsyncClient(transport=httpx2.MockTransport(broken))  # pyright: ignore[reportPrivateUsage]
+    clock.advance(UNKNOWN_KID_INTERVAL)
+    assert await v.verify_token(sign(kid="new")) is None
+    assert "internal error in JWKS refresh: RuntimeError" in caplog.text
+    assert await v.verify_token(sign()) is not None  # old keys still serve
+
+
+@pytest.mark.anyio
+async def test_compressed_documents_are_refused(issuer: Issuer, config: Config) -> None:
+    """The cap counts raw bytes; a compressed body would expand past it before the check."""
+    import gzip
+
+    seen: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request.headers.get("accept-encoding", ""))
+        if str(request.url) == METADATA:
+            body = gzip.compress(json.dumps(issuer.metadata).encode())
+            return httpx2.Response(200, content=body, headers={"content-encoding": "gzip"})
+        return issuer(request)
+
+    v = JWTVerifier(httpx2.AsyncClient(transport=httpx2.MockTransport(handler)), config)
+    assert not await v.refresh()
+    assert seen == ["identity"]

@@ -153,9 +153,9 @@ READY_KEY = "okta_mcp.ready"
 
 class ReadySnapshot:
     """ASGI middleware, before the SDK's auth: records `ready()` once per request in the scope,
-    for `ReadyGate`. One reading for both, so a request the verifier saw while not ready (and
-    so answered `None`) is never let through to `RequireAuthMiddleware` as 401 because the keys
-    loaded in between."""
+    for `ReadyGate`, so a request the verifier saw while not ready (and so answered `None`) is
+    never let through to `RequireAuthMiddleware` as 401 because the keys loaded in between.
+    Runs on every route (cheap: it reads state), since the route isn't known yet."""
 
     def __init__(self, app: ASGIApp, ready: Callable[[], bool]) -> None:
         self.app = app
@@ -169,17 +169,21 @@ class ReadySnapshot:
 
 class ReadyGate:
     """ASGI app wrapped around the SDK's `/mcp` endpoint, outside its `RequireAuthMiddleware`:
-    503 + `Retry-After` unless `ReadySnapshot` found the verifier ready (§11.3: JWKS loaded).
-    Without it a verifier that can't verify yet would answer a valid token with 401
-    `invalid_token`, and clients would throw the token away and sign in again in a loop.
-    Wrapping the endpoint, not matching paths, means the gate sees exactly the requests the
-    endpoint serves. No snapshot (a wiring bug) is not ready."""
+    503 + `Retry-After` unless the verifier was ready both when the request arrived
+    (`ReadySnapshot`, before the SDK's auth) and is still ready now (§11.3: JWKS loaded).
+    Without it a verifier that can't verify would answer a valid token with 401
+    `invalid_token`, and clients would throw the token away and sign in again in a loop. The
+    verifier reads readiness in between; checking on both sides of it covers keys loading
+    (not ready, then ready) and expiring (ready, then not) during the request. Wrapping the
+    endpoint, not matching paths, means the gate sees exactly the requests the endpoint
+    serves. No snapshot (a wiring bug) is not ready."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, ready: Callable[[], bool]) -> None:
         self.app = app
+        self.ready = ready
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope.get(READY_KEY) is not True:
+        if scope["type"] == "http" and not (scope.get(READY_KEY) is True and self.ready()):
             response = JSONResponse(
                 {"error": NOT_READY}, status_code=503, headers={"Retry-After": RETRY_AFTER}
             )
@@ -188,12 +192,12 @@ class ReadyGate:
         await self.app(scope, receive, send)
 
 
-def _gate_endpoint(app: Starlette) -> None:
+def _gate_endpoint(app: Starlette, ready: Callable[[], bool]) -> None:
     """Put `ReadyGate` in front of the SDK's `/mcp` route, which must exist exactly once."""
     routes = [r for r in app.router.routes if isinstance(r, Route) and r.path == MCP_PATH]
     if len(routes) != 1:
         raise RuntimeError(f"expected one SDK route at {MCP_PATH}, found {len(routes)}")
-    routes[0].app = ReadyGate(routes[0].app)
+    routes[0].app = ReadyGate(routes[0].app, ready)
 
 
 def _health_routes(ready: Callable[[], bool]) -> list[Route]:
@@ -261,7 +265,7 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
         ),
         token_verifier=_FailClosed(verifier),
     )
-    _gate_endpoint(mcp)
+    _gate_endpoint(mcp, can_verify)
     return Starlette(
         routes=[
             *_health_routes(lambda: can_verify() and has_token()),
