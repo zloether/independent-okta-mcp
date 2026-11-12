@@ -49,8 +49,20 @@ GROUPS_EXPRESSION = (
 GROUPS_CLAIM = "groups"
 POLICY_NAME = "okta-mcp clients"
 RULE_NAME = "okta-mcp groups"
-SERVICE_ROLE = "READ_ONLY_ADMIN"
+READ_ONLY_ADMIN = "READ_ONLY_ADMIN"
+SUPER_ADMIN = "SUPER_ADMIN"
 CUSTOM_ROLE = "CUSTOM"
+# The narrowest standard admin role under which each scope's GET endpoints answer: Okta checks
+# the token's scopes and the app's admin role together. Mirrored in docs/okta-setup.md (tested)
+# and terraform/okta/main.tf. A scope missing here is refused, so add each new one after
+# checking it against an org.
+SCOPE_ROLES = {
+    "okta.users.read": READ_ONLY_ADMIN,
+    "okta.groups.read": READ_ONLY_ADMIN,
+    "okta.networkZones.read": READ_ONLY_ADMIN,
+    "okta.roles.read": SUPER_ADMIN,  # role assignments are visible to Super Admins only
+}
+ROLE_ORDER = [READ_ONLY_ADMIN, SUPER_ADMIN]
 DESCRIPTION = "Managed by okta-mcp scripts/okta-setup.py"
 # Claude Code requests offline_access; a rule without it fails sign-in with no_matching_policy.
 # Okta issues a refresh token only when the client app also has the refresh_token grant.
@@ -84,7 +96,20 @@ class ServiceApp(_Model):
         bad = [s for s in scopes if not (s.startswith("okta.") and s.endswith(".read"))]
         if bad:
             raise ValueError(f"only okta.*.read scopes are allowed, got {bad}")
+        unknown = [s for s in scopes if s not in SCOPE_ROLES]
+        if unknown:
+            raise ValueError(f"no admin role is recorded for {unknown}; see SCOPE_ROLES")
         return scopes
+
+    @property
+    def role(self) -> str:
+        """The admin role the scopes need: the broadest of their `SCOPE_ROLES`."""
+        return max((SCOPE_ROLES[s] for s in self.scopes), key=ROLE_ORDER.index)
+
+    @property
+    def accepted_roles(self) -> set[str]:
+        """Roles the app may hold without widening what the scopes need."""
+        return set(ROLE_ORDER[: ROLE_ORDER.index(self.role) + 1]) | {CUSTOM_ROLE}
 
 
 class RefreshTokens(_Model):
@@ -630,9 +655,10 @@ class Setup:
                 self._create_service_app,
             )
             if app is None:
-                self.pending(
-                    f"{what} access", f"grant {' '.join(svc.scopes)}; assign {SERVICE_ROLE}"
-                )
+                role = svc.role
+                if role == SUPER_ADMIN:
+                    role = f"{READ_ONLY_ADMIN} ({SUPER_ADMIN} by hand)"
+                self.pending(f"{what} access", f"grant {' '.join(svc.scopes)}; assign {role}")
                 return
             existing = None
         elif not self._check_service_app(what, app):
@@ -646,13 +672,14 @@ class Setup:
         roles_path = f"/oauth2/v1/clients/{client_id}/roles"
         roles = {r["type"] for r in self.okta.get(roles_path)}
         extra_grants = sorted(granted - set(svc.scopes))
-        extra_roles = sorted(roles - {SERVICE_ROLE, CUSTOM_ROLE})
+        extra_roles = sorted(roles - svc.accepted_roles)
         if extra_grants:
             self.problem("service app grants", f"not in config, revoke them: {extra_grants}")
         if extra_roles:
             self.problem(
                 "service app roles",
-                f"remove {extra_roles}; the server needs only {SERVICE_ROLE} (never SUPER_ADMIN)",
+                f"remove {extra_roles}; with these scopes only {sorted(svc.accepted_roles)} "
+                "are accepted",
             )
         if extra_grants or extra_roles:
             return  # not trusted: no grants, role or server settings
@@ -744,19 +771,28 @@ class Setup:
                 )
 
     def _roles(self, path: str, roles: set[str], existing: str | None) -> None:
-        if SERVICE_ROLE in roles:
-            self.ok(f"role {SERVICE_ROLE}")
+        role = self.cfg.service_app.role
+        if role in roles:
+            self.ok(f"role {role}")
         elif CUSTOM_ROLE in roles:
             # Design Appendix C allows a narrower custom role instead; don't add the broad one.
-            self.ok(f"role {CUSTOM_ROLE}", f"in place of {SERVICE_ROLE}; review its permissions")
+            self.ok(f"role {CUSTOM_ROLE}", f"in place of {role}; review its permissions")
         elif existing:
-            self.problem(f"role {SERVICE_ROLE}", f"{existing}; confirm it is yours, then assign it")
+            self.problem(f"role {role}", f"{existing}; confirm it is yours, then assign it")
         else:
-            self.fix(
-                f"role {SERVICE_ROLE}",
-                "assign to service app",
-                lambda: self.okta.request("POST", path, {"type": SERVICE_ROLE}),
-            )
+            if role == SUPER_ADMIN:
+                needs = [s for s in self.cfg.service_app.scopes if SCOPE_ROLES[s] == SUPER_ADMIN]
+                self.problem(
+                    f"role {role}",
+                    f"{', '.join(needs)} needs it; assign it by hand (this tool never assigns it)",
+                )
+                role = READ_ONLY_ADMIN  # enough for the other scopes until then
+            if role not in roles:
+                self.fix(
+                    f"role {role}",
+                    "assign to service app",
+                    lambda: self.okta.request("POST", path, {"type": role}),
+                )
 
     def summary(self) -> None:
         print("\nServer settings:")

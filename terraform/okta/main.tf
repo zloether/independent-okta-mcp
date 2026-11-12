@@ -8,6 +8,16 @@ locals {
   jwk = jsondecode(file(var.service_public_jwk_file))
   # RFC 7638 thumbprint, the same kid scripts/okta-setup.py computes.
   kid = replace(replace(trimsuffix(base64sha256(jsonencode({ e = local.jwk.e, kty = "RSA", n = local.jwk.n })), "="), "+", "-"), "/", "_")
+
+  # The narrowest standard admin role each scope needs (docs/okta-setup.md#service-app-scopes-and-admin-roles).
+  # Keep in sync with SCOPE_ROLES in scripts/okta-setup.py (tested).
+  scope_roles = {
+    "okta.users.read"        = "READ_ONLY_ADMIN"
+    "okta.groups.read"       = "READ_ONLY_ADMIN"
+    "okta.networkZones.read" = "READ_ONLY_ADMIN"
+    "okta.roles.read"        = "SUPER_ADMIN"
+  }
+  service_role = contains([for s in var.service_scopes : lookup(local.scope_roles, s, "")], "SUPER_ADMIN") ? "SUPER_ADMIN" : "READ_ONLY_ADMIN"
 }
 
 # --- Role groups ---------------------------------------------------------------
@@ -133,5 +143,18 @@ resource "okta_app_oauth_api_scope" "service" {
 
 resource "okta_app_oauth_role_assignment" "service" {
   client_id = okta_app_oauth.service.client_id
-  type      = "READ_ONLY_ADMIN"
+  type      = local.service_role
+
+  lifecycle {
+    # A scope change replaces the role; keep the app's old role until the new one exists.
+    create_before_destroy = true
+    precondition {
+      condition     = alltrue([for s in var.service_scopes : contains(keys(local.scope_roles), s)])
+      error_message = "No admin role is recorded for some service_scopes; add them to local.scope_roles."
+    }
+    precondition {
+      condition     = local.service_role != "SUPER_ADMIN" || var.allow_super_admin
+      error_message = "service_scopes include okta.roles.read, which needs SUPER_ADMIN; set allow_super_admin = true to assign it."
+    }
+  }
 }
