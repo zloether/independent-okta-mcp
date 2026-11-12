@@ -19,6 +19,7 @@ def restore_logging() -> Iterator[None]:
     try:
         yield
     finally:
+        logging.captureWarnings(False)
         root.handlers[:] = saved[0]
         root.setLevel(saved[1])
         ours.setLevel(saved[2])
@@ -83,4 +84,29 @@ def test_our_exceptions_keep_frames_not_messages(capsys: pytest.CaptureFixture[s
     err = capsys.readouterr().err
     assert "[abc123] internal error in tools/call: RuntimeError" in err
     assert "test_logs.py" in err
+    assert SECRET not in err
+
+
+@pytest.mark.usefixtures("restore_logging")
+def test_warnings_go_through_the_filters(capsys: pytest.CaptureFixture[str]) -> None:
+    import warnings
+
+    configure_logging("INFO")
+    warnings.warn(f"serializer saw {SECRET}", UserWarning, stacklevel=1)
+    err = capsys.readouterr().err
+    assert "WARNING py.warnings [-]" in err
+    assert "test_logs.py:" in err
+    assert "UserWarning (details withheld)" in err
+    assert SECRET not in err
+
+
+@pytest.mark.usefixtures("restore_logging")
+def test_a_bad_dependency_format_string_does_not_raise(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging("INFO")
+    try:
+        raise ValueError(SECRET)
+    except ValueError:
+        logging.getLogger("mcp.server").exception("needs %s and %s", "one")
+    err = capsys.readouterr().err
+    assert "(ValueError; details withheld)" in err
     assert SECRET not in err

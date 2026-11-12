@@ -44,10 +44,21 @@ class DependencyExceptionFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if record.name == PACKAGE or record.name.startswith(PACKAGE + "."):
             return True
+        if record.name == "py.warnings":
+            # `warnings.formatwarning` text: "file:line: Category: message\n  source". The
+            # message can hold values (pydantic serializer warnings); keep where and what.
+            where, _, rest = record.getMessage().partition(": ")
+            category = rest.partition(":")[0]
+            record.msg = f"{where}: {category} (details withheld)"
+            record.args = None
         if record.exc_info:
             exc = record.exc_info[1]
             if exc is not None:
-                record.msg = f"{record.getMessage()} ({type(exc).__name__}; details withheld)"
+                try:
+                    message = record.getMessage()
+                except Exception:  # a dependency's bad format string must not break its caller
+                    message = str(record.msg)
+                record.msg = f"{message} ({type(exc).__name__}; details withheld)"
                 record.args = None
         record.exc_info = None
         record.exc_text = None
@@ -65,6 +76,8 @@ def configure_logging(level: str) -> None:
     )
     root = logging.getLogger()
     root.handlers[:] = [handler]
+    # `warnings` output (pydantic's can hold input values) goes through the filters above.
+    logging.captureWarnings(True)
     # Never below WARNING for dependencies, and never noisier than what was asked for.
     root.setLevel(max(logging.WARNING, logging.getLevelNamesMapping()[level]))
     logging.getLogger(PACKAGE).setLevel(level)
