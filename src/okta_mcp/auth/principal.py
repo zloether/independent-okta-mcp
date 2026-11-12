@@ -1,7 +1,10 @@
 """The authenticated caller (design §8.5)."""
 
 from dataclasses import dataclass
-from typing import cast
+from typing import Self, cast
+
+from mcp.server.auth.provider import AccessToken
+from pydantic import ConfigDict, model_validator
 
 
 @dataclass(frozen=True)
@@ -26,3 +29,26 @@ class Principal:
             isinstance(g, str) for g in cast(frozenset[object], groups)
         ):
             raise TypeError("Principal.groups must be a frozenset of strings")
+
+
+class VerifiedToken(AccessToken):
+    """What the HTTP token verifier (4.3) returns: the SDK's `AccessToken`, which its auth
+    middleware checks and puts in the request context, plus the `Principal` built from the
+    same token. The HTTP app reads only `principal`; any other `AccessToken` in the context is
+    refused (`okta_mcp.app.http_principal`)."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    principal: Principal
+
+    @model_validator(mode="after")
+    def _same_caller(self) -> Self:
+        # The SDK keys its own per-caller state on (client_id, iss, subject); they must name
+        # the same caller as `principal`, or two users of one client would look alike to it.
+        p = self.principal
+        if self.subject != p.uid or (p.client_id is not None and self.client_id != p.client_id):
+            raise ValueError("VerifiedToken subject and client_id must match its principal")
+        iss = (self.claims or {}).get("iss")
+        if not isinstance(iss, str) or not iss:
+            raise ValueError("VerifiedToken claims must hold the token's iss")
+        return self

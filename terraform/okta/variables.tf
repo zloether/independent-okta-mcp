@@ -12,9 +12,19 @@ variable "mcp_public_url" {
   description = "Canonical external URL of the MCP endpoint (MCP_PUBLIC_URL); becomes the authorization server audience."
   type        = string
 
+  # A rough pre-check: the server's MCP_PUBLIC_URL check is the authority. The last host label
+  # starts with a letter, so numeric shorthand hosts (`127.1`) that the server would rewrite
+  # never pass; ports 1-65535.
   validation {
-    condition     = can(regex("^(https://[^/]+|http://(127\\.0\\.0\\.1|localhost)(:[0-9]+)?)(/.*)?$", var.mcp_public_url))
-    error_message = "Must be an https URL (http only for 127.0.0.1/localhost)."
+    condition     = can(regex("^(https://([a-z0-9-]+\\.)*[a-z][a-z0-9-]*|http://(127\\.0\\.0\\.1|localhost))(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?/mcp$", var.mcp_public_url))
+    error_message = "Must be https://<lowercase DNS name>[:port]/mcp, the endpoint the server serves: no credentials, no IP-address host (use scripts/okta-setup.py for one), http only for 127.0.0.1/localhost."
+  }
+
+  # The server refuses a default port (MCP_PUBLIC_URL must be canonical), so the audience must
+  # not carry one either.
+  validation {
+    condition     = !can(regex("^(https://[^/]+:443|http://[^/]+:80)/mcp$", var.mcp_public_url))
+    error_message = "Leave out the default port (:443 for https, :80 for http)."
   }
 }
 

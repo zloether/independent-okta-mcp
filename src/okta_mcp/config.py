@@ -17,6 +17,7 @@ from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -34,6 +35,7 @@ log = logging.getLogger(__name__)
 _SECRETS = ("MCP_CURSOR_KEY", "OKTA_API_TOKEN")
 _LOOPBACK = frozenset({"127.0.0.1", "localhost"})  # as in scripts/okta-setup.py
 _DEFAULT_PORT = {"https": 443, "http": 80}
+MCP_PATH = "/mcp"
 
 
 class ConfigError(Exception):
@@ -158,7 +160,21 @@ class Config(BaseModel):
     @field_validator("public_url")
     @classmethod
     def _public_url(cls, v: str) -> str:
-        return _url(v, http_loopback=True)
+        v = _url(v, http_loopback=True)
+        # The one path the HTTP app serves; PRM `resource`, its URL in a 401, and the expected
+        # `aud` are all this value (design §8.1), so it must be canonical too: the SDK
+        # canonicalizes it for PRM, while `aud` is compared as written.
+        parts = urlsplit(v)
+        if parts.path != MCP_PATH:
+            raise ValueError(f"path must be {MCP_PATH}, the endpoint the server serves")
+        canonical = _url(f"{parts.scheme}://{parts.netloc}", origin_only=True, http_loopback=True)
+        if v != canonical + MCP_PATH:
+            raise ValueError(f"must be in canonical form: {canonical}{MCP_PATH}")
+        # And unchanged by the SDK's own normalization (`AnyHttpUrl`, as PRM is built), which
+        # also decodes `%2e`, expands `127.1` and the like.
+        if str(AnyHttpUrl(v)) != v:
+            raise ValueError("must be in canonical form (no encoded or shorthand host)")
+        return v
 
     @field_validator("issuer")
     @classmethod

@@ -1,4 +1,4 @@
-"""Step 0.6 client OAuth check (V3, V10, V11 per client). Throwaway; deleted with spikes/sdk/.
+"""Step 0.6 client OAuth check (V3, V10, V11 per client). Throwaway; deleted after 0.6 and 4.6.
 
 A minimal MCP server that real clients sign in to through the spike's custom AS (Path A):
 401 + Protected Resource Metadata at both URLs (design §8.1), real JWT validation against the

@@ -31,6 +31,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
     ConfigDict,
     Field,
@@ -126,6 +127,25 @@ class Config(_Model):
         loopback = parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost")
         if not (parts.scheme == "https" or loopback) or not parts.netloc:
             raise ValueError("must be an https URL (http only for 127.0.0.1/localhost)")
+        # The server's MCP_PUBLIC_URL check refuses anything but this canonical form, so an
+        # audience in any other would never match.
+        if any(c.isspace() or not c.isprintable() for c in url) or "@" in parts.netloc:
+            raise ValueError("must not contain whitespace, control characters or credentials")
+        host = parts.hostname or ""
+        if not host.isascii() or host.endswith(".") or ":" in host:
+            raise ValueError("host must be an ASCII (punycode) name with no trailing dot")
+        port = parts.port  # raises ValueError out of range
+        if port == 0 or parts.netloc.endswith(":"):
+            raise ValueError("must not have an empty or zero port")
+        default = {"https": 443, "http": 80}[parts.scheme]
+        suffix = f":{port}" if port not in (None, default) else ""
+        canonical = f"{parts.scheme}://{host}{suffix}/mcp"
+        # The second test is pydantic's normalization, which the server's PRM uses (it decodes
+        # `%2e`, expands `127.1`, ...).
+        if url != canonical:
+            raise ValueError(f"must be {canonical}: path /mcp, lowercase host, no default port")
+        if str(AnyHttpUrl(url)) != url:
+            raise ValueError("must not use an encoded or shorthand host (e.g. %2e, 127.1)")
         return url
 
     @field_validator("groups")

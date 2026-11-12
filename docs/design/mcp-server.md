@@ -734,7 +734,7 @@ ENTRYPOINT ["okta-mcp"]
 
 | Variable | Req | Default | Purpose |
 |---|---|---|---|
-| `MCP_PUBLIC_URL` | ✔ | — | Canonical external URL of the MCP endpoint; default audience; PRM `resource` |
+| `MCP_PUBLIC_URL` | ✔ | — | Canonical external URL of the MCP endpoint; default audience; PRM `resource`. Path must be `/mcp`, the one path served, and the URL canonical (lowercase scheme and host, no default port, unchanged by URL normalization), since PRM normalizes it and `aud` is compared as written |
 | `MCP_ISSUER` | ✔ | — | Okta custom AS issuer URL |
 | `MCP_AUDIENCE` |  | `MCP_PUBLIC_URL` | Expected `aud` |
 | `MCP_REQUIRED_SCOPE` |  | `okta-mcp` | Required scope |
@@ -744,7 +744,7 @@ ENTRYPOINT ["okta-mcp"]
 | `MCP_CURSOR_KEY` / `_FILE` | ✔ | — | Base64 HMAC key (≥32 bytes) |
 | `MCP_ALLOWED_ORIGINS` |  | empty | Comma list. A request **with** an `Origin` header not in the list is rejected (403); requests without `Origin` (non-browser clients) are allowed |
 | `MCP_HOST` / `MCP_PORT` |  | `127.0.0.1` / `8080` | Bind (image sets `0.0.0.0`) |
-| `MCP_TRUST_PROXY` |  | `false` | Honor `X-Forwarded-*` |
+| `MCP_TRUST_PROXY` |  | `false` | Honor `X-Forwarded-*` from any peer. Turn on only when nothing but the proxy can reach the port (§11.4) |
 | `MCP_ENV` |  | `development` | `production` refuses dev mode and SSWS (image default) |
 | `MCP_DEV_MODE` / `MCP_DEV_PRINCIPAL_FILE` |  | off | stdio dev mode (§8.6) |
 | `MCP_DEFAULT_LIMIT` / `MCP_MAX_ITEMS` / `MCP_MAX_BYTES` |  | `50` / `1000` / `65536` | Output budgets ([T1](t1-tool-surface.md) D7); `MCP_MAX_BYTES` ≥ 1024, so the envelope always fits |
@@ -763,9 +763,9 @@ ENTRYPOINT ["okta-mcp"]
 | `OKTA_RATE_LIMIT_MAX_WAIT` |  | `10` | Max seconds to wait on a 429 before `rate_limited` |
 | `OKTA_API_TOKEN` |  | — | SSWS, stdio dev mode only; refused when `MCP_ENV=production` |
 
-Values are stripped; an empty one counts as unset. Secrets (`MCP_CURSOR_KEY`, `OKTA_API_TOKEN`) may instead be read from `<NAME>_FILE` (an empty file is an error). Outside dev mode, `MCP_PUBLIC_URL`, `MCP_ISSUER` and `MCP_ALLOWED_CLIENT_IDS` are required; `OKTA_CLIENT_ID` and `OKTA_PRIVATE_KEY_FILE` are required unless `OKTA_API_TOKEN` is set (dev mode only, not both). URLs must be https (`MCP_PUBLIC_URL` and `MCP_ALLOWED_ORIGINS` may be http on `127.0.0.1`/`localhost` outside production) with an ASCII host and no credentials, query or fragment; `OKTA_ORG_URL` and each `MCP_ALLOWED_ORIGINS` entry are origins only, kept in canonical form (lowercase host, no default port). Every `OKTA_SCOPES` entry must be a `.read` scope.
+Values are stripped; an empty one counts as unset. Secrets (`MCP_CURSOR_KEY`, `OKTA_API_TOKEN`) may instead be read from `<NAME>_FILE` (an empty file is an error). Outside dev mode, `MCP_PUBLIC_URL`, `MCP_ISSUER` and `MCP_ALLOWED_CLIENT_IDS` are required; `OKTA_CLIENT_ID` and `OKTA_PRIVATE_KEY_FILE` are required unless `OKTA_API_TOKEN` is set (dev mode only, not both). URLs must be https (`MCP_PUBLIC_URL` and `MCP_ALLOWED_ORIGINS` may be http on `127.0.0.1`/`localhost` outside production) with an ASCII host and no credentials, query or fragment; `OKTA_ORG_URL` and each `MCP_ALLOWED_ORIGINS` entry are origins only, kept in canonical form (lowercase host, no default port); `MCP_PUBLIC_URL` must already be in canonical form, with path `/mcp`. Every `OKTA_SCOPES` entry must be a `.read` scope.
 
-Startup fails fast on missing/invalid values, unreadable key, invalid policy, or registry/spec mismatch. It does **not** require the issuer to be reachable: the server starts, `/readyz` reports not-ready and authenticated requests get `503` until the JWKS loads (retried with backoff).
+Startup fails fast on missing/invalid values, unreadable key, invalid policy, or registry/spec mismatch. It does **not** require the issuer to be reachable: the server starts, `/readyz` reports not-ready and every `/mcp` request (with a token or without) gets `503` with `Retry-After` until the JWKS loads (retried with backoff), so a valid token is never answered with 401 for it. `/healthz` and the PRM URLs are unaffected.
 
 ### 11.4 Operations
 
@@ -773,6 +773,7 @@ Startup fails fast on missing/invalid values, unreadable key, invalid policy, or
 - **Health:** `/healthz` (process up); `/readyz` (policy loaded, registry valid, JWKS loaded, service token obtained within the last refresh cycle — not fetched per probe). Unauthenticated, data-free.
 - **Upgrades:** stateless; replace the container. Pin image tags and the MCP SDK.
 - **Secrets:** files; rotation = new secret + restart (service key, cursor key).
+- **Network exposure:** only the TLS proxy may reach the container's port. The app does not check which peer sent `X-Forwarded-*` (`MCP_TRUST_PROXY`); that is the network's job: no published port, or one bound to loopback (`127.0.0.1:8080:8080`; Docker's published ports bypass host firewalls such as ufw). Identity never comes from the client address (limits, audit and cursors key on `uid`), so a forged one mislabels a log line, nothing more.
 - **Replicas:** safe (stateless), but limiters and the service token are per replica.
 - **Exposure decision** (before rollout): internal-only vs internet-facing; record it in the runbook and the compatibility matrix.
 - **Kill switch:** (1) stop the container / pull from proxy; (2) deactivate the service app in Okta; (3) rotate the service key; (4) deactivate the custom AS or remove clients from its policy; (5) rotate `MCP_CURSOR_KEY`.

@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.10",
     "pyjwt[crypto]>=2.10",
     "pyyaml>=6.0.2",
+    "starlette>=0.48",
     "uvicorn>=0.34",
 ]
 
