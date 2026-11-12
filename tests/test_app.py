@@ -436,10 +436,18 @@ class RaisingVerifier(FakeVerifier):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("path", ["/healthz", "/readyz"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/healthz",
+        "/readyz",
+        "/.well-known/oauth-protected-resource/mcp",
+        "/.well-known/oauth-protected-resource",
+    ],
+)
 async def test_health_never_runs_the_verifier(config: Config, path: str) -> None:
-    """The health routes sit outside the SDK's auth middleware, which would verify any bearer
-    header and fail with the verifier."""
+    """The health and PRM routes sit outside the SDK's auth middleware, which would verify any
+    bearer header and fail with the verifier."""
     verifier = RaisingVerifier(TOKENS)
     async with serving(config, verifier) as app, http_for(app) as http:
         r = await http.get(path, headers={"authorization": "Bearer reader"})
@@ -451,7 +459,7 @@ async def test_health_never_runs_the_verifier(config: Config, path: str) -> None
 @pytest.mark.parametrize(
     ("method", "path", "status"),
     [
-        ("GET", "/.well-known/oauth-protected-resource/mcp", 200),
+        ("POST", "/.well-known/oauth-protected-resource/mcp", 404),
         ("POST", "/healthz", 404),
         ("GET", "/healthz/", 404),
         ("POST", "/mcp", 401),
@@ -475,11 +483,53 @@ async def test_a_failing_verifier_is_never_a_500(
 
 
 @pytest.mark.anyio
-async def test_prm_is_served_at_the_path_url(config: Config) -> None:
+@pytest.mark.parametrize(
+    "path", ["/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource"]
+)
+async def test_prm_is_served_at_both_urls(config: Config, path: str) -> None:
     async with serving(config) as app, http_for(app) as http:
-        r = await http.get("/.well-known/oauth-protected-resource/mcp")
+        r = await http.get(path)
     assert r.status_code == 200
-    assert r.json()["resource"] == PUBLIC
+    assert r.json() == {
+        "resource": PUBLIC,
+        "authorization_servers": [ISSUER],
+        "scopes_supported": [SCOPE],
+        "bearer_methods_supported": ["header"],
+    }
+
+
+@pytest.mark.anyio
+async def test_the_challenges_are_ours_not_the_sdks(config: Config) -> None:
+    """`build_app` swaps the SDK's `RequireAuthMiddleware` for `RequireToken`: no error code
+    without a token, `scope` always, a query token refused."""
+    prm = "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+    async with serving(config) as app, http_for(app) as http:
+        bare = await http.post("/mcp", json=INIT, headers=JSON_HEADERS)
+        scopeless = await http.post(
+            "/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer no-scope"}
+        )
+        query = await http.post(
+            "/mcp?access_token=reader",
+            json=INIT,
+            headers={**JSON_HEADERS, "authorization": "Bearer reader"},
+        )
+    assert bare.headers["www-authenticate"] == f'Bearer resource_metadata="{prm}", scope="{SCOPE}"'
+    assert 'scope="okta-mcp"' in scopeless.headers["www-authenticate"]
+    assert query.status_code == 400
+
+
+def test_build_app_refuses_an_unexpected_sdk_endpoint() -> None:
+    """If an SDK upgrade stops wrapping `/mcp` in `RequireAuthMiddleware`, or moves its PRM
+    route, the app must not build with the SDK's challenge, or none."""
+    from starlette.routing import Route
+
+    from okta_mcp.app import _gate_endpoint  # pyright: ignore[reportPrivateUsage]
+
+    async def bare(scope: object, receive: object, send: object) -> None: ...
+
+    plain = Starlette(routes=[Route("/mcp", bare)])
+    with pytest.raises(RuntimeError, match="RequireAuthMiddleware"):
+        _gate_endpoint(plain, lambda: True, scope=SCOPE, public_url=PUBLIC)
 
 
 def test_verified_token_must_name_its_principal() -> None:

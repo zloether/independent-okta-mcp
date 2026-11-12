@@ -129,6 +129,12 @@ def test_whitespace_counts_as_unset(env: dict[str, str], name: str) -> None:
     assert _errors(env) == [f"{name}: required"]
 
 
+@pytest.mark.parametrize("scope", ["okta-mcp", "api://okta-mcp/read", "a!#[]~"])
+def test_required_scope_takes_any_scope_token(env: dict[str, str], scope: str) -> None:
+    env["MCP_REQUIRED_SCOPE"] = scope
+    assert load_config(env).required_scope == scope
+
+
 def test_values_are_stripped(env: dict[str, str]) -> None:
     env["MCP_REQUIRED_SCOPE"] = "okta-mcp \n"
     env["OKTA_CLIENT_ID"] = " 0oa1service"
@@ -196,6 +202,11 @@ def test_cross_variable_errors_reported_together(env: dict[str, str]) -> None:
         ("OKTA_ORG_URL", "https://example.okta.com:0"),
         ("MCP_ISSUER", "https://example.okta.com./oauth2/aus1abc"),
         ("MCP_REQUIRED_SCOPE", "okta-mcp openid"),
+        # Written into `WWW-Authenticate` as a quoted string (plan 4.4).
+        ("MCP_REQUIRED_SCOPE", 'okta-mcp", error="x'),
+        ("MCP_REQUIRED_SCOPE", "okta\\mcp"),
+        ("MCP_REQUIRED_SCOPE", "okta\x7fmcp"),
+        ("MCP_REQUIRED_SCOPE", "okta-mcp\u00e9"),
         ("MCP_GROUPS_CLAIM", "groups\tx"),
     ],
 )

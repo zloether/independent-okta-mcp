@@ -1,10 +1,11 @@
-"""The HTTP app: stateless Streamable HTTP at `/mcp`, `/healthz`, `/readyz` (design §4, §5.2,
-§11.4).
+"""The HTTP app: stateless Streamable HTTP at `/mcp`, `/healthz`, `/readyz` and the two PRM
+URLs (design §4, §5.2, §8.1, §11.4).
 
 `build_app` wraps the SDK's Streamable HTTP app around the same `mcp_server` stdio uses, with
 the caller taken from the verified bearer token (`http_principal`). Authentication is never
-optional here: `build_app` needs a `Verifier`, and the SDK's `RequireAuthMiddleware` answers
-`/mcp` without a valid token with 401 before any handler runs. The verifier is
+optional here: `build_app` needs a `Verifier`, and `auth.metadata.RequireToken` (in place of
+the SDK's `RequireAuthMiddleware`) answers `/mcp` without a valid token with 401, or 403
+without the scope, before any handler runs. The verifier is
 `okta_mcp.auth.verifier`; `serve_http` builds it and keeps its keys and the service token
 fresh in the background.
 
@@ -30,6 +31,7 @@ import anyio
 import httpx2
 import uvicorn
 from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.middleware.bearer_auth import RequireAuthMiddleware
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.transport_security import TransportSecuritySettings
@@ -41,6 +43,7 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from okta_mcp.auth.metadata import PRM_PATH, RequireToken, prm_routes
 from okta_mcp.auth.principal import Principal, VerifiedToken
 from okta_mcp.auth.verifier import JWTVerifier
 from okta_mcp.config import MCP_PATH, Config
@@ -68,10 +71,10 @@ class _FailClosed:
     """The verifier as the SDK's auth middleware sees it: an exception means "not
     authenticated" (`None`), never a 500, and never Starlette's `AuthenticationError` path,
     which sends the error's text back as the 400 body. That middleware runs on every request
-    with a bearer header, on every route it serves (PRM, and anything that falls through to the
-    SDK app). Logged by type and frames only: the message could hold the token. A verifier that
+    with a bearer header, on every route it serves (`/mcp`, and anything that falls through to
+    the SDK app). Logged by type and frames only: the message could hold the token. A verifier that
     isn't ready yet returns `None` and `ReadyGate` (inside the auth middleware, in front of
-    `RequireAuthMiddleware`) answers 503; a raise here is a verifier bug."""
+    `RequireToken`) answers 503; a raise here is a verifier bug."""
 
     def __init__(self, inner: Verifier) -> None:
         self.inner = inner
@@ -154,7 +157,7 @@ READY_KEY = "okta_mcp.ready"
 class ReadySnapshot:
     """ASGI middleware, before the SDK's auth: records `ready()` once per request in the scope,
     for `ReadyGate`, so a request the verifier saw while not ready (and so answered `None`) is
-    never let through to `RequireAuthMiddleware` as 401 because the keys loaded in between.
+    never let through to `RequireToken` as 401 because the keys loaded in between.
     Runs on every route (cheap: it reads state), since the route isn't known yet."""
 
     def __init__(self, app: ASGIApp, ready: Callable[[], bool]) -> None:
@@ -168,7 +171,7 @@ class ReadySnapshot:
 
 
 class ReadyGate:
-    """ASGI app wrapped around the SDK's `/mcp` endpoint, outside its `RequireAuthMiddleware`:
+    """ASGI app wrapped around the SDK's `/mcp` endpoint, outside `RequireToken`:
     503 + `Retry-After` unless the verifier was ready both when the request arrived
     (`ReadySnapshot`, before the SDK's auth) and is still ready now (§11.3: JWKS loaded).
     Without it a verifier that can't verify would answer a valid token with 401
@@ -192,12 +195,25 @@ class ReadyGate:
         await self.app(scope, receive, send)
 
 
-def _gate_endpoint(app: Starlette, ready: Callable[[], bool]) -> None:
-    """Put `ReadyGate` in front of the SDK's `/mcp` route, which must exist exactly once."""
+def _gate_endpoint(
+    app: Starlette, ready: Callable[[], bool], *, scope: str, public_url: str
+) -> None:
+    """Replace the SDK's `RequireAuthMiddleware` around its `/mcp` endpoint with
+    `ReadyGate(RequireToken(endpoint))`, and drop the SDK's PRM route (the outer app serves
+    PRM, `prm_routes`). Both must be found exactly as expected, or the app doesn't build: an
+    SDK upgrade that changes them must not leave `/mcp` with the SDK's challenge or none."""
     routes = [r for r in app.router.routes if isinstance(r, Route) and r.path == MCP_PATH]
     if len(routes) != 1:
         raise RuntimeError(f"expected one SDK route at {MCP_PATH}, found {len(routes)}")
-    routes[0].app = ReadyGate(routes[0].app, ready)
+    sdk = routes[0].app
+    if not isinstance(sdk, RequireAuthMiddleware):
+        raise RuntimeError(f"expected the SDK's RequireAuthMiddleware at {MCP_PATH}")
+    require = RequireToken(sdk.app, scope=scope, public_url=public_url)
+    routes[0].app = ReadyGate(require, ready)
+    prm = [r for r in app.router.routes if isinstance(r, Route) and r.path.startswith(PRM_PATH)]
+    if len(prm) != 1:
+        raise RuntimeError(f"expected one SDK route under {PRM_PATH}, found {len(prm)}")
+    app.router.routes.remove(prm[0])
 
 
 def _health_routes(ready: Callable[[], bool]) -> list[Route]:
@@ -235,15 +251,15 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
     and one without the HTTP auth settings, which `Config` requires outside dev mode.
 
     Two layers: an outer app (middleware `OriginGuard`, then `ReadySnapshot`; routes
-    `/healthz`, `/readyz`) and the SDK's app (its auth middleware, `/mcp` and PRM) mounted under
-    it, with `ReadyGate` around its `/mcp` endpoint. The order matters: Origin first, so a
-    refused page learns nothing; the readiness snapshot before the SDK's auth and the gate
-    before `RequireAuthMiddleware`, so a cold verifier means 503, not 401. `/readyz` also needs
-    a service token (§11.4); `/mcp` doesn't wait for one, since a call fetches it. The health
-    routes are outside the SDK's `AuthenticationMiddleware`, which runs the verifier on any
-    request with a bearer header, so a GET or HEAD probe never verifies a token. Anything else
-    falls through to the SDK app, where `_FailClosed` keeps a failing verifier from turning it
-    into a 500."""
+    `/healthz`, `/readyz`, both PRM URLs) and the SDK's app (its auth middleware and `/mcp`)
+    mounted under it, with `ReadyGate(RequireToken(…))` around its `/mcp` endpoint. The order
+    matters: Origin first, so a refused page learns nothing; the readiness snapshot before the
+    SDK's auth and the gate before `RequireToken`, so a cold verifier means 503, not 401.
+    `/readyz` also needs a service token (§11.4); `/mcp` doesn't wait for one, since a call
+    fetches it. The health and PRM routes are outside the SDK's `AuthenticationMiddleware`,
+    which runs the verifier on any request with a bearer header, so a probe or a PRM fetch
+    never verifies a token. Anything else falls through to the SDK app, where `_FailClosed`
+    keeps a failing verifier from turning it into a 500."""
     if config.dev_mode:
         raise ValueError("dev mode is stdio only; the HTTP app always authenticates")
     if config.public_url is None or config.issuer is None:
@@ -265,10 +281,11 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
         ),
         token_verifier=_FailClosed(verifier),
     )
-    _gate_endpoint(mcp, can_verify)
+    _gate_endpoint(mcp, can_verify, scope=config.required_scope, public_url=config.public_url)
     return Starlette(
         routes=[
             *_health_routes(lambda: can_verify() and has_token()),
+            *prm_routes(config.public_url, config.issuer, config.required_scope),
             Mount("", app=mcp),
         ],
         middleware=[
