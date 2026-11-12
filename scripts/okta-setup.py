@@ -142,8 +142,10 @@ class Config(_Model):
         canonical = f"{parts.scheme}://{host}{suffix}/mcp"
         # The second test is pydantic's normalization, which the server's PRM uses (it decodes
         # `%2e`, expands `127.1`, ...).
-        if url != canonical or str(AnyHttpUrl(url)) != url:
+        if url != canonical:
             raise ValueError(f"must be {canonical}: path /mcp, lowercase host, no default port")
+        if str(AnyHttpUrl(url)) != url:
+            raise ValueError("must not use an encoded or shorthand host (e.g. %2e, 127.1)")
         return url
 
     @field_validator("groups")

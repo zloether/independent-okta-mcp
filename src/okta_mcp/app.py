@@ -7,6 +7,9 @@ optional here: `build_app` needs a `Verifier`, and the SDK's `RequireAuthMiddlew
 `/mcp` without a valid token with 401 before any handler runs. The verifier and its 401/403
 details are steps 4.3 and 4.4.
 
+`ReadyGate` answers `/mcp` with 503 + `Retry-After` while the verifier isn't ready (JWKS not
+loaded), token or not, so a valid token never gets 401 for it.
+
 `OriginGuard` is outermost and covers every route: a request whose
 `Origin` header is not in `MCP_ALLOWED_ORIGINS` gets 403, and one without `Origin` (a
 non-browser client) passes (§11.3, §12.1 DNS rebinding). The SDK's own Host/Origin check is
@@ -110,6 +113,30 @@ class OriginGuard:
         await self.app(scope, receive, send)
 
 
+def _route_path(scope: Scope) -> str:
+    """The path Starlette's router matches on: `path` minus `root_path` (as
+    `starlette._utils.get_route_path`, which is private), so the gate sees what the routes see."""
+    path: str = scope["path"]
+    root: str = scope.get("root_path", "")
+    if root and path.startswith(root) and (path == root or path[len(root)] == "/"):
+        return path[len(root) :]
+    return path
+
+
+def _ready_or_not(ready: Callable[[], bool]) -> Callable[[], bool]:
+    """`ready`, with an exception counted as not ready (logged by type and frames), so neither
+    `ReadyGate` nor `/readyz` turns a broken check into a 500."""
+
+    def checked() -> bool:
+        try:
+            return ready()
+        except Exception as e:
+            log_internal(log, "readiness check", e)
+            return False
+
+    return checked
+
+
 class ReadyGate:
     """ASGI middleware: 503 on `/mcp` while `ready()` is false (§11.3: JWKS not loaded), before
     the SDK's auth middleware runs. Without it a verifier that can't verify yet would answer a
@@ -121,7 +148,7 @@ class ReadyGate:
         self.ready = ready
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"] == MCP_PATH and not self.ready():
+        if scope["type"] == "http" and _route_path(scope) == MCP_PATH and not self.ready():
             response = JSONResponse(
                 {"error": NOT_READY}, status_code=503, headers={"Retry-After": RETRY_AFTER}
             )
@@ -164,8 +191,10 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
     """The ASGI app for `runtime`. Refuses a dev-mode `Config` (dev mode is stdio only, §8.6)
     and one without the HTTP auth settings, which `Config` requires outside dev mode.
 
-    Two layers: an outer app with `OriginGuard` and the health routes, and the SDK's app (its
-    auth middleware, `/mcp` and PRM) mounted under it. The health routes are outside the SDK's
+    Two layers: an outer app (middleware `OriginGuard`, then `ReadyGate`; routes `/healthz`,
+    `/readyz`) and the SDK's app (its auth middleware, `/mcp` and PRM) mounted under it. The
+    order matters: Origin first, so a refused page learns nothing; readiness before the SDK's
+    auth, so a cold verifier means 503, not 401. The health routes are outside the SDK's
     `AuthenticationMiddleware`, which runs the verifier on any request with a bearer header,
     so a GET or HEAD probe never verifies a token. Anything else falls through to the SDK app,
     where `_FailClosed` keeps a failing verifier from turning it into a 500."""
@@ -174,6 +203,7 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
     if config.public_url is None or config.issuer is None:
         raise ValueError("Config without MCP_PUBLIC_URL or MCP_ISSUER")
     server = mcp_server(runtime, http_principal)
+    ready = _ready_or_not(verifier.ready)
     mcp = server.streamable_http_app(
         streamable_http_path=MCP_PATH,
         stateless_http=True,
@@ -189,10 +219,10 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
         token_verifier=_FailClosed(verifier),
     )
     return Starlette(
-        routes=[*_health_routes(verifier.ready), Mount("", app=mcp)],
+        routes=[*_health_routes(ready), Mount("", app=mcp)],
         middleware=[
             Middleware(OriginGuard, allowed=config.allowed_origins),
-            Middleware(ReadyGate, ready=verifier.ready),
+            Middleware(ReadyGate, ready=ready),
         ],
         lifespan=_lifespan_of(mcp),
     )

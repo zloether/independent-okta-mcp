@@ -765,7 +765,7 @@ ENTRYPOINT ["okta-mcp"]
 
 Values are stripped; an empty one counts as unset. Secrets (`MCP_CURSOR_KEY`, `OKTA_API_TOKEN`) may instead be read from `<NAME>_FILE` (an empty file is an error). Outside dev mode, `MCP_PUBLIC_URL`, `MCP_ISSUER` and `MCP_ALLOWED_CLIENT_IDS` are required; `OKTA_CLIENT_ID` and `OKTA_PRIVATE_KEY_FILE` are required unless `OKTA_API_TOKEN` is set (dev mode only, not both). URLs must be https (`MCP_PUBLIC_URL` and `MCP_ALLOWED_ORIGINS` may be http on `127.0.0.1`/`localhost` outside production) with an ASCII host and no credentials, query or fragment; `OKTA_ORG_URL` and each `MCP_ALLOWED_ORIGINS` entry are origins only, kept in canonical form (lowercase host, no default port); `MCP_PUBLIC_URL` must already be in canonical form, with path `/mcp`. Every `OKTA_SCOPES` entry must be a `.read` scope.
 
-Startup fails fast on missing/invalid values, unreadable key, invalid policy, or registry/spec mismatch. It does **not** require the issuer to be reachable: the server starts, `/readyz` reports not-ready and authenticated requests get `503` until the JWKS loads (retried with backoff).
+Startup fails fast on missing/invalid values, unreadable key, invalid policy, or registry/spec mismatch. It does **not** require the issuer to be reachable: the server starts, `/readyz` reports not-ready and every `/mcp` request (with a token or without) gets `503` with `Retry-After` until the JWKS loads (retried with backoff), so a valid token is never answered with 401 for it. `/healthz` and the PRM URLs are unaffected.
 
 ### 11.4 Operations
 

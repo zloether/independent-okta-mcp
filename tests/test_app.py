@@ -567,3 +567,47 @@ async def test_origin_is_checked_before_readiness(config: Config) -> None:
     ):
         r = await h.post("/mcp", json=INIT, headers=JSON_HEADERS)
     assert r.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_not_ready_gates_mcp_only_token_or_not(config: Config) -> None:
+    verifier = FakeVerifier(TOKENS, ready=False)
+    async with serving(config, verifier) as app, http_for(app) as http:
+        bare = await http.post("/mcp", json=INIT, headers=JSON_HEADERS)
+        health = await http.get("/healthz")
+        slash = await http.post("/mcp/", json=INIT, headers=JSON_HEADERS)
+    assert bare.status_code == 503
+    assert health.status_code == 200
+    assert slash.status_code == 307  # the SDK's redirect to /mcp, which is gated
+
+
+class BrokenReadiness(FakeVerifier):
+    def ready(self) -> bool:
+        raise RuntimeError(SECRET)
+
+
+@pytest.mark.anyio
+async def test_a_failing_readiness_check_is_not_ready(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    async with serving(config, BrokenReadiness(TOKENS)) as app, http_for(app) as http:
+        mcp = await http.post(
+            "/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
+        )
+        readyz = await http.get("/readyz")
+    assert (mcp.status_code, readyz.status_code) == (503, 503)
+    assert SECRET not in mcp.text + readyz.text + caplog.text
+    assert "internal error in readiness check: RuntimeError" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_gate_matches_like_the_router_under_a_root_path(config: Config) -> None:
+    verifier = FakeVerifier(TOKENS, ready=False)
+    async with serving(config, verifier) as app:
+        transport = httpx2.ASGITransport(app=app, root_path="/okta")
+        async with httpx2.AsyncClient(transport=transport, base_url="https://mcp.example.com") as h:
+            r = await h.post(
+                "/okta/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
+            )
+    assert r.status_code == 503
+    assert verifier.calls == 0
