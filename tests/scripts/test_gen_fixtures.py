@@ -154,6 +154,26 @@ def test_response_override_wraps_object_in_list(raw: dict[str, Any], registry: R
     assert isinstance(body, list) and body[0]["id"] == "00g1emaKYZTWRYYRRTSK"
 
 
+def test_view_path_missing_from_example_is_filled(raw: dict[str, Any], registry: Registry) -> None:
+    # The pinned spec's listUserGroups example has no `type`; the schema gives one.
+    command = registry.domains["users"].commands["get-groups"]
+    example = raw["components"]["examples"]
+    body = gen.body(raw, command)
+    assert body[0]["type"] in {"OKTA_GROUP", "APP_GROUP", "BUILT_IN"}
+    assert all("type" not in item for item in body[1:])  # only the first item gains it
+    assert body[0]["profile"]["name"] == "Cloud app users"  # the example is kept
+    assert example == raw["components"]["examples"]  # the spec isn't modified
+
+
+def test_view_path_in_example_is_left_alone(raw: dict[str, Any], registry: Registry) -> None:
+    command = registry.domains["groups"].commands["list"]
+    filled = gen.body(raw, command)
+    plain = gen.body(
+        raw, dataclasses.replace(command, entry=command.entry.model_copy(update={"view": None}))
+    )
+    assert filled == plain
+
+
 # --- neutralizing (shared with sanitize-fixture.py) ---
 
 

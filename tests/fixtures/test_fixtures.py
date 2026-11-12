@@ -79,8 +79,9 @@ def test_fixture_fits_command(command: Command) -> None:
     cols = columns(None, entry.view)
     rows: list[Any] = []
     for item in items:
-        # Items that declare no properties may be plain values (interclient app IDs).
-        assert isinstance(item, dict) or entry.view is None
+        # Only items whose schema declares no properties may be plain values (interclient
+        # app IDs are strings).
+        assert isinstance(item, dict) or not command.operation.response.fields
         rows.append(render(item, RULES, links=False, cols=cols))
         assert render(item, RULES, links=True, cols=None)
     if cols is not None:

@@ -29,6 +29,8 @@ paths:
   - credentials.password.value
   - credentials.password.hash
   - credentials.recovery_question.answer       # users list/get (spec: never returned)
+  - correctAnswer                              # users get-factor-transaction: a live push challenge's number
+  - qrcode                                     # factor `_links`/activation: the image encodes the enrollment seed
   - activationToken
   - recoveryToken
   - sessionToken

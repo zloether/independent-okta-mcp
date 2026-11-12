@@ -51,6 +51,7 @@ SAMPLES = {
     "^0oa[A-Za-z0-9]{17}$": "0oa1emaKYZTWRYYRRTSK",
     "^[A-Za-z0-9_-]{1,64}$": "kid_1emaKYZTWRYYRRTSK",
     "^[A-Za-z0-9_-]{1,100}$": "0oa1emaKYZTWRYYRRTSK",
+    "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$": "v2mst.GldKV5VxTrifyeZmWSQguA",
     None: "alice@example.com",
 }
 

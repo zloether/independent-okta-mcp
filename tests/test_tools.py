@@ -9,6 +9,7 @@ from typing import Any
 import httpx2
 import pytest
 from jsonschema import Draft202012Validator
+from policy._pilot import pilot_registry
 
 from okta_mcp.auth.principal import Principal
 from okta_mcp.exec.cursor import Cursors
@@ -25,9 +26,8 @@ from okta_mcp.okta.client import OktaClient, new_http_client
 from okta_mcp.okta.token import ServiceToken
 from okta_mcp.policy.engine import Engine
 from okta_mcp.policy.loader import build_policy
-from okta_mcp.registry.loader import Domain, Registry, load_registry
+from okta_mcp.registry.loader import Domain, Registry
 from okta_mcp.registry.schema import help_text
-from okta_mcp.registry.spec import load_spec
 from okta_mcp.tools import NO_ROLES, Text, Tools
 
 ORG = "https://example.okta.com"
@@ -125,8 +125,7 @@ def build(
 @pytest.fixture(scope="module")
 def registry() -> Registry:
     """The shipped pilot domains, which these tests assert on; they need no resolver."""
-    shipped = load_registry(load_spec())
-    return Registry(MappingProxyType({d: shipped.domains[d] for d in ("groups", "network-zones")}))
+    return pilot_registry()
 
 
 @pytest.fixture

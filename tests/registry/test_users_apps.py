@@ -233,3 +233,13 @@ def test_scope_sets(registry: Registry) -> None:
     # A resolved user adds getUser's scope.
     assert apps["get-user"].scope_sets == (frozenset({"okta.apps.read", "okta.users.read"}),)
     assert apps["list-grants"].scope_sets == (frozenset({"okta.appGrants.read"}),)
+
+
+def test_factor_transaction_id_shape(registry: Registry) -> None:
+    # The pinned spec's own example has a dot.
+    cmd = registry.domains["users"].commands["get-factor-transaction"]
+    args = {"user": USER, "factor": "opfh52xcuft3J4uZc0g3"}
+    validate_args(cmd, {**args, "txn": "v2mst.GldKV5VxTrifyeZmWSQguA"})
+    for bad in (".", "..", ".x", "a/b"):
+        with pytest.raises(InvalidArguments, match="arg 'txn'"):
+            validate_args(cmd, {**args, "txn": bad})

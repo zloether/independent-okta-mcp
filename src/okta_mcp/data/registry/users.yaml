@@ -43,8 +43,7 @@ commands:
       user: {path_param: id, resolve: user_id}
     paginate: link
     page_size: 200
-    # The spec's example has no `type`, and generated fixtures must carry every view path.
-    view: [id, profile.name]
+    view: [id, type, profile.name]
     data_classes: [pii]
 
   get-apps:
@@ -96,7 +95,8 @@ commands:
     args:
       user: {path_param: userId, resolve: user_id}
       factor: {path_param: factorId, pattern: "^[A-Za-z0-9]{1,64}$"}
-      txn: {path_param: transactionId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      # Transaction IDs hold a dot: `v2mst.GldKV5VxTrifyeZmWSQguA`.
+      txn: {path_param: transactionId, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
     data_classes: [mfa-state]
 
   get-factors-catalog:
@@ -104,7 +104,7 @@ commands:
     summary: Factors the user may enroll
     args:
       user: {path_param: userId, resolve: user_id}
-    view: [factorType, provider, vendorName]
+    view: [factorType, provider, status, enrollment]
     data_classes: [mfa-state]
 
   get-enrollments:

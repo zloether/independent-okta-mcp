@@ -1,5 +1,6 @@
 """What the pilot registry and `fixtures/pilot.yaml` hold, for the tests that assert on it."""
 
+import functools
 from pathlib import Path
 from types import MappingProxyType
 
@@ -16,7 +17,8 @@ ZONES = {("network-zones", "list"), ("network-zones", "get")}
 PILOT_DOMAINS = ("groups", "network-zones")
 
 
+@functools.cache
 def pilot_registry() -> Registry:
-    """The shipped registry cut to the pilot domains."""
+    """The shipped registry cut to the pilot domains (cached: the spec takes ~1 s to load)."""
     shipped = load_registry(load_spec())
     return Registry(MappingProxyType({d: shipped.domains[d] for d in PILOT_DOMAINS}))

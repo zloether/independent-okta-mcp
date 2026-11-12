@@ -122,13 +122,48 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     examples = [synth.deref(e).get("value") for e in (content.get("examples") or {}).values()]
     examples += [content["example"]] if "example" in content else []
     if found := [e for e in examples if e]:
-        value = found[0]
+        value = _fill_view(found[0], synth.value(content.get("schema")), command)
     else:
         value = synth.value(content.get("schema"))
         value = None if value is _OMIT else value
     if command.entry.response_override is not None and not isinstance(value, list):
         value = [value]
     return Neutralizer()(value)
+
+
+def _items(value: Any, command: Command) -> list[Any]:
+    if isinstance(value, dict) and command.entry.items_key is not None:
+        value = cast(dict[str, Any], value).get(command.entry.items_key)
+    return cast(list[Any], value) if isinstance(value, list) else [value]
+
+
+def _fill_view(example: Any, synthesized: Any, command: Command) -> Any:
+    """A spec example can leave out a field the command's view shows (the users-groups example
+    has no `type`). Such a path is copied from the schema-built body into the first item, so
+    the fixture carries every view column."""
+    example = json.loads(json.dumps(example))
+    items = [i for i in _items(example, command) if isinstance(i, dict)]
+    built = [i for i in _items(synthesized, command) if isinstance(i, dict)]
+    if not items or not built:
+        return example
+    for path in command.entry.view or ():
+        keys = path.split(".")
+        if any(_get(i, keys) is not None for i in items):
+            continue
+        if (v := _get(built[0], keys)) is not None:
+            node = cast(dict[str, Any], items[0])
+            for k in keys[:-1]:
+                node = cast(dict[str, Any], node.setdefault(k, {}))
+            node[keys[-1]] = v
+    return example
+
+
+def _get(item: Any, keys: list[str]) -> Any:
+    for k in keys:
+        if not isinstance(item, dict):
+            return None
+        item = cast(dict[str, Any], item).get(k)
+    return item
 
 
 def fixture(spec: Mapping[str, Any], command: Command) -> dict[str, Any]:

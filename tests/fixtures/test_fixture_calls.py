@@ -33,6 +33,7 @@ SAMPLES = {
     "^[A-Za-z0-9]{1,64}$": "JBCUYUC7IRCVGS27IFCE2SKO",
     "^[A-Za-z0-9_-]{1,64}$": "kid_1emaKYZTWRYYRRTSK",
     "^[A-Za-z0-9_-]{1,100}$": "0oa1emaKYZTWRYYRRTSK",
+    "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$": "v2mst.GldKV5VxTrifyeZmWSQguA",
 }
 
 SPEC = load_spec()

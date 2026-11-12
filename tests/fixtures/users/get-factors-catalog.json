@@ -23,7 +23,9 @@
             ]
           }
         }
-      }
+      },
+      "status": "ACTIVE",
+      "enrollment": "OPTIONAL"
     },
     {
       "factorType": "token:software:totp",
