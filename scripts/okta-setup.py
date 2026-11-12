@@ -126,6 +126,10 @@ class Config(_Model):
         loopback = parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost")
         if not (parts.scheme == "https" or loopback) or not parts.netloc:
             raise ValueError("must be an https URL (http only for 127.0.0.1/localhost)")
+        # The server refuses any other path (its MCP_PUBLIC_URL check), so an audience with one
+        # would never match.
+        if parts.path != "/mcp" or parts.query or parts.fragment:
+            raise ValueError("path must be /mcp, the endpoint the server serves")
         return url
 
     @field_validator("groups")

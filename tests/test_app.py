@@ -8,17 +8,19 @@ from pathlib import Path
 import httpx2
 import mcp_types as types
 import pytest
+import uvicorn
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.auth.provider import AccessToken
 from mcp.shared.exceptions import MCPError
 from starlette.applications import Starlette
 
-from okta_mcp.app import ORIGIN_REFUSED, build_app, uvicorn_config
+from okta_mcp.app import ORIGIN_REFUSED, build_app, serve_http, uvicorn_config
 from okta_mcp.auth.principal import Principal, VerifiedToken
 from okta_mcp.config import Config, load_config
 from okta_mcp.exec.executor import INTERNAL
 from okta_mcp.okta.client import new_http_client
+from okta_mcp.policy.loader import PolicyError
 from okta_mcp.registry.loader import Registry, load_registry
 from okta_mcp.registry.spec import SpecIndex, load_spec
 from okta_mcp.server import LIST_TTL_MS, build_runtime
@@ -54,6 +56,7 @@ def verified(principal: Principal, scopes: list[str] | None = None) -> VerifiedT
     return VerifiedToken(
         token="t",  # noqa: S106
         client_id="0oa1client0000000000",
+        subject=principal.uid,
         scopes=[SCOPE] if scopes is None else scopes,
         principal=principal,
     )
@@ -397,3 +400,80 @@ async def test_uvicorn_config(tmp_path: Path, trust: bool) -> None:
     assert settings.access_log is False
     assert settings.server_header is False
     assert settings.lifespan == "on"
+
+
+class RaisingVerifier(FakeVerifier):
+    async def verify_token(self, token: str) -> AccessToken | None:
+        self.calls += 1
+        raise RuntimeError("JWKS not loaded")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("path", ["/healthz", "/readyz"])
+async def test_health_never_runs_the_verifier(config: Config, path: str) -> None:
+    """The health routes sit outside the SDK's auth middleware, which would verify any bearer
+    header and fail with the verifier."""
+    verifier = RaisingVerifier(TOKENS)
+    async with serving(config, verifier) as app, http_for(app) as http:
+        r = await http.get(path, headers={"authorization": "Bearer reader"})
+    assert r.status_code == 200
+    assert verifier.calls == 0
+
+
+@pytest.mark.anyio
+async def test_prm_is_served_at_the_path_url(config: Config) -> None:
+    async with serving(config) as app, http_for(app) as http:
+        r = await http.get("/.well-known/oauth-protected-resource/mcp")
+    assert r.status_code == 200
+    assert r.json()["resource"] == PUBLIC
+
+
+def test_verified_token_must_name_its_principal() -> None:
+    p = Principal(uid="00u1httpuser00000000", sub="user@example.com", groups=frozenset())
+    for subject in (None, "user@example.com", "00u1other0000000000"):
+        with pytest.raises(ValueError, match="must match its principal"):
+            VerifiedToken(token="t", client_id="0oa1", scopes=[], subject=subject, principal=p)  # noqa: S106
+    bound = Principal(uid=p.uid, sub=p.sub, groups=frozenset(), client_id="0oa1client0000000000")
+    with pytest.raises(ValueError, match="must match its principal"):
+        VerifiedToken(token="t", client_id="0oa2", scopes=[], subject=p.uid, principal=bound)  # noqa: S106
+    VerifiedToken(
+        token="t",  # noqa: S106
+        client_id="0oa1client0000000000",
+        scopes=[],
+        subject=p.uid,
+        principal=bound,
+    )
+
+
+@pytest.mark.anyio
+async def test_serve_http_loads_everything_before_serving(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    served: list[uvicorn.Config] = []
+
+    async def serve(self: uvicorn.Server) -> None:
+        served.append(self.config)
+
+    monkeypatch.setattr(uvicorn.Server, "serve", serve)
+    await serve_http(config, FakeVerifier(TOKENS))
+    (settings,) = served
+    assert isinstance(settings.app, Starlette)
+    assert settings.log_config is None
+
+
+@pytest.mark.anyio
+async def test_serve_http_startup_error_comes_before_the_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad = tmp_path / "policy.yaml"
+    bad.write_text("roles: nope\n")
+    config = load_config(env(tmp_path, MCP_POLICY_FILE=str(bad)))
+    served: list[object] = []
+
+    async def serve(self: uvicorn.Server) -> None:
+        served.append(self)
+
+    monkeypatch.setattr(uvicorn.Server, "serve", serve)
+    with pytest.raises(PolicyError):
+        await serve_http(config, FakeVerifier(TOKENS))
+    assert served == []

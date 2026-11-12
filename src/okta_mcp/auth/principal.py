@@ -1,10 +1,10 @@
 """The authenticated caller (design §8.5)."""
 
 from dataclasses import dataclass
-from typing import cast
+from typing import Self, cast
 
 from mcp.server.auth.provider import AccessToken
-from pydantic import ConfigDict
+from pydantic import ConfigDict, model_validator
 
 
 @dataclass(frozen=True)
@@ -40,3 +40,12 @@ class VerifiedToken(AccessToken):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     principal: Principal
+
+    @model_validator(mode="after")
+    def _same_caller(self) -> Self:
+        # The SDK keys its own per-caller state on (client_id, iss, subject); they must name
+        # the same caller as `principal`, or two users of one client would look alike to it.
+        p = self.principal
+        if self.subject != p.uid or (p.client_id is not None and self.client_id != p.client_id):
+            raise ValueError("VerifiedToken subject and client_id must match its principal")
+        return self

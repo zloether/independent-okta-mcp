@@ -7,7 +7,7 @@ optional here: `build_app` needs a `Verifier`, and the SDK's `RequireAuthMiddlew
 `/mcp` without a valid token with 401 before any handler runs. The verifier and its 401/403
 details are steps 4.3 and 4.4.
 
-`OriginGuard` runs before the SDK's auth middleware and covers every route: a request whose
+`OriginGuard` is outermost and covers every route: a request whose
 `Origin` header is not in `MCP_ALLOWED_ORIGINS` gets 403, and one without `Origin` (a
 non-browser client) passes (§11.3, §12.1 DNS rebinding). The SDK's own Host/Origin check is
 turned off: it is turned on automatically whenever the bind host is loopback, which is the
@@ -16,7 +16,8 @@ through the TLS proxy.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Protocol
 
 import uvicorn
@@ -26,19 +27,19 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import AnyHttpUrl
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from okta_mcp.auth.principal import Principal, VerifiedToken
-from okta_mcp.config import Config
+from okta_mcp.config import MCP_PATH, Config
 from okta_mcp.okta.client import new_http_client
 from okta_mcp.server import Runtime, build_runtime, mcp_server
 
 log = logging.getLogger(__name__)
 
-MCP_PATH = "/mcp"
 ORIGIN_REFUSED = "Origin not allowed"
 
 
@@ -75,7 +76,9 @@ class OriginGuard:
             headers: list[tuple[bytes, bytes]] = scope["headers"]
             origins = [v for k, v in headers if k.lower() == b"origin"]
             if len(origins) > 1 or (origins and origins[0].decode("latin-1") not in self.allowed):
-                log.warning("refused a request with a disallowed Origin header")
+                # DEBUG: the requests are the sender's to repeat, and a log line each would
+                # let them flood the logs.
+                log.debug("refused a request with a disallowed Origin header")
                 if scope["type"] == "websocket":
                     await send({"type": "websocket.close", "code": 1008})
                     return
@@ -103,16 +106,32 @@ def _health_routes(ready: Callable[[], bool]) -> list[Route]:
     ]
 
 
+def _lifespan_of(inner: Starlette) -> Callable[[Starlette], AbstractAsyncContextManager[None]]:
+    """The outer app's lifespan runs `inner`'s (the SDK's session manager): Starlette doesn't
+    run a mounted app's lifespan."""
+
+    @asynccontextmanager
+    async def lifespan(app: Starlette) -> AsyncGenerator[None]:
+        async with inner.router.lifespan_context(inner):
+            yield
+
+    return lifespan
+
+
 def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette:
-    """The ASGI app for `runtime`. Refuses a dev-mode `Config` (dev mode
-    is stdio only, §8.6) and one without the HTTP auth settings, which `Config` requires outside
-    dev mode."""
+    """The ASGI app for `runtime`. Refuses a dev-mode `Config` (dev mode is stdio only, §8.6)
+    and one without the HTTP auth settings, which `Config` requires outside dev mode.
+
+    Two layers: an outer app with `OriginGuard` and the health routes, and the SDK's app (its
+    auth middleware, `/mcp` and PRM) mounted under it. The health routes are outside the SDK's
+    `AuthenticationMiddleware`, which runs the verifier on any request with a bearer header,
+    so a probe never verifies a token and stays 200 while the verifier can't."""
     if config.dev_mode:
         raise ValueError("dev mode is stdio only; the HTTP app always authenticates")
     if config.public_url is None or config.issuer is None:
         raise ValueError("Config without MCP_PUBLIC_URL or MCP_ISSUER")
     server = mcp_server(runtime, http_principal)
-    starlette = server.streamable_http_app(
+    mcp = server.streamable_http_app(
         streamable_http_path=MCP_PATH,
         stateless_http=True,
         json_response=True,
@@ -125,12 +144,12 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
             validate_token_resource=False,
         ),
         token_verifier=verifier,
-        custom_starlette_routes=_health_routes(verifier.ready),
     )
-    # First in the user middleware, so outside the SDK's auth: a refused Origin never reaches
-    # the verifier.
-    starlette.add_middleware(OriginGuard, allowed=config.allowed_origins)
-    return starlette
+    return Starlette(
+        routes=[*_health_routes(verifier.ready), Mount("", app=mcp)],
+        middleware=[Middleware(OriginGuard, allowed=config.allowed_origins)],
+        lifespan=_lifespan_of(mcp),
+    )
 
 
 def uvicorn_config(config: Config, app: Starlette) -> uvicorn.Config:

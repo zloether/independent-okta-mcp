@@ -734,7 +734,7 @@ ENTRYPOINT ["okta-mcp"]
 
 | Variable | Req | Default | Purpose |
 |---|---|---|---|
-| `MCP_PUBLIC_URL` | ✔ | — | Canonical external URL of the MCP endpoint; default audience; PRM `resource` |
+| `MCP_PUBLIC_URL` | ✔ | — | Canonical external URL of the MCP endpoint; default audience; PRM `resource`. Path must be `/mcp`, the one path served |
 | `MCP_ISSUER` | ✔ | — | Okta custom AS issuer URL |
 | `MCP_AUDIENCE` |  | `MCP_PUBLIC_URL` | Expected `aud` |
 | `MCP_REQUIRED_SCOPE` |  | `okta-mcp` | Required scope |

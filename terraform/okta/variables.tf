@@ -13,8 +13,8 @@ variable "mcp_public_url" {
   type        = string
 
   validation {
-    condition     = can(regex("^(https://[^/]+|http://(127\\.0\\.0\\.1|localhost)(:[0-9]+)?)(/.*)?$", var.mcp_public_url))
-    error_message = "Must be an https URL (http only for 127.0.0.1/localhost)."
+    condition     = can(regex("^(https://[^/]+|http://(127\\.0\\.0\\.1|localhost)(:[0-9]+)?)/mcp$", var.mcp_public_url))
+    error_message = "Must be an https URL ending in /mcp, the endpoint the server serves (http only for 127.0.0.1/localhost)."
   }
 }
 
