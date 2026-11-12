@@ -208,11 +208,11 @@ def _gate_endpoint(
     sdk = routes[0].app
     if not isinstance(sdk, RequireAuthMiddleware):
         raise RuntimeError(f"expected the SDK's RequireAuthMiddleware at {MCP_PATH}")
-    require = RequireToken(sdk.app, scope=scope, public_url=public_url)
-    routes[0].app = ReadyGate(require, ready)
     prm = [r for r in app.router.routes if isinstance(r, Route) and r.path.startswith(PRM_PATH)]
     if len(prm) != 1:
         raise RuntimeError(f"expected one SDK route under {PRM_PATH}, found {len(prm)}")
+    require = RequireToken(sdk.app, scope=scope, public_url=public_url)
+    routes[0].app = ReadyGate(require, ready)
     app.router.routes.remove(prm[0])
 
 

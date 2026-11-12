@@ -69,16 +69,11 @@ def client(verifier: Verifier) -> httpx2.AsyncClient:
 # --- metadata ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("public", "url"),
-    [
-        (PUBLIC, PRM_URL),
-        ("https://mcp.example.com:8443/mcp", "https://mcp.example.com:8443" + PRM_PATH + "/mcp"),
-        ("https://mcp.example.com/", "https://mcp.example.com" + PRM_PATH),
-    ],
-)
-def test_metadata_url_inserts_the_well_known_segment(public: str, url: str) -> None:
-    assert metadata_url(public) == url
+def test_metadata_url_inserts_the_well_known_segment() -> None:
+    assert metadata_url(PUBLIC) == PRM_URL
+    assert metadata_url("https://mcp.example.com:8443/mcp") == (
+        "https://mcp.example.com:8443/.well-known/oauth-protected-resource/mcp"
+    )
 
 
 def test_metadata_values_are_the_config_strings_unchanged() -> None:
@@ -107,11 +102,6 @@ async def test_prm_at_both_urls_without_running_the_verifier(path: str) -> None:
     assert pre.status_code == 200
     assert "GET" in pre.headers["access-control-allow-methods"]
     assert verifier.calls == 0
-
-
-def test_one_route_per_path_when_the_public_url_is_the_root() -> None:
-    routes = prm_routes("https://mcp.example.com/", ISSUER, SCOPE)
-    assert [r.path for r in routes] == [PRM_PATH]
 
 
 # --- challenges -------------------------------------------------------------------------

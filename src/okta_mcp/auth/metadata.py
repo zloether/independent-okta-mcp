@@ -28,7 +28,8 @@ import json
 from urllib.parse import parse_qsl, urlsplit
 
 from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
-from mcp.server.auth.routes import cors_middleware
+from mcp.server.auth.routes import build_resource_metadata_url, cors_middleware
+from pydantic import AnyHttpUrl
 from starlette.authentication import AuthCredentials
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -46,10 +47,10 @@ IN_QUERY = "send the access token in the Authorization header, not the query"
 
 
 def metadata_url(public_url: str) -> str:
-    """The path-specific PRM URL for `public_url` (RFC 9728 §3.1: the well-known segment
-    inserted between the host and the path), the one the challenges point at."""
-    parts = urlsplit(public_url)
-    return f"{parts.scheme}://{parts.netloc}{PRM_PATH}{parts.path.rstrip('/')}"
+    """The path-specific PRM URL for `public_url` (RFC 9728 §3.1), the one the challenges point
+    at: the SDK's builder. `Config` holds `MCP_PUBLIC_URL` in the form `AnyHttpUrl` writes it,
+    so the string is unchanged by the round trip."""
+    return str(build_resource_metadata_url(AnyHttpUrl(public_url)))
 
 
 def metadata(public_url: str, issuer: str, scope: str) -> dict[str, object]:
@@ -72,7 +73,7 @@ def prm_routes(public_url: str, issuer: str, scope: str) -> list[Route]:
         return JSONResponse(body, headers={"Cache-Control": f"public, max-age={PRM_MAX_AGE}"})
 
     endpoint = cors_middleware(prm, ["GET", "OPTIONS"])
-    paths = dict.fromkeys([urlsplit(metadata_url(public_url)).path, PRM_PATH])
+    paths = [urlsplit(metadata_url(public_url)).path, PRM_PATH]
     return [Route(path, endpoint=endpoint, methods=["GET", "OPTIONS"]) for path in paths]
 
 

@@ -521,6 +521,7 @@ async def test_the_challenges_are_ours_not_the_sdks(config: Config) -> None:
 def test_build_app_refuses_an_unexpected_sdk_endpoint() -> None:
     """If an SDK upgrade stops wrapping `/mcp` in `RequireAuthMiddleware`, or moves its PRM
     route, the app must not build with the SDK's challenge, or none."""
+    from mcp.server.auth.middleware.bearer_auth import RequireAuthMiddleware
     from starlette.routing import Route
 
     from okta_mcp.app import _gate_endpoint  # pyright: ignore[reportPrivateUsage]
@@ -530,6 +531,13 @@ def test_build_app_refuses_an_unexpected_sdk_endpoint() -> None:
     plain = Starlette(routes=[Route("/mcp", bare)])
     with pytest.raises(RuntimeError, match="RequireAuthMiddleware"):
         _gate_endpoint(plain, lambda: True, scope=SCOPE, public_url=PUBLIC)
+    prm = "/.well-known/oauth-protected-resource"
+    for extra in ([], [Route(prm + "/mcp", bare), Route(prm, bare)]):
+        wrapped = Route("/mcp", RequireAuthMiddleware(bare, [SCOPE]))
+        app = Starlette(routes=[wrapped, *extra])
+        with pytest.raises(RuntimeError, match="one SDK route under"):
+            _gate_endpoint(app, lambda: True, scope=SCOPE, public_url=PUBLIC)
+        assert isinstance(wrapped.app, RequireAuthMiddleware)  # nothing changed before the raise
 
 
 def test_verified_token_must_name_its_principal() -> None:
