@@ -181,6 +181,8 @@ independent-okta-mcp/
 ├── src/okta_mcp/
 │   ├── __main__.py              # entrypoint: config, policy, registry; HTTP (uvicorn) or --stdio
 │   ├── config.py                # env parsing + validation (fail fast)
+│   ├── server.py                # startup wiring + MCP handlers, per-request principal; stdio serve
+│   ├── logs.py                  # stderr logging, request ID, what dependencies may log
 │   ├── app.py                   # ASGI: /mcp, PRM endpoints, /healthz, /readyz
 │   ├── auth/{principal,verifier,metadata,devmode}.py
 │   ├── policy/{model,engine,loader,expression}.py
@@ -562,7 +564,7 @@ Result: immutable `Principal(uid, sub, client_id, groups, exp)` in a contextvar.
 For local development against a dev org without an authorization server:
 
 - Available **only on the stdio transport** (`okta-mcp --stdio`). The HTTP app has no unauthenticated mode and refuses to start if `MCP_DEV_MODE` is set.
-- Enabled only by `MCP_DEV_MODE=1` **and** `MCP_DEV_PRINCIPAL_FILE` (a YAML with `uid`, `sub`, `groups`) — the principal still flows through the normal policy engine.
+- Enabled only by `MCP_DEV_MODE=1` **and** `MCP_DEV_PRINCIPAL_FILE` (a YAML with exactly `uid` (`00u…`), `sub` and `groups` (a list of `00g…` IDs, possibly empty); anything else fails startup) — the principal still flows through the normal policy engine. `okta-mcp --stdio` without dev mode refuses to start: stdio has no authentication, so it has no other caller.
 - Refuses to start if `MCP_ENV=production`. The container image sets `MCP_ENV=production` and starts the HTTP app.
 - SSWS (`OKTA_API_TOKEN`) is accepted only in this mode.
 
@@ -751,7 +753,7 @@ ENTRYPOINT ["okta-mcp"]
 | `MCP_OKTA_MAX_INFLIGHT` |  | `10` | Global concurrent Okta requests |
 | `MCP_REQUESTS_PER_MINUTE` |  | `600` | Per-principal Okta-request limiter |
 | `MCP_AUDIT_LOG` / `MCP_AUDIT_ARGS` |  | `stdout` / `full` | Audit sink; `hash` for arg privacy |
-| `MCP_LOG_LEVEL` |  | `INFO` | Operational log level |
+| `MCP_LOG_LEVEL` |  | `INFO` | The server's own log level. Dependencies (httpx2, the MCP SDK) never log below `WARNING`, or below this level if it is stricter, and their exception text is withheld: httpx2 logs request URLs at INFO and the SDK can log messages and results |
 | `OKTA_ORG_URL` | ✔ | — | `https://<org>.okta.com` |
 | `OKTA_CLIENT_ID` | ✔ | — | Service app client ID |
 | `OKTA_PRIVATE_KEY_FILE` | ✔ | — | PEM path (mounted secret) |

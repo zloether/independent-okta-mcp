@@ -24,7 +24,6 @@ server log.
 import enum
 import json
 import logging
-import traceback
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -56,6 +55,7 @@ from okta_mcp.exec.envelope import (
 from okta_mcp.exec.output import columns
 from okta_mcp.exec.params import build_request, check_args
 from okta_mcp.exec.resolve import NotFound, UserResolver
+from okta_mcp.logs import log_internal
 from okta_mcp.okta import ratelimit
 from okta_mcp.okta.client import OktaClient, UpstreamError, json_body
 from okta_mcp.okta.paginate import Mode, PaginationError, paginate
@@ -256,14 +256,7 @@ class Executor:
             # `OriginError`, `RuntimeError` (a DPoP token without a key, a URL off its
             # template, no principal for the limiter) and anything else. The message may hold
             # data, so only the type and the frames are logged.
-            frames = "".join(traceback.format_tb(e.__traceback__))
-            log.error(
-                "internal error in %s %s: %s\n%s",
-                _logged(call.domain),
-                _logged(call.command),
-                type(e).__name__,
-                frames,
-            )
+            log_internal(log, f"{_logged(call.domain)} {_logged(call.command)}", e)
             return Failure(Code.INTERNAL_ERROR, INTERNAL)
         finally:
             ratelimit.principal.reset(token)
