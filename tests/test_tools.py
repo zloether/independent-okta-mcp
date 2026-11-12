@@ -61,6 +61,9 @@ class FakeTokens:
     def invalidate(self, token: ServiceToken) -> None:
         pass
 
+    def ready(self) -> bool:
+        return True
+
 
 class Okta:
     def __init__(self) -> None:

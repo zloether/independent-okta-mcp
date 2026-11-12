@@ -188,6 +188,25 @@ def test_config_fails_closed(config: Path, old: str, new: str) -> None:
         setup.load_config(config)
 
 
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("https://MCP.example.com:443/mcp", "must be https://mcp.example.com/mcp: path /mcp"),
+        ("https://mcp%2eexample.com/mcp", setup.ENCODED_HOST),
+        ("https://127.1/mcp", setup.ENCODED_HOST),
+        # Refused by pydantic outright: the same fixed message, not pydantic's text.
+        ("https://mcp%zz.example.com/mcp", setup.ENCODED_HOST),
+    ],
+)
+def test_public_url_messages(config: Path, url: str, message: str) -> None:
+    config.write_text(config.read_text().replace(MCP_URL, url))
+    with pytest.raises(setup.SetupError) as e:
+        setup.load_config(config)
+    assert message in str(e.value)
+    assert "invalid international domain name" not in str(e.value).lower()
+    assert "input is not a valid url" not in str(e.value).lower()
+
+
 def test_example_config_is_valid() -> None:
     cfg = setup.load_config(SCRIPTS / "okta-setup.example.yaml")
     assert cfg.service_app.scopes == ["okta.users.read", "okta.groups.read"]

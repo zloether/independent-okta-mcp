@@ -54,6 +54,7 @@ def test_defaults(env: dict[str, str]) -> None:
     assert c.audience == "https://mcp.example.com/mcp"
     assert c.required_scope == "okta-mcp"
     assert c.groups_claim == "groups"
+    assert c.max_token_age == 86400
     assert c.cursor_key.get_secret_value() == b"k" * 32
     assert c.allowed_origins == ()
     assert (c.host, c.port, c.trust_proxy) == ("127.0.0.1", 8080, False)
@@ -507,3 +508,10 @@ def test_zero_rate_limit_wait_allowed(env: dict[str, str]) -> None:
 def test_call_timeout_minimum_is_two_seconds(env: dict[str, str]) -> None:
     env["MCP_CALL_TIMEOUT"] = "2"
     assert load_config(env).call_timeout == 2
+
+
+@pytest.mark.parametrize("value", ["59", "0", "-1", "1.5", "day"])
+def test_max_token_age_bounds(env: dict[str, str], value: str) -> None:
+    env["MCP_MAX_TOKEN_AGE"] = value
+    (error,) = _errors(env)
+    assert error.startswith("MCP_MAX_TOKEN_AGE: ")

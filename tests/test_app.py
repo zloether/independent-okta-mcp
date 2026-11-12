@@ -157,10 +157,16 @@ def config(tmp_path: Path) -> Config:
 
 @asynccontextmanager
 async def serving(
-    config: Config, verifier: FakeVerifier | None = None, okta: Okta | None = None
+    config: Config,
+    verifier: FakeVerifier | None = None,
+    okta: Okta | None = None,
+    *,
+    warm: bool = True,
 ) -> AsyncIterator[Starlette]:
     async with new_http_client(httpx2.MockTransport(okta or Okta())) as http:
         runtime = build_runtime(config, http)
+        if warm:
+            await runtime.tokens.token()  # as `keep_fresh` does in `serve_http`
         app = build_app(runtime, config, verifier or FakeVerifier(TOKENS))
         async with app.router.lifespan_context(app):
             yield app
@@ -205,6 +211,22 @@ async def test_readyz_follows_the_verifier(
     assert r.status_code == status
     assert r.json() == {"status": body}
     assert verifier.calls == 0
+
+
+@pytest.mark.anyio
+async def test_readyz_needs_the_service_token_but_mcp_does_not(config: Config) -> None:
+    """§11.4: `/readyz` reports the service token from state (never fetched per probe); `/mcp`
+    isn't gated on it, since a call fetches its own."""
+    okta = Okta()
+    async with (
+        serving(config, okta=okta, warm=False) as app,
+        http_for(app, authorization="Bearer reader") as http,
+    ):
+        r = await http.get("/readyz")
+        mcp = await http.post("/mcp", json=INIT, headers=JSON_HEADERS)
+    assert r.status_code == 503
+    assert okta.requests == []
+    assert mcp.status_code == 200
 
 
 @pytest.mark.anyio
@@ -512,7 +534,7 @@ async def test_serve_http_loads_everything_before_serving(
         served.append(self.config)
 
     monkeypatch.setattr(uvicorn.Server, "serve", serve)
-    await serve_http(config, FakeVerifier(TOKENS))
+    await serve_http(config, httpx2.MockTransport(Okta()))
     (settings,) = served
     assert isinstance(settings.app, Starlette)
     assert settings.log_config is None
@@ -532,7 +554,7 @@ async def test_serve_http_startup_error_comes_before_the_port(
 
     monkeypatch.setattr(uvicorn.Server, "serve", serve)
     with pytest.raises(PolicyError):
-        await serve_http(config, FakeVerifier(TOKENS))
+        await serve_http(config, httpx2.MockTransport(Okta()))
     assert served == []
 
 
@@ -555,7 +577,9 @@ async def test_mcp_is_503_until_ready_even_with_a_valid_token(config: Config) ->
     assert r.headers["retry-after"] == "5"
     assert prm.status_code == 200
     assert after.status_code == 200
-    assert verifier.calls == 1
+    # The SDK's auth middleware runs before the gated endpoint; the real verifier answers
+    # `None` while not ready, without fetching.
+    assert verifier.calls == 2
 
 
 @pytest.mark.anyio
@@ -601,7 +625,20 @@ async def test_a_failing_readiness_check_is_not_ready(
 
 
 @pytest.mark.anyio
-async def test_gate_matches_like_the_router_under_a_root_path(config: Config) -> None:
+async def test_a_failing_readiness_check_is_logged_once_a_minute(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Probes and requests are the sender's to repeat; the log line isn't."""
+    async with serving(config, BrokenReadiness(TOKENS)) as app, http_for(app) as http:
+        for _ in range(5):
+            await http.get("/readyz")
+            await http.post("/mcp", json=INIT, headers=JSON_HEADERS)
+    assert caplog.text.count("internal error in readiness check") == 1
+
+
+@pytest.mark.anyio
+async def test_gate_is_the_endpoints_under_a_root_path(config: Config) -> None:
+    """`ReadyGate` wraps the `/mcp` endpoint, so it sees what the router routes there."""
     verifier = FakeVerifier(TOKENS, ready=False)
     async with serving(config, verifier) as app:
         transport = httpx2.ASGITransport(app=app, root_path="/okta")
@@ -610,4 +647,4 @@ async def test_gate_matches_like_the_router_under_a_root_path(config: Config) ->
                 "/okta/mcp", json=INIT, headers={**JSON_HEADERS, "authorization": "Bearer reader"}
             )
     assert r.status_code == 503
-    assert verifier.calls == 0
+    assert verifier.calls == 1  # the SDK's auth middleware, before the endpoint

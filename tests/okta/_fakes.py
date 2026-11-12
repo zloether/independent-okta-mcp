@@ -16,3 +16,6 @@ class FakeTokenProvider:
 
     def invalidate(self, token: ServiceToken) -> None:
         self.invalidated.append(token)
+
+    def ready(self) -> bool:
+        return True

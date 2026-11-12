@@ -100,6 +100,9 @@ class RefreshTokens(_Model):
         return self
 
 
+ENCODED_HOST = "must not use an encoded or shorthand host (e.g. %2e, 127.1)"
+
+
 class Config(_Model):
     mcp_public_url: str
     authorization_server: str = "okta-mcp"
@@ -140,12 +143,17 @@ class Config(_Model):
         default = {"https": 443, "http": 80}[parts.scheme]
         suffix = f":{port}" if port not in (None, default) else ""
         canonical = f"{parts.scheme}://{host}{suffix}/mcp"
-        # The second test is pydantic's normalization, which the server's PRM uses (it decodes
-        # `%2e`, expands `127.1`, ...).
         if url != canonical:
             raise ValueError(f"must be {canonical}: path /mcp, lowercase host, no default port")
-        if str(AnyHttpUrl(url)) != url:
-            raise ValueError("must not use an encoded or shorthand host (e.g. %2e, 127.1)")
+        # Pydantic's normalization, which the server's PRM uses (it decodes `%2e`, expands
+        # `127.1`, ...), must leave it unchanged. A URL it refuses outright gets the same fixed
+        # message, not pydantic's own text.
+        try:
+            normalized = str(AnyHttpUrl(url))
+        except ValidationError:
+            normalized = None
+        if normalized != url:
+            raise ValueError(ENCODED_HOST)
         return url
 
     @field_validator("groups")

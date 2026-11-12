@@ -4,11 +4,12 @@
 `build_app` wraps the SDK's Streamable HTTP app around the same `mcp_server` stdio uses, with
 the caller taken from the verified bearer token (`http_principal`). Authentication is never
 optional here: `build_app` needs a `Verifier`, and the SDK's `RequireAuthMiddleware` answers
-`/mcp` without a valid token with 401 before any handler runs. The verifier and its 401/403
-details are steps 4.3 and 4.4.
+`/mcp` without a valid token with 401 before any handler runs. The verifier is
+`okta_mcp.auth.verifier`; `serve_http` builds it and keeps its keys and the service token
+fresh in the background.
 
-`ReadyGate` answers `/mcp` with 503 + `Retry-After` while the verifier isn't ready (JWKS not
-loaded), token or not, so a valid token never gets 401 for it.
+`ReadyGate` wraps the SDK's `/mcp` endpoint and answers 503 + `Retry-After` while the verifier
+isn't ready (JWKS not loaded), token or not, so a valid token never gets 401 for it.
 
 `OriginGuard` is outermost and covers every route: a request whose
 `Origin` header is not in `MCP_ALLOWED_ORIGINS` gets 403, and one without `Origin` (a
@@ -19,10 +20,14 @@ through the TLS proxy.
 """
 
 import logging
+import math
+import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Protocol
 
+import anyio
+import httpx2
 import uvicorn
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
@@ -37,9 +42,11 @@ from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from okta_mcp.auth.principal import Principal, VerifiedToken
+from okta_mcp.auth.verifier import JWTVerifier
 from okta_mcp.config import MCP_PATH, Config
 from okta_mcp.logs import log_internal
 from okta_mcp.okta.client import new_http_client
+from okta_mcp.okta.token import keep_fresh
 from okta_mcp.server import Runtime, build_runtime, mcp_server
 
 log = logging.getLogger(__name__)
@@ -51,8 +58,8 @@ RETRY_AFTER = "5"
 
 class Verifier(TokenVerifier, Protocol):
     """The SDK's bearer-token verifier, which returns a `VerifiedToken` for a valid token and
-    `None` otherwise, plus whether it can verify at all yet (JWKS loaded, §11.3). 4.3 builds
-    it."""
+    `None` otherwise, plus whether it can verify at all yet (JWKS loaded, §11.3):
+    `okta_mcp.auth.verifier.JWTVerifier`."""
 
     def ready(self) -> bool: ...
 
@@ -63,7 +70,8 @@ class _FailClosed:
     which sends the error's text back as the 400 body. That middleware runs on every request
     with a bearer header, on every route it serves (PRM, and anything that falls through to the
     SDK app). Logged by type and frames only: the message could hold the token. A verifier that
-    isn't ready yet is `ReadyGate`'s (503), before this runs; a raise here is a verifier bug."""
+    isn't ready yet returns `None` and `ReadyGate` (inside the auth middleware, in front of
+    `RequireAuthMiddleware`) answers 503; a raise here is a verifier bug."""
 
     def __init__(self, inner: Verifier) -> None:
         self.inner = inner
@@ -113,48 +121,60 @@ class OriginGuard:
         await self.app(scope, receive, send)
 
 
-def _route_path(scope: Scope) -> str:
-    """The path Starlette's router matches on: `path` minus `root_path` (as
-    `starlette._utils.get_route_path`, which is private), so the gate sees what the routes see."""
-    path: str = scope["path"]
-    root: str = scope.get("root_path", "")
-    if root and path.startswith(root) and (path == root or path[len(root)] == "/"):
-        return path[len(root) :]
-    return path
+READY_LOG_EVERY = 60.0
+"""At most one log line per this many seconds for a readiness check that raises: `/readyz`
+and `/mcp` call it on every request, which senders control."""
 
 
-def _ready_or_not(ready: Callable[[], bool]) -> Callable[[], bool]:
-    """`ready`, with an exception counted as not ready (logged by type and frames), so neither
-    `ReadyGate` nor `/readyz` turns a broken check into a 500."""
+def _ready_or_not(
+    ready: Callable[[], bool], monotonic: Callable[[], float] = time.monotonic
+) -> Callable[[], bool]:
+    """`ready`, with an exception counted as not ready (logged by type and frames, at most once
+    per `READY_LOG_EVERY`), so neither `ReadyGate` nor `/readyz` turns a broken check into a
+    500."""
+    last = -math.inf
 
     def checked() -> bool:
+        nonlocal last
         try:
             return ready()
         except Exception as e:
-            log_internal(log, "readiness check", e)
+            if (now := monotonic()) - last >= READY_LOG_EVERY:
+                last = now
+                log_internal(log, "readiness check", e)
             return False
 
     return checked
 
 
 class ReadyGate:
-    """ASGI middleware: 503 on `/mcp` while `ready()` is false (§11.3: JWKS not loaded), before
-    the SDK's auth middleware runs. Without it a verifier that can't verify yet would answer a
-    valid token with 401 `invalid_token`, and clients would throw the token away and sign in
-    again in a loop. `ready()` reads state and never fetches."""
+    """ASGI app wrapped around the SDK's `/mcp` endpoint, outside its `RequireAuthMiddleware`:
+    503 + `Retry-After` while `ready()` is false (§11.3: JWKS not loaded). Without it a
+    verifier that can't verify yet would answer a valid token with 401 `invalid_token`, and
+    clients would throw the token away and sign in again in a loop. Wrapping the endpoint, not
+    matching paths, means the gate sees exactly the requests the endpoint serves. `ready()`
+    reads state and never fetches."""
 
     def __init__(self, app: ASGIApp, ready: Callable[[], bool]) -> None:
         self.app = app
         self.ready = ready
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and _route_path(scope) == MCP_PATH and not self.ready():
+        if scope["type"] == "http" and not self.ready():
             response = JSONResponse(
                 {"error": NOT_READY}, status_code=503, headers={"Retry-After": RETRY_AFTER}
             )
             await response(scope, receive, send)
             return
         await self.app(scope, receive, send)
+
+
+def _gate_endpoint(app: Starlette, ready: Callable[[], bool]) -> None:
+    """Put `ReadyGate` in front of the SDK's `/mcp` route, which must exist exactly once."""
+    routes = [r for r in app.router.routes if isinstance(r, Route) and r.path == MCP_PATH]
+    if len(routes) != 1:
+        raise RuntimeError(f"expected one SDK route at {MCP_PATH}, found {len(routes)}")
+    routes[0].app = ReadyGate(routes[0].app, ready)
 
 
 def _health_routes(ready: Callable[[], bool]) -> list[Route]:
@@ -191,10 +211,12 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
     """The ASGI app for `runtime`. Refuses a dev-mode `Config` (dev mode is stdio only, §8.6)
     and one without the HTTP auth settings, which `Config` requires outside dev mode.
 
-    Two layers: an outer app (middleware `OriginGuard`, then `ReadyGate`; routes `/healthz`,
-    `/readyz`) and the SDK's app (its auth middleware, `/mcp` and PRM) mounted under it. The
-    order matters: Origin first, so a refused page learns nothing; readiness before the SDK's
-    auth, so a cold verifier means 503, not 401. The health routes are outside the SDK's
+    Two layers: an outer app (middleware `OriginGuard`; routes `/healthz`, `/readyz`) and the
+    SDK's app (its auth middleware, `/mcp` and PRM) mounted under it, with `ReadyGate` around
+    its `/mcp` endpoint. The order matters: Origin first, so a refused page learns nothing;
+    readiness before `RequireAuthMiddleware`, so a cold verifier means 503, not 401. `/readyz`
+    also needs a service token (§11.4); `/mcp` doesn't wait for one, since a call fetches it.
+    The health routes are outside the SDK's
     `AuthenticationMiddleware`, which runs the verifier on any request with a bearer header,
     so a GET or HEAD probe never verifies a token. Anything else falls through to the SDK app,
     where `_FailClosed` keeps a failing verifier from turning it into a 500."""
@@ -203,7 +225,8 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
     if config.public_url is None or config.issuer is None:
         raise ValueError("Config without MCP_PUBLIC_URL or MCP_ISSUER")
     server = mcp_server(runtime, http_principal)
-    ready = _ready_or_not(verifier.ready)
+    can_verify = _ready_or_not(verifier.ready)
+    has_token = _ready_or_not(runtime.tokens.ready)
     mcp = server.streamable_http_app(
         streamable_http_path=MCP_PATH,
         stateless_http=True,
@@ -218,12 +241,13 @@ def build_app(runtime: Runtime, config: Config, verifier: Verifier) -> Starlette
         ),
         token_verifier=_FailClosed(verifier),
     )
+    _gate_endpoint(mcp, can_verify)
     return Starlette(
-        routes=[*_health_routes(ready), Mount("", app=mcp)],
-        middleware=[
-            Middleware(OriginGuard, allowed=config.allowed_origins),
-            Middleware(ReadyGate, ready=ready),
+        routes=[
+            *_health_routes(lambda: can_verify() and has_token()),
+            Mount("", app=mcp),
         ],
+        middleware=[Middleware(OriginGuard, allowed=config.allowed_origins)],
         lifespan=_lifespan_of(mcp),
     )
 
@@ -247,11 +271,18 @@ def uvicorn_config(config: Config, app: Starlette) -> uvicorn.Config:
     )
 
 
-async def serve_http(config: Config, verifier: Verifier) -> None:
+async def serve_http(config: Config, transport: httpx2.AsyncBaseTransport | None = None) -> None:
     """Serve the HTTP app until stopped. Everything is loaded, and every startup error raised,
-    before the port opens."""
-    async with new_http_client() as http:
+    before the port opens; the issuer need not be reachable (§11.3): the verifier loads its
+    keys in the background, and `/mcp` is 503 until it has. The service token is fetched in
+    the background too, for `/readyz`. `transport` is for tests."""
+    async with new_http_client(transport) as http:
         runtime = build_runtime(config, http)
+        verifier = JWTVerifier(http, config)
         app = build_app(runtime, config, verifier)
-        log.info("serving %s on %s:%d", MCP_PATH, config.host, config.port)
-        await uvicorn.Server(uvicorn_config(config, app)).serve()
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(verifier.run)
+            tg.start_soon(keep_fresh, runtime.tokens)
+            log.info("serving %s on %s:%d", MCP_PATH, config.host, config.port)
+            await uvicorn.Server(uvicorn_config(config, app)).serve()
+            tg.cancel_scope.cancel()

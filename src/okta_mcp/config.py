@@ -117,6 +117,8 @@ class Config(BaseModel):
     required_scope: str = Field("okta-mcp", alias="MCP_REQUIRED_SCOPE")
     allowed_client_ids: CommaList = Field((), alias="MCP_ALLOWED_CLIENT_IDS")
     groups_claim: str = Field("groups", alias="MCP_GROUPS_CLAIM")
+    max_token_age: int = Field(86400, ge=60, alias="MCP_MAX_TOKEN_AGE")
+    """Oldest `iat` accepted (s). Okta's longest access-token lifetime is one day."""
     policy_file: Path = Field(alias="MCP_POLICY_FILE")
     cursor_key: Annotated[SecretBytes, BeforeValidator(_cursor_key)] = Field(alias="MCP_CURSOR_KEY")
     allowed_origins: CommaList = Field((), alias="MCP_ALLOWED_ORIGINS")

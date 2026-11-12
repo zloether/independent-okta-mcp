@@ -50,6 +50,9 @@ class FakeTokenProvider:
     def invalidate(self, token: ServiceToken) -> None:
         pass
 
+    def ready(self) -> bool:
+        return True
+
 
 ORG = "https://example.okta.com"
 KEY = bytes(range(32))

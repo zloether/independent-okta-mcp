@@ -8,11 +8,12 @@ Startup problems go to stderr, one per line, and the exit status is 2.
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 import anyio
 
 from okta_mcp import __version__
+from okta_mcp.app import serve_http
 from okta_mcp.config import Config, ConfigError, load_config
 from okta_mcp.exec.output import ScrubError
 from okta_mcp.logs import configure_logging
@@ -30,9 +31,6 @@ HTTP_REFUSES_DEV_MODE = (
     "MCP_DEV_MODE: refused by the HTTP transport, which always authenticates; dev mode is "
     "okta-mcp --stdio only"
 )
-HTTP_NOT_BUILT = (
-    "the HTTP transport has no token verifier yet (plan step 4.3); use okta-mcp --stdio"
-)
 
 
 def _fail(errors: Sequence[str]) -> int:
@@ -42,11 +40,9 @@ def _fail(errors: Sequence[str]) -> int:
     return STARTUP_FAILED
 
 
-def _stdio(config: Config) -> int:
-    if not config.dev_mode:
-        return _fail([STDIO_NEEDS_DEV_MODE])
+def _serve(serve: Callable[[Config], Awaitable[None]], config: Config) -> int:
     try:
-        anyio.run(serve_stdio, config)
+        anyio.run(serve, config)
     # The loaders' errors, raised only before the transport opens. Anything else is a bug and
     # keeps its traceback.
     except (ConfigError, PolicyError, RegistryError, ResourceError) as e:
@@ -56,10 +52,16 @@ def _stdio(config: Config) -> int:
     return 0
 
 
+def _stdio(config: Config) -> int:
+    if not config.dev_mode:
+        return _fail([STDIO_NEEDS_DEV_MODE])
+    return _serve(serve_stdio, config)
+
+
 def _http(config: Config) -> int:
     if config.dev_mode:
         return _fail([HTTP_REFUSES_DEV_MODE])
-    return _fail([HTTP_NOT_BUILT])
+    return _serve(serve_http, config)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

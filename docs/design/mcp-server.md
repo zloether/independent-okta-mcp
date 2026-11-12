@@ -547,17 +547,17 @@ Okta Cross App Access (IETF *Identity Assertion JWT Authorization Grant*; MCP "e
 
 | Check | Rule |
 |---|---|
-| Format/alg | JWT; `alg` ∈ {`RS256`, `ES256`}; reject `none`/HS* |
-| Signature | Issuer JWKS (from AS metadata), cached 1h; on unknown `kid` refetch at most once per 60s |
+| Format/alg | JWT ≤ 16 KiB; `alg` ∈ {`RS256`, `ES256`} and matching the key's; reject `none`/HS*; a `kid` is required; `crit` and `b64` headers refused |
+| Signature | Issuer JWKS (from the RFC 8414 metadata at `{MCP_ISSUER}/.well-known/oauth-authorization-server`, whose `issuer` must equal `MCP_ISSUER` and whose `jwks_uri` must be on the issuer's origin). Only `sig` keys: RSA ≥ 2048 bits for RS256, P-256 for ES256; a `kid` listed twice is dropped. Refreshed every 30 min in the background and trusted for 1 h, so a warm cache rides out an issuer outage of at least 30 min; on unknown `kid` refetch at most once per 60 s |
 | `iss` | Exactly `MCP_ISSUER` |
 | `aud` | Contains `MCP_AUDIENCE` (default `MCP_PUBLIC_URL`) |
-| `exp`/`nbf`/`iat` | ≤60s skew; configurable max token age |
-| `scp`/`scope` | Contains `MCP_REQUIRED_SCOPE` (order varies between tokens; V13) |
-| `cid`/`client_id` | In `MCP_ALLOWED_CLIENT_IDS` |
-| `uid` / `sub` | Principal ID = `uid` (stable `00u…`); reject if absent. `sub` (login, mutable) kept for display only (V13) |
+| `exp`/`nbf`/`iat` | ≤60s skew; `exp` and `iat` required; `iat` no older than `MCP_MAX_TOKEN_AGE` |
+| `scp`/`scope` | Contains `MCP_REQUIRED_SCOPE` (order varies between tokens; V13). Okta's `scp` array or RFC 9068's space-separated `scope`; malformed → 401. A well-formed token without the scope gets `403 insufficient_scope` (the SDK's check, §8.1), not 401 |
+| `cid`/`client_id` | In `MCP_ALLOWED_CLIENT_IDS`; if both claims are present they must agree |
+| `uid` / `sub` | Principal ID = `uid` (stable `00u…`, must be an Okta user ID); reject if absent. `sub` (login, mutable; required) kept for display only (V13) |
 | `groups` | Array of strings (claim `MCP_GROUPS_CLAIM`); anything else → zero groups |
 
-Result: immutable `Principal(uid, sub, client_id, groups, exp)` in a contextvar. JWKS not yet loaded (cold start or issuer unreachable) → `503`; a warm cache keeps serving until TTL. DPoP/mTLS-bound user tokens: out of scope for v1.
+Result: immutable `Principal(uid, sub, client_id, groups, exp)` in a contextvar (`auth/verifier.py`, on the SDK's `TokenVerifier`). JWKS not yet loaded (cold start or issuer unreachable) → `503`; a warm cache keeps serving until TTL. Any token the verifier doesn't accept is a plain 401 `invalid_token`; the reason is logged at DEBUG as fixed text, never the token or a claim. DPoP/mTLS-bound user tokens: out of scope for v1.
 
 ### 8.6 Development mode (stdio only)
 
@@ -740,6 +740,7 @@ ENTRYPOINT ["okta-mcp"]
 | `MCP_REQUIRED_SCOPE` |  | `okta-mcp` | Required scope |
 | `MCP_ALLOWED_CLIENT_IDS` | ✔ | — | Comma list (`*` must be explicit and logs a warning) |
 | `MCP_GROUPS_CLAIM` |  | `groups` | Claim holding group IDs |
+| `MCP_MAX_TOKEN_AGE` |  | `86400` | Oldest access-token `iat` accepted (s, ≥ 60); Okta's longest access-token lifetime is one day |
 | `MCP_POLICY_FILE` | ✔ | — | Path to `policy.yaml` |
 | `MCP_CURSOR_KEY` / `_FILE` | ✔ | — | Base64 HMAC key (≥32 bytes) |
 | `MCP_ALLOWED_ORIGINS` |  | empty | Comma list. A request **with** an `Origin` header not in the list is rejected (403); requests without `Origin` (non-browser clients) are allowed |
@@ -765,12 +766,12 @@ ENTRYPOINT ["okta-mcp"]
 
 Values are stripped; an empty one counts as unset. Secrets (`MCP_CURSOR_KEY`, `OKTA_API_TOKEN`) may instead be read from `<NAME>_FILE` (an empty file is an error). Outside dev mode, `MCP_PUBLIC_URL`, `MCP_ISSUER` and `MCP_ALLOWED_CLIENT_IDS` are required; `OKTA_CLIENT_ID` and `OKTA_PRIVATE_KEY_FILE` are required unless `OKTA_API_TOKEN` is set (dev mode only, not both). URLs must be https (`MCP_PUBLIC_URL` and `MCP_ALLOWED_ORIGINS` may be http on `127.0.0.1`/`localhost` outside production) with an ASCII host and no credentials, query or fragment; `OKTA_ORG_URL` and each `MCP_ALLOWED_ORIGINS` entry are origins only, kept in canonical form (lowercase host, no default port); `MCP_PUBLIC_URL` must already be in canonical form, with path `/mcp`. Every `OKTA_SCOPES` entry must be a `.read` scope.
 
-Startup fails fast on missing/invalid values, unreadable key, invalid policy, or registry/spec mismatch. It does **not** require the issuer to be reachable: the server starts, `/readyz` reports not-ready and every `/mcp` request (with a token or without) gets `503` with `Retry-After` until the JWKS loads (retried with backoff), so a valid token is never answered with 401 for it. `/healthz` and the PRM URLs are unaffected.
+Startup fails fast on missing/invalid values, unreadable key, invalid policy, or registry/spec mismatch. It does **not** require the issuer to be reachable: the server starts, `/readyz` reports not-ready and every request the `/mcp` endpoint serves (with a token or without) gets `503` with `Retry-After` until the JWKS loads (retried with backoff, 1 s doubling to 60 s), so a valid token is never answered with 401 for it. `/healthz` and the PRM URLs are unaffected; `/mcp/` gets the SDK's redirect to `/mcp`.
 
 ### 11.4 Operations
 
 - **TLS** at a reverse proxy; container speaks HTTP on 8080, never exposed directly.
-- **Health:** `/healthz` (process up); `/readyz` (policy loaded, registry valid, JWKS loaded, service token obtained within the last refresh cycle — not fetched per probe). Unauthenticated, data-free.
+- **Health:** `/healthz` (process up); `/readyz` (policy loaded, registry valid, JWKS loaded, service token obtained within the last refresh cycle — not fetched per probe: a background task asks for it every 30 s, and `/readyz` checks that an unexpired one is held). `/mcp` waits only for the JWKS, since a call fetches its own service token. Unauthenticated, data-free.
 - **Upgrades:** stateless; replace the container. Pin image tags and the MCP SDK.
 - **Secrets:** files; rotation = new secret + restart (service key, cursor key).
 - **Network exposure:** only the TLS proxy may reach the container's port. The app does not check which peer sent `X-Forwarded-*` (`MCP_TRUST_PROXY`); that is the network's job: no published port, or one bound to loopback (`127.0.0.1:8080:8080`; Docker's published ports bypass host firewalls such as ufw). Identity never comes from the client address (limits, audit and cursors key on `uid`), so a forged one mislabels a log line, nothing more.
