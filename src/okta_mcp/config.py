@@ -11,6 +11,7 @@ import base64
 import binascii
 import logging
 import os
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Literal, Self
@@ -196,7 +197,16 @@ class Config(BaseModel):
     def _origins(cls, v: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(_url(o, origin_only=True, http_loopback=True) for o in v)
 
-    @field_validator("required_scope", "groups_claim")
+    @field_validator("required_scope")
+    @classmethod
+    def _scope_token(cls, v: str) -> str:
+        # RFC 6749 §3.3 scope-token; it is also written into `WWW-Authenticate` as a quoted
+        # string, which this keeps free of quotes, backslashes and controls.
+        if not re.fullmatch(r"[\x21\x23-\x5b\x5d-\x7e]+", v):
+            raise ValueError("must be one OAuth scope (printable ASCII, no space, quote or \\)")
+        return v
+
+    @field_validator("groups_claim")
     @classmethod
     def _one_word(cls, v: str) -> str:
         # Compared with one `scp` entry or claim name; a space can never match.

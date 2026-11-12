@@ -506,10 +506,10 @@ About 285 characters for this example; Okta's `after` tokens are opaque and can 
 The server is an **OAuth 2.1 protected resource**. It does not issue tokens. It:
 
 1. Serves **Protected Resource Metadata** (RFC 9728) at `/.well-known/oauth-protected-resource/mcp` (path-specific, matching `MCP_PUBLIC_URL=…/mcp`) and, for clients that only try the root, at `/.well-known/oauth-protected-resource`. Content: `resource = MCP_PUBLIC_URL`, `authorization_servers = [MCP_ISSUER]`, `scopes_supported = [MCP_REQUIRED_SCOPE]`, `bearer_methods_supported = ["header"]`.
-2. Returns `401` + `WWW-Authenticate: Bearer resource_metadata="<path-specific URL>"` for missing/invalid tokens, `403` + `error="insufficient_scope"` when the scope is missing.
-3. Accepts bearer tokens only in the `Authorization` header.
+2. Returns `401` + `WWW-Authenticate: Bearer resource_metadata="<path-specific URL>", scope="<MCP_REQUIRED_SCOPE>"` for a missing token, the same plus `error="invalid_token"` for a bearer token that fails §8.5 (RFC 6750 §3.1: no error code when no token was sent), and `403` + `error="insufficient_scope"` with `scope` and `resource_metadata` when the scope is missing. `scope` is in every challenge because MCP clients (2025-11-25, "Scope Selection Strategy") read it before `scopes_supported`.
+3. Accepts bearer tokens only in the `Authorization` header. `access_token` in the query (which the MCP spec forbids) or more than one `Authorization` header is `400 invalid_request`, even beside a valid token.
 
-The SDK v2 ships resource-server helpers (`token_verifier`/`auth` settings, `get_access_token()`) **[verify in 0.4]**. Spike 0.4 decides whether they cover PRM at both URLs and the checks in §8.5; `auth/metadata.py` and `auth/verifier.py` only implement what they don't.
+The SDK covers the path-specific PRM URL, the 401/403 statuses and header-only reading (spike 0.4); `auth/metadata.py` adds the rest: `prm_routes` serves both PRM URLs from one document written from `Config` unchanged (no URL normalization, so `resource` and `authorization_servers` are exactly `MCP_PUBLIC_URL` and `MCP_ISSUER`), in the outer app, outside the SDK's authentication middleware, so a PRM fetch never runs the verifier; `RequireToken` replaces the SDK's `RequireAuthMiddleware` around `/mcp`. `build_app` refuses to build if the SDK's `/mcp` route isn't wrapped in `RequireAuthMiddleware` or its PRM route has moved, so an SDK upgrade can't silently bring its own challenge back. Every value in a challenge is fixed text or from `Config` (`MCP_REQUIRED_SCOPE` must be an RFC 6749 scope-token, so it needs no escaping); nothing from the request is echoed. The root PRM document is the same as the path-specific one (`resource` = `MCP_PUBLIC_URL`), which a strict RFC 9728 §3.3 client fetching only the root would reject; none of the 0.6 clients fetches the root.
 
 ### 8.2 Authorization server: dedicated Okta custom AS
 
@@ -737,7 +737,7 @@ ENTRYPOINT ["okta-mcp"]
 | `MCP_PUBLIC_URL` | ✔ | — | Canonical external URL of the MCP endpoint; default audience; PRM `resource`. Path must be `/mcp`, the one path served, and the URL canonical (lowercase scheme and host, no default port, unchanged by URL normalization), since PRM normalizes it and `aud` is compared as written |
 | `MCP_ISSUER` | ✔ | — | Okta custom AS issuer URL |
 | `MCP_AUDIENCE` |  | `MCP_PUBLIC_URL` | Expected `aud` |
-| `MCP_REQUIRED_SCOPE` |  | `okta-mcp` | Required scope |
+| `MCP_REQUIRED_SCOPE` |  | `okta-mcp` | Required scope; one RFC 6749 scope-token (printable ASCII, no space, `"` or `\`), since it is written into `WWW-Authenticate` |
 | `MCP_ALLOWED_CLIENT_IDS` | ✔ | — | Comma list (`*` must be explicit and logs a warning) |
 | `MCP_GROUPS_CLAIM` |  | `groups` | Claim holding group IDs |
 | `MCP_MAX_TOKEN_AGE` |  | `86400` | Oldest access-token `iat` accepted (s, ≥ 60); Okta's longest access-token lifetime is one day |
