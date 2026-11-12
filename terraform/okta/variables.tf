@@ -121,3 +121,9 @@ variable "service_scopes" {
     error_message = "Only okta.*.read scopes are allowed."
   }
 }
+
+variable "allow_super_admin" {
+  description = "Assign SUPER_ADMIN to the service app when service_scopes need it (okta.roles.read); see docs/okta-setup.md."
+  type        = bool
+  default     = false
+}

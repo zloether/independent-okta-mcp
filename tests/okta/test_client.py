@@ -268,6 +268,72 @@ async def test_401_403_sanitized(status: int) -> None:
     assert tokens.invalidated == ([ServiceToken("fake-token", "Bearer")] if status == 401 else [])
 
 
+# Live shape (dev org, groups get-owners without the group-owners feature): no WWW-Authenticate.
+FEATURE_OFF = {
+    "errorCode": "E0000015",
+    "errorSummary": "You do not have permission to access the feature you are requesting",
+}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", [401, 403])
+async def test_feature_not_enabled_keeps_token_and_says_so(
+    status: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    tokens = FakeTokenProvider(DPOP_TOKEN)
+    okta = Okta(httpx2.Response(status, json=FEATURE_OFF))
+    with pytest.raises(UpstreamError) as e:
+        await client(okta, tokens, dpop=DPoP()).get(USERS)
+    assert e.value.status == status
+    assert str(e.value) == (
+        f"Okta refused the request (HTTP {status}, E0000015): the org may not have the feature "
+        "this command needs, or the service app's admin role doesn't cover it; contact the MCP "
+        "administrator"
+    )
+    assert tokens.invalidated == []
+    assert f"HTTP {status} E0000015" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_feature_not_enabled_after_nonce_retry_keeps_token() -> None:
+    tokens = FakeTokenProvider(DPOP_TOKEN)
+    okta = Okta(nonce_401(), httpx2.Response(401, json=FEATURE_OFF))
+    with pytest.raises(UpstreamError, match="E0000015"):
+        await client(okta, tokens, dpop=DPoP()).get(USERS)
+    assert len(okta.requests) == 2
+    assert tokens.invalidated == []
+
+
+@pytest.mark.anyio
+async def test_feature_off_with_token_challenge_gets_generic_403_message() -> None:
+    headers = {"WWW-Authenticate": 'DPoP error="insufficient_scope"'}
+    okta = Okta(httpx2.Response(403, headers=headers, json=FEATURE_OFF))
+    with pytest.raises(UpstreamError) as e:
+        await client(okta, FakeTokenProvider()).get(USERS)
+    assert str(e.value) == "Okta refused the request (HTTP 403); contact the MCP administrator"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("headers", "body"),
+    [
+        ({"WWW-Authenticate": 'DPoP error="invalid_token"'}, FEATURE_OFF),  # the token, too
+        ({}, {"errorCode": ["E0000015"]}),
+        ({}, {"errorCode": "E0000011"}),
+        ({}, None),
+    ],
+)
+async def test_401_not_exactly_feature_off_still_invalidates(
+    headers: dict[str, str], body: object
+) -> None:
+    tokens = FakeTokenProvider(DPOP_TOKEN)
+    okta = Okta(httpx2.Response(401, headers=headers, json=body))
+    with pytest.raises(UpstreamError) as e:
+        await client(okta, tokens, dpop=DPoP()).get(USERS)
+    assert "contact the MCP administrator" in str(e.value)
+    assert tokens.invalidated == [DPOP_TOKEN]
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize(
     ("response", "message"),

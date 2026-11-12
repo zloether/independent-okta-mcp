@@ -15,7 +15,24 @@ If you manage Okta with Terraform, use [`terraform/okta/`](../terraform/okta/) i
 | `groups` claim | On the access token, always included; emits the **IDs** of Okta groups named `mcp-okta-*` |
 | Access policy `okta-mcp clients` | Applies only to the configured clients |
 | Policy rule `okta-mcp groups` | Authorization code only, role groups only, scopes `openid profile email offline_access okta-mcp`, access token ≤30 min; refresh tokens no longer than an access token under option A, or as set in `refresh_tokens` under option B |
-| Service app | API Services app, `private_key_jwt` with your public key, **Require DPoP on**, the configured `okta.*.read` grants, Read-only Administrator role |
+| Service app | API Services app, `private_key_jwt` with your public key, **Require DPoP on**, the configured `okta.*.read` grants, and the admin role those scopes need (see [the next section](#service-app-scopes-and-admin-roles)) |
+
+## Service app scopes and admin roles
+
+Okta answers a service-app request only when the token's scope **and** the app's admin role both allow it. The scopes you grant (`service_app.scopes`, which become the server's `OKTA_SCOPES`) set which commands the server can offer. The server hides any command whose scope isn't configured. Each scope also needs an admin role broad enough for its endpoints:
+
+| Scope | Narrowest standard role | Commands that need it |
+|---|---|---|
+| `okta.users.read` | `READ_ONLY_ADMIN` | Resolving a login to a user ID (any command with a `user` argument) |
+| `okta.groups.read` | `READ_ONLY_ADMIN` | `groups` |
+| `okta.networkZones.read` | `READ_ONLY_ADMIN` | `network-zones` |
+| `okta.roles.read` | `SUPER_ADMIN` | `groups list-roles`, `get-role`, `list-role-app-targets`, `list-role-group-targets` |
+
+The service app needs the highest role in the table among its scopes, so each deployment picks its role by picking scopes. Under Read-only Administrator, the role commands get HTTP 403 from Okta, because only a Super Administrator can view admin role assignments. Their scope is all `.read`, so even a Super Administrator service app can't write, but a stolen service key can then read everything those scopes cover. To avoid that, leave `okta.roles.read` out: the role commands disappear from every user's tool list, and the app needs only Read-only Administrator.
+
+Some endpoints also need an Okta feature that not every org has. `groups get-owners` returns HTTP 401 (`E0000015`) on orgs without group owners, whatever the role.
+
+`check` accepts the role the table names for the configured scopes, any narrower standard role in the table, or a custom role. `apply` assigns Read-only Administrator but never Super Administrator: when the scopes need it, `apply` still assigns Read-only Administrator to an app it created, reports Super Administrator as `manual`, and you assign it in the admin console (Applications > the service app > Admin roles). Until then the role commands get 403. A scope not in the table is refused, and so is a role broader than the scopes need.
 
 ## Before you start
 
@@ -79,10 +96,10 @@ When nothing is missing, the tool prints the values to give the server (`MCP_ISS
 `apply` finds objects by name: the group name, the app label, the authorization server name, and the fixed policy and rule names. It then:
 
 - **creates** missing objects;
-- **adds** missing links: app group assignments, configured clients in the access policy, and configured groups in the policy rule, plus the grants and the Read-only Administrator role on a service app it creates in the same run;
+- **adds** missing links: app group assignments, configured clients in the access policy, and configured groups in the policy rule, plus the grants and the Read-only Administrator role (when the scopes need no more) on a service app it creates in the same run;
 - **turns on** Require DPoP on the service app. Okta leaves it off for apps created through the API.
 
-It never deletes anything, never removes grants, roles, clients or groups, and never changes audiences, claim expressions, app types, redirect URIs or token lifetimes. Those differences are reported as `manual`. So are settings that widen access: extra grants or admin roles on the service app (never use Super Admin), policies that apply to `ALL_CLIENTS` or `EVERYONE`, individual users in the rule, and imported groups with an `mcp-okta-` name.
+It never deletes anything, never removes grants, roles, clients or groups, and never changes audiences, claim expressions, app types, redirect URIs or token lifetimes. Those differences are reported as `manual`. So are settings that widen access: extra grants on the service app or admin roles broader than its scopes need, policies that apply to `ALL_CLIENTS` or `EVERYONE`, individual users in the rule, and imported groups with an `mcp-okta-` name.
 
 An existing object that fails any check is not trusted, and nothing that depends on it is changed:
 
@@ -107,7 +124,7 @@ The rule must allow the authorization code grant only, so a rule that also lists
 
 ## Terraform
 
-`terraform/okta/` is a root module for the [okta/okta provider](https://registry.terraform.io/providers/okta/okta/latest) (`~> 7.1`) with the same objects, names and checks as the script: inputs that would widen access (group names without the prefix, scopes other than `okta.*.read`, access-token lifetimes over 30 minutes, refresh-token lifetimes over 24 hours, a private or short key) fail at `plan`. Set `refresh_tokens` for option B; leave it unset for A. Unlike the script, changing it later updates the apps and rule in place.
+`terraform/okta/` is a root module for the [okta/okta provider](https://registry.terraform.io/providers/okta/okta/latest) (`~> 7.1`) with the same objects, names and checks as the script: inputs that would widen access (group names without the prefix, scopes other than `okta.*.read`, access-token lifetimes over 30 minutes, refresh-token lifetimes over 24 hours, a private or short key) fail at `plan`. The service app gets the role [the table](#service-app-scopes-and-admin-roles) names for `service_scopes`; when that is Super Administrator, `plan` fails unless you set `allow_super_admin = true`. Set `refresh_tokens` for option B; leave it unset for A. Unlike the script, changing it later updates the apps and rule in place.
 
 1. Create the key pair as above, then convert the public half to a JWK. Terraform cannot parse PEM, and needs only the public JWK:
 
@@ -132,4 +149,4 @@ Unlike the script, Terraform owns what it creates: `apply` reverts console chang
 ## Limits
 
 - Only native (loopback or custom-scheme redirect) public clients are created. Register other client types by hand, then add their client IDs to the access policy.
-- Only the Read-only Administrator role is managed. You can assign a narrower custom admin role by hand instead; the tool then accepts it and does not add Read-only Administrator, but it does not check the custom role's permissions. In Terraform, replace `okta_app_oauth_role_assignment.service` with a `CUSTOM` assignment.
+- The script assigns only Read-only Administrator; Super Administrator is assigned by hand (or by Terraform with `allow_super_admin`). You can assign a narrower custom admin role by hand instead; the tool then accepts it and adds no standard role, but it does not check the custom role's permissions. In Terraform, replace `okta_app_oauth_role_assignment.service` with a `CUSTOM` assignment.

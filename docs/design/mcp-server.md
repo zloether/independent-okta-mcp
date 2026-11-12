@@ -80,7 +80,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 | Transport | Streamable HTTP, **stateless**, behind a TLS-terminating reverse proxy. stdio for local development only. |
 | User authentication | MCP server is an OAuth 2.1 **resource server only**. Okta (dedicated custom authorization server) is the AS. v1 entry path: browser auth-code + PKCE. Okta Cross App Access / ID-JAG is future work (§8.4). |
 | Authorization | Access-token `groups` claim (group IDs) → **roles** in a version-controlled YAML policy → allow/deny of domains/commands. Enforced at `tools/list` and again at `tools/call`. Default deny. |
-| Okta API access | **Shared service app** (OAuth client credentials, `private_key_jwt`, DPoP, read scopes, Read-only Admin role). The user's token is never forwarded to Okta. |
+| Okta API access | **Shared service app** (OAuth client credentials, `private_key_jwt`, DPoP, read scopes, the admin role those scopes need: Read-only Admin unless the deployment enables role commands). The user's token is never forwarded to Okta. |
 | Deployment | Single org, single container (Dockerfile + compose example), no external state. |
 | Estimated effort | **~32–35 working days** for one engineer (≈7 calendar weeks), excluding composite handlers. Re-estimated from the coverage inventory (plan step 1.5). See §15. |
 
@@ -292,7 +292,7 @@ All failures are `isError: true` with `{ "error": { "code", "message", "request_
 | `forbidden_by_policy` | Roles don't permit the command or an argument. One fixed sentence that does **not** reveal role names or other commands; for a permitted command refused with an expression argument it adds the caller's own `search_attributes` for that command |
 | `unavailable` | Service app lacks a required scope (never executed) |
 | `not_found` | Resolver found no user with that exact login or ID |
-| `upstream_error` | Okta error; includes status and `errorSummary`. 401/403 rewritten to "contact the MCP administrator" |
+| `upstream_error` | Okta error; includes status and `errorSummary`. 401/403 rewritten to "contact the MCP administrator"; `E0000015` without a token challenge also names the likely cause (feature not enabled on the org, or the service app's role doesn't cover it) and is the one 401 that keeps the service token |
 | `rate_limited` | Okta 429 beyond max wait, or per-principal limiter |
 | `timeout` | Per-call deadline exceeded (partial data returned only if resumable) |
 | `result_too_large` | Non-list result over `MCP_MAX_BYTES` |
@@ -684,7 +684,7 @@ Group removal takes effect at next token issuance. Short access-token lifetimes 
 
 - One **API Services** app using client credentials with `private_key_jwt`. Environment contract (§11.3): `OKTA_ORG_URL`, `OKTA_CLIENT_ID`, `OKTA_PRIVATE_KEY_FILE`, `OKTA_KEY_ID`, `OKTA_SCOPES`, `OKTA_DPOP`.
 - **Scopes:** only `okta.*.read` for the domains the deployment exposes. Never `.manage`.
-- **Admin role:** start with Read-only Administrator; verify per domain (V6); custom role/resource set for tighter ceilings. Never Super Admin — which is why ai-agents (workload principals) is out of v1: every one of its operations requires `SUPER_ADMIN` plus a paid subscription, and its spec declares no scopes. Re-adding it needs a separate, explicitly risk-accepted credential.
+- **Admin role:** the narrowest standard role the configured scopes need, from the scope → role table in [`okta-setup.md`](../okta-setup.md#service-app-scopes-and-admin-roles) (verified per scope in the dev org, V6); custom role/resource set for tighter ceilings. Read-only Administrator covers every scope except `okta.roles.read`: only Super Admins can view admin role assignments (dev org, 2026-11-12). The deployment chooses: leave `okta.roles.read` out and the role commands are hidden, or accept Super Admin for a service app whose token still carries only `.read` scopes. The setup script never assigns Super Admin itself, and Terraform does only with `allow_super_admin`. ai-agents (workload principals) stays out of v1: its operations require `SUPER_ADMIN` plus a paid subscription, and its spec declares no scopes, so the scope gate can't bound it.
 - **DPoP:** on by default (§6.5). API Services apps created in the admin console default to "Require DPoP"; apps created through the API (and so Terraform) default to off, so setup turns it on explicitly (V15). Designing for it costs little and avoids a retrofit through the client and paginator.
 - Token held in memory only; never written to disk.
 - **Rate-limit share:** the service app draws on the same org-wide rate limits as every other integration (provisioning, HR sync, sign-in widgets calling the Management API). `MCP_REQUESTS_PER_MINUTE` bounds one user, not the server. Set the app's rate-limit capacity in Okta (Applications → the service app → Application Rate Limits) well below the default share, so a busy or looping MCP client gets 429s before other integrations do **[unverified, V16]**.
@@ -873,7 +873,7 @@ Results include PII. Roles should be scoped accordingly; `select` is a convenien
 | Integration | Full ASGI app + mock AS + mocked Okta: 401/403, both PRM URLs, per-principal `tools/list` with `cacheScope: "private"`, call-time denial, limits |
 | Protocol | SDK client / Inspector smoke over Streamable HTTP at 2026-07-28 and 2025-11-25; `structuredContent` and annotations present |
 | Container | Build; non-root; read-only FS; health endpoints; no tests/docs/keys in image |
-| E2E (manual, dev org) | Path A with real clients; groups claim; revocation after expiry; per-domain smoke under Read-only Admin (V6) |
+| E2E (manual, dev org) | Path A with real clients; groups claim; revocation after expiry; per-domain smoke under the role the scope table names (V6) |
 | Dev cross-check (manual, not CI) | Optional script diffing representative commands against the okta-skills CLI on the dev org |
 | Hygiene | `ruff check`, `ruff format --check`, `pyright`, `pytest`, `uv lock --check`, `pip-audit` in CI |
 
@@ -907,7 +907,7 @@ M3 is the least certain line. The step 1.5 inventory (`docs/coverage/report.md`)
 | V3 | Client registration: pre-registered vs DCR vs CIMD | Onboarding | Start with pre-registered public clients; check each target client in spike 0.6 and record in the compatibility matrix |
 | V4 | `.manage ⇒ .read` scope implication | Capability gate | **Closed (step 3.2): not modeled.** `OKTA_SCOPES` can't hold `.manage`, so nothing held implies anything; GET operations that accept only `.manage` are unavailable |
 | V5 | MCP SDK v2 and revision 2026-07-28: stateless per-request principal in low-level `on_*` handlers, `cacheScope`/`ttlMs` on list results, back-compat with 2025-11-25 clients, built-in resource-server auth helpers, `httpx` vs `httpx2` and the matching test mock. Facts from the r3 review post-date the author's knowledge and are unconfirmed | Implementation shape | Spike 0.4; pin SDK exact |
-| V6 | Endpoints that succeed under Read-only Administrator | Service-app role | Per-domain smoke in dev org |
+| V6 | The narrowest standard role under which each scope's endpoints succeed (recorded in the `okta-setup.md` scope table) | Service-app role | Per-scope smoke in dev org, Read-only Administrator first |
 | V8 | Spec accuracy: wrong/missing `security` scopes (empty scopes are now a load error), operationIds that change between spec releases, parameters undocumented in the spec | Registry correctness | `okta_scopes_override` with comments; spec-update diff review; dev-org smoke |
 | V9 | Okta custom AS handling of RFC 8707 `resource` | Path A | **Verified 0.5:** ignored; `aud` is always the AS audience. Dedicated AS required |
 | V10 | Target clients that only try RFC 8414 path-insertion discovery | Which clients connect | **Verified 0.5:** Okta serves the path-insertion URL; no incompatibility |
@@ -978,6 +978,6 @@ Steps 1–4 are automated by `scripts/okta-setup.py` or the `terraform/okta/` mo
 
 1. **Dedicated custom AS:** audience `MCP_PUBLIC_URL`; scope `okta-mcp`; `groups` claim on the access token emitting **IDs** of Okta-mastered `mcp-okta-*` groups (V13); access-token lifetime ≤30 min; rule scopes include `offline_access`; refresh tokens off (A) or rotating with bounded lifetimes (B, §8.3); access policy limiting clients/users.
 2. **Groups:** create role groups; copy their IDs into the policy (names as comments); keep them out of delegated admins' resource sets and out of group rules, and alert on membership changes (§8.2).
-3. **Service app:** API Services app, `private_key_jwt` (upload public JWK, note `kid`), "Require DPoP" on (the console default; turn it on explicitly if the app was created through the API, V15); grant only intended `okta.*.read` scopes; assign Read-only Administrator or a custom role (never Super Admin); store the private key as a container secret.
+3. **Service app:** API Services app, `private_key_jwt` (upload public JWK, note `kid`), "Require DPoP" on (the console default; turn it on explicitly if the app was created through the API, V15); grant only intended `okta.*.read` scopes; assign the role the scopes need (§10: Read-only Administrator, or Super Admin only if `okta.roles.read` is granted) or a custom role; store the private key as a container secret.
 4. **Clients:** register approved MCP clients as public OIDC apps (PKCE, exact redirect URIs); allow them in the AS access policy; assign them an authentication policy that requires MFA (§8.2). Cap the service app's rate-limit share (§10).
 5. **Server:** fill `docker/compose.example.yaml`; mount the policy file read-only; place behind TLS; verify `/readyz`, both PRM URLs, and `tools/list` per role with test users.

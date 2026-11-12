@@ -23,6 +23,7 @@ from okta_mcp.okta.token import ServiceToken, TokenError, TokenProvider
 log = logging.getLogger(__name__)
 
 _SUMMARY_MAX = 500
+_FEATURE_OFF = "E0000015"
 
 
 class OriginError(Exception):
@@ -44,6 +45,18 @@ def json_body(response: httpx2.Response) -> Any:
         return response.json()
     except (ValueError, UnicodeDecodeError):
         return None
+
+
+def _feature_off(response: httpx2.Response) -> bool:
+    """Okta's "feature not enabled on the org" error (e.g. group owners), which says nothing
+    about the token. A token challenge alongside it means the token was refused too."""
+    if "WWW-Authenticate" in response.headers:
+        return False
+    match json_body(response):
+        case {"errorCode": str(code)}:
+            return code == _FEATURE_OFF
+        case _:
+            return False
 
 
 def new_http_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx2.AsyncClient:
@@ -120,10 +133,14 @@ class OktaClient:
                 raise rate_limited(response)
         if response.is_success:
             return response
-        # Only a nonce challenge is known to be about the proof, not the token; any other 401
-        # (`invalid_dpop_proof` included, as Okta's shape for an expired token is unconfirmed)
-        # drops it.
-        if response.status_code == 401 and not use_dpop_nonce(response):
+        # Only a nonce challenge (about the proof) and a disabled feature are known not to be
+        # about the token; any other 401 (`invalid_dpop_proof` included, as Okta's shape for an
+        # expired token is unconfirmed) drops it.
+        if (
+            response.status_code == 401
+            and not use_dpop_nonce(response)
+            and not _feature_off(response)
+        ):
             self._tokens.invalidate(token)
         raise self._error(response)
 
@@ -168,6 +185,14 @@ class OktaClient:
 
     def _error(self, response: httpx2.Response) -> UpstreamError:
         status = response.status_code
+        if status in (401, 403) and _feature_off(response):
+            log.warning("Okta refused the service app's request: HTTP %d %s", status, _FEATURE_OFF)
+            return UpstreamError(
+                status,
+                f"Okta refused the request (HTTP {status}, {_FEATURE_OFF}): the org may not have "
+                "the feature this command needs, or the service app's admin role doesn't cover "
+                "it; contact the MCP administrator",
+            )
         if status in (401, 403):
             log.warning("Okta refused the service app's request: HTTP %d", status)
             return UpstreamError(

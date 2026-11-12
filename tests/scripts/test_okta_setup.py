@@ -1,5 +1,6 @@
 import copy
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,9 @@ from _load import SCRIPTS, load_script
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.utils import base64url_decode
+
+from okta_mcp.registry.loader import load_registry
+from okta_mcp.registry.spec import load_spec
 
 setup = load_script("okta-setup")
 
@@ -160,6 +164,7 @@ def test_public_jwk_rejects_private_key() -> None:
     ("old", "new"),
     [
         ("okta.groups.read]", "okta.groups.manage]"),
+        ("okta.groups.read]", "okta.apps.read]"),  # no admin role recorded for it
         ("mcp-okta-readers", "readers"),
         (MCP_URL, "http://mcp.example.com/mcp"),
         (MCP_URL, "https://mcp.example.com"),
@@ -210,6 +215,78 @@ def test_public_url_messages(config: Path, url: str, message: str) -> None:
 def test_example_config_is_valid() -> None:
     cfg = setup.load_config(SCRIPTS / "okta-setup.example.yaml")
     assert cfg.service_app.scopes == ["okta.users.read", "okta.groups.read"]
+
+
+def test_scope_roles_cover_the_registry() -> None:
+    registry = load_registry(load_spec())
+    used = {
+        s
+        for d in registry.domains.values()
+        for c in d.commands.values()
+        for ss in c.scope_sets
+        for s in ss
+    }
+    assert used <= set(setup.SCOPE_ROLES)
+
+
+def test_docs_table_matches_scope_roles() -> None:
+    text = (SCRIPTS.parent / "docs" / "okta-setup.md").read_text()
+    rows = re.findall(r"^\| `(okta\.[A-Za-z]+\.read)` \| `([A-Z_]+)` \|", text, re.MULTILINE)
+    assert dict(rows) == setup.SCOPE_ROLES
+    assert len(rows) == len(setup.SCOPE_ROLES)
+
+
+def test_terraform_scope_roles_match() -> None:
+    text = (SCRIPTS.parent / "terraform" / "okta" / "main.tf").read_text()
+    block = re.search(r"scope_roles = \{(.*?)\}", text, re.DOTALL)
+    assert block
+    assert dict(re.findall(r'"(okta\.\w+\.read)"\s*=\s*"([A-Z_]+)"', block[1])) == setup.SCOPE_ROLES
+
+
+def test_scope_roles_are_ordered_as_terraform_assumes() -> None:
+    # main.tf picks SUPER_ADMIN if any scope needs it, else READ_ONLY_ADMIN: a third role
+    # must change both derivations.
+    assert setup.ROLE_ORDER == [setup.READ_ONLY_ADMIN, setup.SUPER_ADMIN]
+    assert set(setup.SCOPE_ROLES.values()) <= set(setup.ROLE_ORDER)
+
+
+def use_scopes(config: Path, scopes: str) -> None:
+    config.write_text(config.read_text().replace("okta.users.read, okta.groups.read", scopes))
+
+
+def test_roles_scope_needs_super_admin_which_apply_never_assigns(config: Path, capsys) -> None:
+    use_scopes(config, "okta.users.read, okta.groups.read, okta.roles.read")
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 1
+    service = okta.find("api", "v1", "apps", label="okta-mcp service")
+    grants = okta.items("api", "v1", "apps", service["id"], "grants")
+    assert {g["scopeId"] for g in grants} == {
+        "okta.users.read",
+        "okta.groups.read",
+        "okta.roles.read",
+    }
+    roles = okta.items("oauth2", "v1", "clients", service["id"], "roles")
+    assert [r["type"] for r in roles] == ["READ_ONLY_ADMIN"]
+    assert "[manual] role SUPER_ADMIN: okta.roles.read needs it; assign it by hand" in (
+        capsys.readouterr().out
+    )
+
+    roles.append({"type": "SUPER_ADMIN"})
+    assert run(okta, "check", config) == 0
+    assert "OKTA_SCOPES=okta.users.read okta.groups.read okta.roles.read" in capsys.readouterr().out
+
+
+def test_narrower_role_than_the_scopes_need_is_reported(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    use_scopes(config, "okta.users.read, okta.groups.read, okta.roles.read")
+    capsys.readouterr()
+    okta.writes.clear()
+
+    # READ_ONLY_ADMIN stays (narrower than required, so not a widening); SUPER_ADMIN is manual.
+    assert run(okta, "apply", config, "--yes") == 1
+    assert [m for m, p in okta.writes if p.endswith("/roles")] == []
+    assert "[manual] role SUPER_ADMIN" in capsys.readouterr().out
 
 
 def test_check_on_empty_org_reports_todo_and_only_reads(config: Path, capsys) -> None:
@@ -378,6 +455,31 @@ def test_existing_service_app_gets_no_new_access(config: Path, capsys) -> None:
     out = capsys.readouterr().out
     assert f"[manual] grant okta.users.read: existing app {app['id']}" in out
     assert "[manual] role READ_ONLY_ADMIN: existing app" in out
+
+
+def test_existing_service_app_needing_super_admin_still_asks_to_confirm(
+    config: Path, capsys
+) -> None:
+    use_scopes(config, "okta.users.read, okta.groups.read, okta.roles.read")
+    okta = FakeOkta()
+    jwk = setup.public_jwk((config.parent / "service.pub.pem").read_bytes())
+    oauth = {
+        "application_type": "service",
+        "grant_types": ["client_credentials"],
+        "jwks": {"keys": [jwk]},
+        "dpop_bound_access_tokens": True,
+    }
+    app = plant_app(okta, "okta-mcp service", "private_key_jwt", oauth)
+
+    assert run(okta, "apply", config, "--yes") == 1
+    assert [p for _, p in okta.writes if app["id"] in p] == []
+    assert f"[manual] role SUPER_ADMIN: existing app {app['id']}" in capsys.readouterr().out
+
+
+def test_check_on_empty_org_says_super_admin_is_by_hand(config: Path, capsys) -> None:
+    use_scopes(config, "okta.users.read, okta.groups.read, okta.roles.read")
+    assert run(FakeOkta(), "check", config) == 1
+    assert "assign READ_ONLY_ADMIN (SUPER_ADMIN by hand)" in capsys.readouterr().out
 
 
 def plant_app(okta: FakeOkta, label: str, auth: str, oauth: dict[str, Any]) -> dict[str, Any]:
