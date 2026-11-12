@@ -1,0 +1,37 @@
+{
+  "source": "generated",
+  "operation": "listGroupRules",
+  "body": [
+    {
+      "type": "group_rule",
+      "id": "0pr3f7zMZZHPgUoWO0g4",
+      "status": "INACTIVE",
+      "name": "Engineering group rule",
+      "created": "2016-12-01T14:40:04.000Z",
+      "lastUpdated": "2016-12-01T14:40:04.000Z",
+      "conditions": {
+        "people": {
+          "users": {
+            "exclude": [
+              "00u22w79JPMEeeuLr0g4"
+            ]
+          },
+          "groups": {
+            "exclude": []
+          }
+        },
+        "expression": {
+          "value": "user.role==\"Engineer\"",
+          "type": "urn:okta:expression:1.0"
+        }
+      },
+      "actions": {
+        "assignUserToGroups": {
+          "groupIds": [
+            "00gjitX9HqABSoqTB0g3"
+          ]
+        }
+      }
+    }
+  ]
+}

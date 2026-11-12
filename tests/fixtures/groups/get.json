@@ -1,0 +1,38 @@
+{
+  "source": "generated",
+  "operation": "getGroup",
+  "body": {
+    "id": "00g1emaKYZTWRYYRRTSK",
+    "created": "2015-02-06T10:11:28.000Z",
+    "lastUpdated": "2015-10-05T19:16:43.000Z",
+    "lastMembershipUpdated": "2015-11-28T19:15:32.000Z",
+    "objectClass": [
+      "okta:user_group"
+    ],
+    "type": "OKTA_GROUP",
+    "profile": {
+      "name": "West Coast users",
+      "description": "All users West of The Rockies"
+    },
+    "_links": {
+      "logo": [
+        {
+          "name": "medium",
+          "href": "https://example.okta.com/img/logos/groups/okta-medium.png",
+          "type": "image/png"
+        },
+        {
+          "name": "large",
+          "href": "https://example.okta.com/img/logos/groups/okta-large.png",
+          "type": "image/png"
+        }
+      ],
+      "users": {
+        "href": "https://example.okta.com/api/v1/groups/00g1emaKYZTWRYYRRTSK/users"
+      },
+      "apps": {
+        "href": "https://example.okta.com/api/v1/groups/00g1emaKYZTWRYYRRTSK/apps"
+      }
+    }
+  }
+}

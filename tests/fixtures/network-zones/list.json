@@ -1,0 +1,48 @@
+{
+  "source": "generated",
+  "operation": "listNetworkZones",
+  "body": [
+    {
+      "type": "IP",
+      "id": "nzowc1U5Jh5xuAK0o0g3",
+      "name": "MyIpZone",
+      "status": "ACTIVE",
+      "usage": "POLICY",
+      "created": "2021-06-24T20:37:32.000Z",
+      "lastUpdated": "2021-06-24T20:37:32.000Z",
+      "system": false,
+      "gateways": [
+        {
+          "type": "CIDR",
+          "value": "203.0.113.1/24"
+        }
+      ],
+      "proxies": [
+        {
+          "type": "RANGE",
+          "value": "203.0.113.2-203.0.113.3"
+        }
+      ],
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/zones/nzowc1U5Jh5xuAK0o0g3",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT",
+              "DELETE"
+            ]
+          }
+        },
+        "deactivate": {
+          "href": "https://example.okta.com/api/v1/zones/nzowc1U5Jh5xuAK0o0g3/lifecycle/deactivate",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

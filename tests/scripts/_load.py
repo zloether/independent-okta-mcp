@@ -1,8 +1,12 @@
 import importlib.util
+import sys
 from pathlib import Path
 from types import ModuleType
 
 SCRIPTS = Path(__file__).parents[2] / "scripts"
+# Scripts import their shared modules (fixturelib) by name, as `python scripts/x.py` allows.
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
 
 
 def load_script(name: str) -> ModuleType:
