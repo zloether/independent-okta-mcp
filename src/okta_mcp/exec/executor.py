@@ -24,7 +24,6 @@ server log.
 import enum
 import json
 import logging
-import traceback
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -56,6 +55,7 @@ from okta_mcp.exec.envelope import (
 from okta_mcp.exec.output import columns
 from okta_mcp.exec.params import build_request, check_args
 from okta_mcp.exec.resolve import NotFound, UserResolver
+from okta_mcp.logs import log_internal
 from okta_mcp.okta import ratelimit
 from okta_mcp.okta.client import OktaClient, UpstreamError, json_body
 from okta_mcp.okta.paginate import Mode, PaginationError, paginate
@@ -159,13 +159,6 @@ def searchable(engine: Engine, principal: Principal, command: Command) -> str:
     more = len(shown) - _ATTRIBUTES_SHOWN
     listed = ", ".join(shown[:_ATTRIBUTES_SHOWN]) + (f" (+{more})" if more > 0 else "")
     return f"expressions may name only: {listed}"
-
-
-def log_internal(logger: logging.Logger, where: str, e: BaseException) -> None:
-    """Log an unexpected exception by its type and traceback frames only, never its message,
-    which may hold Okta data or a caller's args. The one place that rule lives."""
-    frames = "".join(traceback.format_tb(e.__traceback__))
-    logger.error("internal error in %s: %s\n%s", where, type(e).__name__, frames)
 
 
 def tool_name(domain: str) -> str:

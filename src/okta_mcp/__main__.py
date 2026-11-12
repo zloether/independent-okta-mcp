@@ -15,10 +15,11 @@ import anyio
 from okta_mcp import __version__
 from okta_mcp.config import Config, ConfigError, load_config
 from okta_mcp.exec.output import ScrubError
+from okta_mcp.logs import configure_logging
 from okta_mcp.policy.loader import PolicyError
 from okta_mcp.registry.loader import RegistryError
 from okta_mcp.resources import ResourceError
-from okta_mcp.server import configure_logging, serve_stdio
+from okta_mcp.server import serve_stdio
 
 STARTUP_FAILED = 2
 STDIO_NEEDS_DEV_MODE = (

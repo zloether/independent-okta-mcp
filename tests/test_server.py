@@ -19,6 +19,7 @@ from mcp.shared.exceptions import MCPError
 from okta_mcp.auth.principal import Principal
 from okta_mcp.config import Config, load_config
 from okta_mcp.exec.executor import FORBIDDEN, INTERNAL
+from okta_mcp.logs import RequestIdFilter
 from okta_mcp.okta.client import new_http_client
 from okta_mcp.okta.dpop import DPoP
 from okta_mcp.okta.token import ClientCredentialsProvider, SSWSProvider
@@ -29,10 +30,8 @@ from okta_mcp.server import (
     LIST_TTL_MS,
     RESOURCE_NOT_FOUND,
     Runtime,
-    _RequestIdFilter,  # pyright: ignore[reportPrivateUsage]
     _tokens,  # pyright: ignore[reportPrivateUsage]
     build_runtime,
-    configure_logging,
     mcp_server,
 )
 
@@ -242,9 +241,10 @@ async def test_exception_is_a_fixed_protocol_error(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize("method", [*PROTOCOL_CALLS, "call_tool"])
 async def test_principal_failure_is_a_fixed_protocol_error(
-    config: Config, caplog: pytest.LogCaptureFixture, method: str
+    config: Config, caplog: pytest.LogCaptureFixture, method: str, mode: str
 ) -> None:
     """What the principal source raises (4.2: the verifier's contextvar) never reaches the
     client as text, and never runs the request."""
@@ -259,12 +259,59 @@ async def test_principal_failure_is_a_fixed_protocol_error(
         args = PROTOCOL_CALLS[method][2]
     async with new_http_client(httpx2.MockTransport(okta)) as http:
         server = mcp_server(build_runtime(config, http), no_principal)
-        async with Client(server) as client:
+        async with Client(server, mode=mode) as client:
             with caplog.at_level(logging.ERROR), pytest.raises(MCPError) as e:
                 await getattr(client, method)(*args)
     assert (e.value.code, e.value.message) == (types.INTERNAL_ERROR, INTERNAL)
+    assert REQUEST_ID.fullmatch(e.value.data["request_id"])
+    assert "LookupError" in caplog.text
     assert SECRET not in caplog.text
     assert okta.requests == []
+
+
+@pytest.mark.anyio
+async def test_a_handler_added_later_is_guarded(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The guard is middleware, so a handler registered without any wrapper is covered."""
+
+    async def prompts(ctx: Any, params: Any) -> types.ListPromptsResult:
+        raise RuntimeError(SECRET)
+
+    async with new_http_client(httpx2.MockTransport(Okta())) as http:
+        server = mcp_server(build_runtime(config, http), lambda: caller(READERS))
+        server.add_request_handler("prompts/list", types.PaginatedRequestParams, prompts)
+        async with Client(server) as client:
+            with caplog.at_level(logging.ERROR), pytest.raises(MCPError) as e:
+                await client.list_prompts()
+    assert (e.value.code, e.value.message) == (types.INTERNAL_ERROR, INTERNAL)
+    assert "RuntimeError" in caplog.text
+    assert SECRET not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_guard_passes_validation_and_protocol_errors_through() -> None:
+    """The SDK maps these to fixed texts itself (`Invalid request parameters`, our own
+    `MCPError`s); turning them into internal errors would hide a client's bad params."""
+    from pydantic import BaseModel, ValidationError
+
+    from okta_mcp.server import _Guard  # pyright: ignore[reportPrivateUsage]
+
+    class Params(BaseModel):
+        uri: str
+
+    with pytest.raises(ValidationError) as caught:
+        Params.model_validate({"uri": 123})
+    invalid = caught.value
+    ctx: Any = type("Ctx", (), {"method": "resources/read", "request_id": 1})()
+    for error in (invalid, MCPError(code=types.INVALID_PARAMS, message=RESOURCE_NOT_FOUND)):
+
+        async def call_next(_: Any, error: Exception = error) -> None:
+            raise error
+
+        with pytest.raises(type(error)) as raised:
+            await _Guard()(ctx, call_next)
+        assert raised.value is error
 
 
 @pytest.mark.anyio
@@ -278,7 +325,7 @@ async def test_request_id_tags_log_lines_of_the_call(
             records.append(record)
 
     handler = Keep()
-    handler.addFilter(_RequestIdFilter())
+    handler.addFilter(RequestIdFilter())
     logger = logging.getLogger("okta_mcp.test")
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
@@ -325,6 +372,8 @@ async def test_resources_per_principal(config: Config, mode: str) -> None:
     assert contents.text.startswith("#")
     # A guide this caller can't see answers exactly as one that doesn't exist.
     assert (hidden.value.code, hidden.value.message) == (missing.value.code, RESOURCE_NOT_FOUND)
+    assert REQUEST_ID.fullmatch(hidden.value.data["request_id"])
+    assert hidden.value.data.keys() == missing.value.data.keys()
 
 
 # --- startup ------------------------------------------------------------------------------
@@ -412,25 +461,5 @@ def test_handlers_registered(config: Config) -> None:
     assert capabilities.resources.subscribe is False
     assert capabilities.prompts is None
     assert capabilities.completions is None
-    assert server.middleware == []
-
-
-def test_logging_keeps_dependencies_at_warning(capsys: pytest.CaptureFixture[str]) -> None:
-    """httpx2 logs each request URL at INFO; the SDK logs messages at DEBUG."""
-    root = logging.getLogger()
-    saved = (root.handlers[:], root.level, logging.getLogger("okta_mcp").level)
-    try:
-        configure_logging("DEBUG")
-        logging.getLogger("httpx2").info("HTTP Request: GET https://example.okta.com/x?q=alice")
-        logging.getLogger("mcp.server").debug("message body")
-        logging.getLogger("httpx2").warning("dependency warning")
-        logging.getLogger("okta_mcp.exec").debug("ours")
-    finally:
-        root.handlers[:], root.level = saved[0], saved[1]
-        logging.getLogger("okta_mcp").setLevel(saved[2])
-    out, err = capsys.readouterr()
-    assert out == ""
-    assert "alice" not in err
-    assert "message body" not in err
-    assert "dependency warning" in err
-    assert "DEBUG okta_mcp.exec [-] ours" in err
+    # The guard only; no tracing.
+    assert [type(m).__name__ for m in server.middleware] == ["_Guard"]
