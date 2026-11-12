@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 from typing import cast
 
+from mcp.server.auth.provider import AccessToken
+from pydantic import ConfigDict
+
 
 @dataclass(frozen=True)
 class Principal:
@@ -26,3 +29,14 @@ class Principal:
             isinstance(g, str) for g in cast(frozenset[object], groups)
         ):
             raise TypeError("Principal.groups must be a frozenset of strings")
+
+
+class VerifiedToken(AccessToken):
+    """What the HTTP token verifier (4.3) returns: the SDK's `AccessToken`, which its auth
+    middleware checks and puts in the request context, plus the `Principal` built from the
+    same token. The HTTP app reads only `principal`; any other `AccessToken` in the context is
+    refused (`okta_mcp.app.http_principal`)."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    principal: Principal

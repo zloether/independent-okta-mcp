@@ -3,7 +3,7 @@
 `build_runtime` loads everything a call needs once, from a validated `Config`, and fails before
 anything is served if any part is wrong. `mcp_server` turns a runtime into an SDK low-level
 `Server` whose handlers ask `principal()` who the caller is on every request: over stdio
-(`serve_stdio`) that is the fixed dev-mode principal (§8.6); the HTTP app (4.2) will pass the
+(`serve_stdio`) that is the fixed dev-mode principal (§8.6); over HTTP (`okta_mcp.app`) the
 verified token's.
 
 What reaches the client is only what `Tools` and `Resources` produce: `_Guard`, the one SDK

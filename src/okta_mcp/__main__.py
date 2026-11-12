@@ -30,7 +30,9 @@ HTTP_REFUSES_DEV_MODE = (
     "MCP_DEV_MODE: refused by the HTTP transport, which always authenticates; dev mode is "
     "okta-mcp --stdio only"
 )
-HTTP_NOT_BUILT = "the HTTP transport is not built yet (plan step 4.2); use okta-mcp --stdio"
+HTTP_NOT_BUILT = (
+    "the HTTP transport has no token verifier yet (plan step 4.3); use okta-mcp --stdio"
+)
 
 
 def _fail(errors: Sequence[str]) -> int:
