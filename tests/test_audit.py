@@ -176,6 +176,17 @@ def test_single_resource_and_failure(registry: Registry, engine: Engine) -> None
     assert "items" not in got and "bytes" not in got and "reason" not in got
 
 
+def test_bytes_and_bool_count(registry: Registry, engine: Engine) -> None:
+    log, out = audit(registry, engine)
+    got = line(log, out, "okta_help", {"tool": "okta_groups", "command": "list"}, Text("é"))
+    assert got["bytes"] == 2  # UTF-8 bytes, not characters
+    log, out = audit(registry, engine)
+    got = line(
+        log, out, "okta_groups", {"command": "list"}, Success('{"untrusted":true,"count":true}')
+    )
+    assert got["items"] == 1
+
+
 def test_help_status_and_cancelled(registry: Registry, engine: Engine) -> None:
     log, out = audit(registry, engine)
     got = line(log, out, "okta_help", {"tool": "okta_groups", "command": "list"}, Text("help"))
@@ -202,7 +213,10 @@ DENIED = Failure(Code.FORBIDDEN_BY_POLICY, "forbidden")
         ("okta_network_zones", {"command": "list"}, "tool_not_permitted"),
         ("okta_groups", {"command": "nope"}, "command_not_permitted"),
         ("okta_groups", {"command": "list", "args": {"expand": "stats"}}, "args_not_permitted"),
-        ("okta_help", {"tool": "okta_network_zones", "command": "list"}, "command_not_permitted"),
+        ("okta_groups", {"command": ["list"]}, "command_not_permitted"),
+        ("okta_help", {"tool": "okta_network_zones", "command": "list"}, "tool_not_permitted"),
+        ("okta_help", {"tool": "okta_groups", "command": "nope"}, "command_not_permitted"),
+        ("okta_help", {"tool": "okta_groups", "command": ["list"]}, "command_not_permitted"),
         ("okta_help", {"tool": "okta_nope", "command": "list"}, "unknown_tool"),
         (42, {}, "unknown_tool"),
     ],
@@ -305,6 +319,27 @@ def test_hash_mode(registry: Registry, engine: Engine) -> None:
     assert other._value("Staff") != log._value("Staff")  # pyright: ignore[reportPrivateUsage]
 
 
+def test_hash_mode_hashes_caller_free_text(registry: Registry, engine: Engine) -> None:
+    """Names that aren't ours, okta_help's target and `select` are free text a caller could
+    put an email in; ours stay readable."""
+    email = "jane.doe@example.com"
+    log, out = audit(registry, engine, mode="hash")
+    got = line(log, out, "okta_groups", {"command": email}, DENIED)
+    assert got["tool"] == "okta_groups" and got["command"].startswith("hmac:")
+    log, out = audit(registry, engine, mode="hash")
+    got = line(log, out, email, {}, DENIED)
+    assert got["tool"].startswith("hmac:")
+    log, out = audit(registry, engine, mode="hash")
+    got = line(log, out, "okta_help", {"tool": "okta_groups", "command": email}, DENIED)
+    assert got["args"]["tool"] == "okta_groups" and got["args"]["command"].startswith("hmac:")
+    log, out = audit(registry, engine, mode="hash")
+    got = line(log, out, "okta_groups", {"command": "list", "select": email}, Success(LIST))
+    assert got["command"] == "list" and got["options"]["select"].startswith("hmac:")
+    log, out = audit(registry, engine, mode="hash")
+    got = line(log, out, "okta_help", {"tool": "okta_groups", "command": "list"}, Text("h"))
+    assert got["args"] == {"tool": "okta_groups", "command": "list"}
+
+
 def test_hash_key_is_not_the_cursor_key() -> None:
     key = b"k" * 32
     assert hash_key(key) != key and len(hash_key(key)) == 32
@@ -338,6 +373,9 @@ def test_open_sink(tmp_path: Path) -> None:
     sink = open_sink(str(path), stdio=False)
     sink.write("next\n")
     assert path.read_text() == "earlier\nnext\n"  # appended, line-buffered
+    created = tmp_path / "new.log"
+    open_sink(str(created), stdio=False)
+    assert created.stat().st_mode & 0o777 == 0o600  # owner-only: args are PII
 
 
 def test_collect_counts_only_inside() -> None:
@@ -439,6 +477,26 @@ async def test_server_withholds_result_if_audit_fails(
     assert result.structured_content is not None
     assert result.structured_content["error"]["code"] == "internal_error"
     assert SECRET not in json.dumps(result.structured_content)
+
+
+@pytest.mark.anyio
+async def test_server_withholds_result_if_building_the_line_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A bug in the audit code fails closed too, logged by type only."""
+    config = load_config(env(tmp_path))
+
+    def broken(self: AuditLog, **_: object) -> None:
+        raise TypeError(SECRET)
+
+    monkeypatch.setattr(AuditLog, "record", broken)
+    async with running(config, caller(READERS)) as client:
+        result = await client.call_tool("okta_groups", {"command": "list"})
+    assert result.is_error
+    assert result.structured_content is not None
+    assert result.structured_content["error"]["code"] == "internal_error"
+    assert "internal error in audit: TypeError" in caplog.text
+    assert SECRET not in caplog.text
 
 
 @pytest.mark.anyio

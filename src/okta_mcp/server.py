@@ -248,6 +248,12 @@ def mcp_server(runtime: Runtime, principal: Callable[[], Principal]) -> Server[A
                     log.error("audit log write failed (%s); the call's result is withheld", e)
                     if outcome is not None:
                         outcome = Failure(Code.INTERNAL_ERROR, INTERNAL)
+                except Exception as e:
+                    # A bug building the line: still no unaudited result, and a cancellation
+                    # in flight isn't replaced.
+                    log_internal(log, "audit", e)
+                    if outcome is not None:
+                        outcome = Failure(Code.INTERNAL_ERROR, INTERNAL)
         match outcome:
             case Success(text=text):
                 envelope = json.loads(text)

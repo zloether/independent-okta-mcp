@@ -23,9 +23,10 @@ import contextvars
 import hashlib
 import hmac
 import json
+import os
 import sys
 import time
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Collection, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -114,7 +115,9 @@ def open_sink(target: str, *, stdio: bool) -> Sink:
         return sys.stderr
     if target == "stdout":
         return sys.stdout
-    return Path(target).open("a", encoding="utf-8", buffering=1)
+    # Owner-only when created: full-mode args are PII (§12.3). An existing file keeps its mode.
+    fd = os.open(Path(target), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    return os.fdopen(fd, "a", encoding="utf-8", buffering=1)
 
 
 def _now() -> str:
@@ -150,6 +153,7 @@ class AuditLog:
         self._now = now
         self._domains = {tool_name(d): d for d in registry.domains}
         self._redacted = _arg_names(engine.scrub)
+        self._tools = frozenset(self._domains) | {_HELP, _STATUS}
 
     def start(self) -> float:
         return self._clock()
@@ -180,14 +184,19 @@ class AuditLog:
             "sub": principal.sub,
             "client_id": principal.client_id,
             "roles": sorted(self._engine.roles(principal)),
-            "tool": _name(tool),
+            "tool": self._caller_name(tool, self._tools),
         }
         domain = self._domains.get(tool) if isinstance(tool, str) else None
         command = given.get("command")
         if tool == _HELP:
-            line["args"] = {k: _name(given.get(k)) for k in ("tool", "command") if k in given}
+            target = given.get("tool")
+            names = self._commands(self._domains.get(target) if isinstance(target, str) else None)
+            known = {"tool": frozenset(self._domains), "command": names}
+            line["args"] = {
+                k: self._caller_name(given[k], known[k]) for k in ("tool", "command") if k in given
+            }
         elif domain is not None:
-            line["command"] = _name(command)
+            line["command"] = self._caller_name(command, self._commands(domain))
             self._call_args(line, domain, command, given)
         if outcome is None:
             line["outcome"] = "cancelled"
@@ -199,7 +208,7 @@ class AuditLog:
         else:
             line["outcome"] = "ok"
             text = cast(str, getattr(outcome, "text", ""))
-            line["bytes"] = len(text)
+            line["bytes"] = len(text.encode())
             if isinstance(outcome, Success):
                 _envelope(line, text)
         line["status"] = stats.status
@@ -242,11 +251,33 @@ class AuditLog:
         for key in _OPTIONS:
             if key in given:
                 value = given[key]
-                options[key] = _name(value) if isinstance(value, str) else _scalar(value)
+                options[key] = (
+                    self._caller_name(value, ()) if isinstance(value, str) else _scalar(value)
+                )
         if "cursor" in given:
             options["cursor"] = True
         if options:
             line["options"] = options
+
+    def _commands(self, domain: str | None) -> frozenset[str]:
+        if domain is None:
+            return frozenset()
+        return frozenset(self._registry.domains[domain].commands)
+
+    def _caller_name(self, value: object, known: Collection[str]) -> str | None:
+        """A tool or command name, or `select`, as the caller sent it: as is if it is one of
+        ours, else cut to `NAME_MAX`, or hashed in hash mode (it is free text, so it could
+        hold what an arg would)."""
+        if not isinstance(value, str):
+            return None
+        if value in known:
+            return value
+        if self._mode == "hash":
+            return self._hash(value)
+        return _name(value)
+
+    def _hash(self, text: str) -> str:
+        return "hmac:" + hmac.new(self._key, text.encode(), hashlib.sha256).hexdigest()[:32]
 
     def _value(self, value: object) -> object:
         try:
@@ -254,7 +285,7 @@ class AuditLog:
         except (TypeError, ValueError):
             return "invalid"
         if self._mode == "hash":
-            return "hmac:" + hmac.new(self._key, text.encode(), hashlib.sha256).hexdigest()[:32]
+            return self._hash(text)
         if len(text) <= VALUE_MAX:
             return value
         return text[:VALUE_MAX] + CUT
@@ -272,15 +303,16 @@ class AuditLog:
         """Which check refused it, from the same `Engine.permitted` the call used."""
         permitted = self._engine.permitted(principal)
         if tool == _HELP:
-            # Help is refused only for a target the caller can't call or that doesn't exist.
+            # Help is refused only for a target the caller can't call or that doesn't exist;
+            # the same reasons as a call to that target.
             target = given.get("tool")
-            known = isinstance(target, str) and target in self._domains
-            return "command_not_permitted" if known else "unknown_tool"
+            domain = self._domains.get(target) if isinstance(target, str) else None
+            command = given.get("command")
         if domain is None:
             return "unknown_tool"
         if not any(d == domain for d, _ in permitted):
             return "tool_not_permitted"
-        if (domain, command) not in permitted:
+        if not isinstance(command, str) or (domain, command) not in permitted:
             return "command_not_permitted"
         return "args_not_permitted"
 
@@ -307,5 +339,5 @@ def _envelope(line: dict[str, Any], text: str) -> None:
         return
     body = cast(dict[str, Any], envelope)
     count = body.get("count")
-    line["items"] = count if isinstance(count, int) else 1
+    line["items"] = count if isinstance(count, int) and not isinstance(count, bool) else 1
     line["truncated"] = body.get("truncated", False)

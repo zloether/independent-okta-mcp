@@ -188,6 +188,9 @@ class OktaClient:
             response = await self._http.send(request)
         except httpx2.HTTPError as e:
             reason = type(e).__name__
+        except BaseException:
+            self._sent(None)  # cancelled in flight (the call's deadline): it was still sent
+            raise
         else:
             self._sent(response.status_code)
             return token, response

@@ -571,3 +571,16 @@ async def test_on_sent_sees_every_request_sent() -> None:
     with pytest.raises(UpstreamError):
         await client(Okta(), FailingTokenProvider(), on_sent=sent.append).get(USERS)
     assert sent == []
+
+
+@pytest.mark.anyio
+async def test_on_sent_counts_a_request_cancelled_in_flight() -> None:
+    sent: list[int | None] = []
+
+    async def slow(request: httpx2.Request) -> httpx2.Response:
+        await anyio.sleep(10)
+        return httpx2.Response(200, json=[])
+
+    with anyio.move_on_after(0.05):
+        await client(slow, on_sent=sent.append).get(USERS)
+    assert sent == [None]
