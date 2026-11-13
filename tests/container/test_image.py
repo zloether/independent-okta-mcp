@@ -69,7 +69,6 @@ PEM = re.compile(
 )
 JWK = re.compile(rb'"d"\s*:\s*"[A-Za-z0-9_-]{20,}"')
 KEY_NAMES = (".pem", ".key", ".jwk", ".p12", ".pfx", ".der")
-CA_DIRS = ("/etc/ssl/certs/", "/usr/share/ca-certificates/")
 SITE = os.path.join(sys.prefix, "lib", "python%d.%d" % sys.version_info[:2], "site-packages")
 OURS = ("/app", os.path.join(SITE, "okta_mcp"))
 found = {"secrets": [], "setid": [], "dirs": [], "writable": []}
@@ -77,7 +76,7 @@ for root, dirs, files in os.walk("/", onerror=lambda e: None):
     if root in ("/proc", "/sys", "/dev"):
         dirs[:] = []
         continue
-    mine = root == "/app" or root.startswith(("/app/", "/usr/"))
+    mine = root in ("/app", "/usr") or root.startswith(("/app/", "/usr/"))
     for d in dirs:
         if root in OURS and d in ("tests", "docs", ".git", ".claude", "src", "scripts", "spikes"):
             found["dirs"].append(os.path.join(root, d))
@@ -93,7 +92,7 @@ for root, dirs, files in os.walk("/", onerror=lambda e: None):
                 found["setid"].append(p)
             if mine and os.access(p, os.W_OK):
                 found["writable"].append(p)
-            if f.lower().endswith(KEY_NAMES) and not p.startswith(CA_DIRS):
+            if root.startswith(OURS[0]) and f.lower().endswith(KEY_NAMES):
                 found["secrets"].append(p)
                 continue
             if st.st_size > 1 << 20 or not os.access(p, os.R_OK):
@@ -108,7 +107,8 @@ print(json.dumps(found))
 """
 """Walks the image as the server's user: what it can read is what a compromise could, and
 nothing under `/app` or `/usr` may be writable by it (code it imports, even without
-`--read-only`). A key is a file with a key's extension outside the CA directories, a PEM
+`--read-only`). A key is a file with a key's extension under `/app` (elsewhere public
+certificates may use the same names), a PEM
 private-key header followed by a body (optionally after `Proc-Type`/`DEK-Info` lines;
 `cryptography` holds the bare header as a constant), or a JWK with a private `d`. The repo's
 own trees are looked for at the top of `/app` and in the installed package, since third-party
@@ -127,8 +127,9 @@ def _docker(
     )
 
 
-def _python(*code: str, extra: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
-    return _docker("run", "--rm", *HARDENED, *extra, "--entrypoint", "python", IMAGE, "-c", *code)
+def _python(*code: str, read_only: bool = True) -> subprocess.CompletedProcess[str]:
+    flags = HARDENED if read_only else [f for f in HARDENED if f != "--read-only"]
+    return _docker("run", "--rm", *flags, "--entrypoint", "python", IMAGE, "-c", *code)
 
 
 def _inspect() -> dict[str, Any]:
@@ -149,7 +150,9 @@ def test_runs_as_non_root_in_production_mode() -> None:
 
 
 def test_image_holds_no_keys_sources_or_setid_files() -> None:
-    found = json.loads(_python(SCAN).stdout)
+    # Writable access is what the image grants, so not under --read-only: there every
+    # access(W_OK) fails with EROFS and the check would pass whatever the ownership.
+    found = json.loads(_python(SCAN, read_only=False).stdout)
     assert found == {"secrets": [], "setid": [], "dirs": [], "writable": []}
     assert _docker("run", "--rm", "--entrypoint", "ls", IMAGE, "-A", "/app").stdout.split() == [
         ".venv"
@@ -212,8 +215,8 @@ def server(secrets: list[str]) -> Iterator[str]:
     """The server, with an egress proxy set as an operator would for the Okta calls: the
     HEALTHCHECK must not send its loopback probe there (the proxy host doesn't exist)."""
     proxy = [f"--env={name}=http://proxy.example.com:3128" for name in PROXY_VARS]
-    cid = _docker("run", "--detach", *HARDENED, *secrets, *ENV_ARGS, *proxy, IMAGE).stdout
-    cid = cid.strip()
+    args = ["run", "--detach", *HARDENED, *secrets, *ENV_ARGS, *proxy, IMAGE]
+    cid = _docker(*args).stdout.strip()
     try:
         yield cid
     finally:

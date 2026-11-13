@@ -34,3 +34,7 @@ updates:
     ignore:
       - dependency-name: python
         update-types: [version-update:semver-major, version-update:semver-minor]
+      # uv's version must equal setup-uv's in ci.yml, which no ecosystem tracks: digest
+      # and patch bumps only; move both by hand for a minor.
+      - dependency-name: "*astral-sh/uv" # with or without the ghcr.io prefix
+        update-types: [version-update:semver-major, version-update:semver-minor]

@@ -16,8 +16,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY LICENSE README.md ./
 COPY src/ src/
 # Non-editable: the package (with its data files) is installed into the venv, so the runtime
-# stage needs no source tree.
-RUN uv sync --frozen --no-dev --no-editable
+# stage needs no source tree. uv leaves an empty world-writable `.lock` in the venv; nothing
+# reads it at runtime.
+RUN uv sync --frozen --no-dev --no-editable && rm /app/.venv/.lock
 
 FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 # Debian security fixes released since the base digest was built: the pinned digest moves only
@@ -44,9 +45,9 @@ ENV PATH="/app/.venv/bin:$PATH" \
     MCP_ENV=production
 USER 10001:10001
 EXPOSE 8080
-# /healthz is unauthenticated and data-free (§11.4). Follows MCP_HOST/MCP_PORT overrides (a
-# wildcard bind is probed on loopback) and ignores HTTP(S)_PROXY, which an operator may set for
-# the Okta calls: a proxy can't reach the container's loopback.
+# /healthz is unauthenticated and data-free (§11.4). Follows MCP_HOST/MCP_PORT overrides,
+# stripped as config does (a wildcard bind is probed on loopback), and ignores HTTP(S)_PROXY,
+# which an operator may set for the Okta calls: a proxy can't reach the container's loopback.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --start-interval=2s --retries=3 \
-    CMD ["python", "-c", "import os,sys,urllib.request as u; h=os.environ.get('MCP_HOST') or '0.0.0.0'; h={'0.0.0.0':'127.0.0.1','::':'::1'}.get(h,h); h='[%s]'%h if ':' in h else h; r=u.build_opener(u.ProxyHandler({})).open('http://%s:%s/healthz'%(h,os.environ.get('MCP_PORT') or '8080'),timeout=2); sys.exit(0 if r.status==200 else 1)"]
+    CMD ["python", "-c", "import os,sys,urllib.request as u; h=os.environ.get('MCP_HOST','').strip() or '0.0.0.0'; h={'0.0.0.0':'127.0.0.1','::':'::1'}.get(h,h); h='[%s]'%h if ':' in h else h; r=u.build_opener(u.ProxyHandler({})).open('http://%s:%s/healthz'%(h,os.environ.get('MCP_PORT','').strip() or '8080'),timeout=2); sys.exit(0 if r.status==200 else 1)"]
 ENTRYPOINT ["okta-mcp"]
