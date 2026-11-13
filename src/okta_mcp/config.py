@@ -142,6 +142,7 @@ class Config(BaseModel):
     okta_max_inflight: int = Field(10, gt=0, alias="MCP_OKTA_MAX_INFLIGHT")
     requests_per_minute: int = Field(600, gt=0, alias="MCP_REQUESTS_PER_MINUTE")
     audit_log: str = Field("stdout", alias="MCP_AUDIT_LOG")
+    """`stdout`, `stderr` or an absolute file path (`audit.open_sink`)."""
     audit_args: Literal["full", "hash"] = Field("full", alias="MCP_AUDIT_ARGS")
     log_level: Annotated[
         Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], BeforeValidator(str.upper)
@@ -181,6 +182,13 @@ class Config(BaseModel):
         if str(AnyHttpUrl(v)) != v:
             raise ValueError("must be in canonical form (no encoded or shorthand host)")
         return v
+
+    @field_validator("audit_log")
+    @classmethod
+    def _audit_log(cls, v: str) -> str:
+        if v in ("stdout", "stderr") or Path(v).is_absolute():
+            return v
+        raise ValueError("must be stdout, stderr or an absolute file path")
 
     @field_validator("issuer")
     @classmethod

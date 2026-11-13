@@ -27,7 +27,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 | 3. Policy & tool surface | 3.1–3.4 | ☑ |
 | 4. MCP server & auth | 4.1–4.6 | ◐ |
 | 5. Registry authoring (all domains) | 5.0–5.7 | ◐ |
-| 6. Audit, limits, logging | 6.1–6.2 | ☐ |
+| 6. Audit, limits, logging | 6.1–6.2 | ◐ |
 | 7. Packaging & deployment | 7.1–7.3 | ☐ |
 | 8. Hardening & release | 8.1–8.4 | ☐ |
 
@@ -399,10 +399,10 @@ Done when (phase): coverage report shows every simple/resolved catalogue entry i
 
 ## Phase 6 — Audit, limits, logging
 
-### 6.1 Audit log ☐
+### 6.1 Audit log ☑
 Design: §12.3 · Depends: 4.5
-- [ ] `audit.py`: one JSON line per call/denial; `MCP_AUDIT_ARGS=hash`; arg redaction; never result bodies
-- [ ] Tests: fields present; hash mode; no secrets/tokens in output
+- [x] `audit.py`: one JSON line per call/denial; `MCP_AUDIT_ARGS=hash`; arg redaction; never result bodies
+- [x] Tests: fields present; hash mode; no secrets/tokens in output
 
 ### 6.2 Limiter & operational logs ☐
 Design: §6.5, §13 · Depends: 2.4, 4.5
@@ -649,3 +649,4 @@ Verify: all phases ☑; CI green on tag.
 | 2026-11-13 | setup | `/security-review` of `47993ca..9c0cad0` (`scripts/okta-setup.py` and the prerequisite docs; Opus subagent, I checked its claims against the diff): **no findings**. `_send` still raises on every status ≥ 400, so the new parse only words the error and can't fail open; the message holds method, path, status and Okta's code and summaries, never the SSWS token, headers or request bodies; the note is fixed text on an error raised anyway; the docs advise against repurposing `default` | |
 | 2026-11-13 | setup | `/code-review medium` of the two fix commits `47993ca` and `9c0cad0` (`47993ca` hadn't had one): 7 findings, all on `9c0cad0`. **Fixed:** (1) a cause with a null or missing `errorSummary` printed `None` or an empty entry; only non-empty string summaries are kept now; (2) narrowing the note to list/create dropped it for an existing server under the configured name (`authorization_server: default`, or one made before the add-on lapsed): an `E0000015` under `/api/v1/authorizationServers/…` now gets a softer note naming the add-on as the likely cause *if* the org lacks it, so the 9c0cad0 finding (another feature) still holds; (3) `json=None` sends an empty body, so the "null" case tested nothing new; literal `null`, empty and non-JSON bodies now have their own test; (4) `failing()` takes a request predicate and an existing `FakeOkta`, and the sub-resource test uses it; (5) the test body constant is `FEATURE_OFF_BODY`, not the script's code name; (6) the `b6ae901` row's deleted sentence is restored with a note that it was incomplete; (7) Okta's code and summaries are collapsed to one line, control characters (newlines, ANSI escapes) replaced by a space (test). Nothing is left unfixed | 132 setup-script tests |
 | 2026-11-13 | setup | `/security-review` of `d40d85b` (Opus subagent; I checked its claims against the diff): **no findings**. `_send` still raises on every status ≥ 400 and no caller reads the message, so the notes can't change `check`; output is still only method, path, status and Okta's strings; `_one_line` is a linear character-class substitution; the `E0000015` match uses the raw code, not the collapsed text | |
+| 2026-11-13 | 6.1 | **Audit log** (`src/okta_mcp/audit.py`), branch `claude/next-section-drh8bu`; design §12.3 gets an "As built" list. Written from `server.call_tool` around `Tools.call`, so `okta_help`, `okta_status` and internal errors are logged too, and the request ID matches the one the caller got. **Denial = `forbidden_by_policy` only**, with a reason recomputed from `Engine.permitted` (`unknown_tool`, `tool_not_permitted`, `command_not_permitted`, `args_not_permitted`) rather than plumbed out of the executor: the executor's refusal texts stay one sentence and the audit can't disagree with the check it repeats. `unavailable` is a `tool_call` outcome: the service app, not the caller's role, is the cause. **Args:** only a known command's declared args are logged; unknown keys are counted, never named (a caller can put anything in a key); caller-sent names cut to 64 characters, values to 512 characters of JSON; a cursor is logged as `true`. Redaction by single-key scrub.yaml paths on arg names is defence in depth: no declared arg matches one today. **Hash mode keyed** (HMAC-SHA256, 128 bits) under a key derived from `MCP_CURSOR_KEY` with its own label, not a new secret: an unkeyed hash of a login or email is reversed by guessing. **Okta stats:** new `OktaClient(on_sent=…)` hook, called once per request sent (retries included; `None` for a transport error), counting into a per-call context var; `on_request` stays the limiter's. **Sink:** `stdout`, `stderr` or an absolute path (config now validates it); stdio mode sends `stdout` to stderr, as stdout is the transport. **Fail closed on write:** a line that can't be written turns the result into `internal_error`. Writes are synchronous: a blocked stdout pipe would stall the event loop, acceptable for one short line per call; revisit if 6.2's load test shows it. Auth-layer 401/403 are not audit events; they belong to 6.2's operational logs | 27 audit tests + 1 client test |

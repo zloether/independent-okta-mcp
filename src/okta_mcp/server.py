@@ -28,9 +28,10 @@ from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 
 from okta_mcp import __version__
+from okta_mcp.audit import AuditError, AuditLog, collect, hash_key, open_sink, record_sent
 from okta_mcp.auth.devmode import dev_principal
 from okta_mcp.auth.principal import Principal
-from okta_mcp.config import Config
+from okta_mcp.config import Config, ConfigError
 from okta_mcp.exec.cursor import Cursors
 from okta_mcp.exec.executor import INTERNAL, Code, Executor, Failure, Success
 from okta_mcp.exec.output import load_scrub
@@ -74,6 +75,7 @@ class Runtime:
     resources: Resources
     tokens: RefreshableTokens
     """The service-app token provider, for `/readyz` and its background refresh (§11.4)."""
+    audit: AuditLog
 
 
 def _tokens(config: Config, http: httpx2.AsyncClient) -> tuple[RefreshableTokens, DPoP | None]:
@@ -96,14 +98,15 @@ def _tokens(config: Config, http: httpx2.AsyncClient) -> tuple[RefreshableTokens
     return provider, dpop
 
 
-def build_runtime(config: Config, http: httpx2.AsyncClient) -> Runtime:
+def build_runtime(config: Config, http: httpx2.AsyncClient, *, stdio: bool = False) -> Runtime:
     """Everything a call needs, from `config`. `http` is the one Okta client
-    (`new_http_client`), shared with the token provider. Raises what the loaders raise
-    (`RegistryError`, `ScrubError`, `PolicyError`, `ResourceError`, `ConfigError` for the
-    private key). `Executor`'s `ValueError` for limits no call could work under can't happen with
-    a validated `Config`, whose own checks are stricter, so it is a bug if it does. Call inside
-    the event loop:
-    the client's semaphore and the provider's lock are anyio primitives."""
+    (`new_http_client`), shared with the token provider; `stdio` keeps the audit log off
+    stdout, the transport. Raises what the loaders raise (`RegistryError`, `ScrubError`,
+    `PolicyError`, `ResourceError`, `ConfigError` for the private key or an audit file that
+    can't be opened). `Executor`'s `ValueError` for limits no call could work under can't
+    happen with a validated `Config`, whose own checks are stricter, so it is a bug if it does.
+    Call inside the event loop: the client's semaphore and the provider's lock are anyio
+    primitives."""
     spec = load_spec()
     registry = load_registry(spec)
     # One set of redaction rules: the policy's `search_attributes` are checked against them at
@@ -123,6 +126,7 @@ def build_runtime(config: Config, http: httpx2.AsyncClient) -> Runtime:
         max_inflight=config.okta_max_inflight,
         rate_limit_max_wait=config.okta_rate_limit_max_wait,
         on_request=limiter.charge,
+        on_sent=record_sent,
     )
     executor = Executor(
         registry=registry,
@@ -144,7 +148,18 @@ def build_runtime(config: Config, http: httpx2.AsyncClient) -> Runtime:
         max_items=config.max_items,
         guides=resources.guides,
     )
-    return Runtime(tools=tools, resources=resources, tokens=tokens)
+    try:
+        sink = open_sink(config.audit_log, stdio=stdio)
+    except OSError as e:
+        raise ConfigError([f"MCP_AUDIT_LOG: cannot open the file ({type(e).__name__})"]) from None
+    audit = AuditLog(
+        sink,
+        registry=registry,
+        engine=engine,
+        args_mode=config.audit_args,
+        key=hash_key(config.cursor_key.get_secret_value()),
+    )
+    return Runtime(tools=tools, resources=resources, tokens=tokens, audit=audit)
 
 
 def _text(text: str) -> list[types.ContentBlock]:
@@ -207,12 +222,32 @@ def mcp_server(runtime: Runtime, principal: Callable[[], Principal]) -> Server[A
     ) -> types.CallToolResult:
         rid = _current_request_id()
         caller = principal()
-        try:
-            outcome = await runtime.tools.call(caller, params.name, params.arguments)
-        except Exception as e:
-            # A tool's failure is a tool result the model can read (§5.5), not a protocol error.
-            log_internal(log, "tools/call", e)
-            outcome = Failure(Code.INTERNAL_ERROR, INTERNAL)
+        started = runtime.audit.start()
+        outcome: Success | Text | Failure | None = None
+        with collect() as stats:
+            try:
+                outcome = await runtime.tools.call(caller, params.name, params.arguments)
+            except Exception as e:
+                # A tool's failure is a tool result the model can read (§5.5), not a protocol
+                # error.
+                log_internal(log, "tools/call", e)
+                outcome = Failure(Code.INTERNAL_ERROR, INTERNAL)
+            finally:
+                # Before anything is returned (§12.3); `outcome` None is a cancelled call.
+                try:
+                    runtime.audit.record(
+                        request_id=rid,
+                        principal=caller,
+                        tool=params.name,
+                        arguments=params.arguments,
+                        outcome=outcome,
+                        started=started,
+                        stats=stats,
+                    )
+                except AuditError as e:
+                    log.error("audit log write failed (%s); the call's result is withheld", e)
+                    if outcome is not None:
+                        outcome = Failure(Code.INTERNAL_ERROR, INTERNAL)
         match outcome:
             case Success(text=text):
                 envelope = json.loads(text)
@@ -221,6 +256,8 @@ def mcp_server(runtime: Runtime, principal: Callable[[], Principal]) -> Server[A
                 return types.CallToolResult(content=_text(text))
             case Failure():
                 return _failure(outcome, rid)
+            case None:  # not reached: a cancelled call re-raises from the `finally`
+                raise RuntimeError("tools/call ended without an outcome")
 
     async def list_resources(
         ctx: ServerRequestContext[Any], params: types.PaginatedRequestParams | None
@@ -270,7 +307,7 @@ async def serve_stdio(config: Config) -> None:
     every startup error raised, before the transport opens."""
     caller = dev_principal(config)
     async with new_http_client() as http:
-        runtime = build_runtime(config, http)
+        runtime = build_runtime(config, http, stdio=True)
         server = mcp_server(runtime, lambda: caller)
         log.warning(
             "dev mode: serving stdio as %s with %d group(s); no authentication",
