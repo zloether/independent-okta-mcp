@@ -1,0 +1,92 @@
+domain: org-settings
+description: Read org settings, contacts, Okta Support access and YubiKey tokens (read-only).
+# Org profile, CAPTCHA, preferences and the org-wide flags are org configuration. The billing
+# and technical contacts and Okta Support access are sensitive (design §9.2: org contacts,
+# support cases): who answers for the org, and whether Okta Support may sign in to it as an
+# admin, which is an admin grant; both are `admin-roles`. YubiKey OTP tokens are MFA state
+# with the owner's email and serial.
+#
+# `get-aerial-consent` is excluded: it needs okta.orgs.manage (catalogue).
+commands:
+  get:
+    operation: getOrgSettings
+    summary: Org profile
+    data_classes: [org-config]
+
+  # Each item links to the contact's user.
+  list-contact-types:
+    operation: listOrgContactTypes
+    summary: Org contact types
+    view: [contactType]
+    data_classes: [admin-roles]
+
+  get-contact:
+    operation: getOrgContactUser
+    summary: The user who is an org contact
+    args:
+      type: {path_param: contactType}
+    data_classes: [admin-roles]
+
+  get-captcha-settings:
+    operation: getOrgCaptchaSettings
+    summary: Org-wide CAPTCHA settings
+    data_classes: [org-config]
+
+  get-third-party-admin-setting:
+    operation: getThirdPartyAdminSetting
+    summary: Third-party admin setting
+    data_classes: [org-config]
+
+  get-preferences:
+    operation: getOrgPreferences
+    summary: Org preferences
+    data_classes: [org-config]
+
+  get-communication-settings:
+    operation: getOktaCommunicationSettings
+    summary: Okta email opt-out setting
+    data_classes: [org-config]
+
+  get-support-settings:
+    operation: getOrgOktaSupportSettings
+    summary: Okta Support access
+    data_classes: [admin-roles]
+
+  list-support-cases:
+    operation: listOktaSupportCases
+    summary: Okta Support cases and their access
+    items_key: supportCases
+    view: [caseNumber, subject, impersonation.status, impersonation.expiration]
+    data_classes: [admin-roles]
+
+  get-admin-app-setting:
+    operation: getAutoAssignAdminAppSetting
+    summary: Admin Console app auto-assign
+    data_classes: [org-config]
+
+  get-client-privileges:
+    operation: getClientPrivilegesSetting
+    summary: Default client privileges setting
+    data_classes: [org-config]
+
+  # Not exposed: `filter` (the spec gives it the enum of attribute names, so no expression
+  # would pass) and `forDownload` (a CSV instead of JSON). `sort_by` is a spec-closed set.
+  list-yubikey-tokens:
+    operation: listYubikeyOtpTokens
+    summary: YubiKey OTP tokens
+    args:
+      sort_by: {query: sortBy, allowed_values: [profile.email, profile.serial, activated, user.id, created, status, lastVerified]}
+      sort_order: {query: sortOrder}
+      # Embeds the owner, the same classes.
+      expand: {query: expand, allowed_values: [user]}
+    paginate: link
+    page_size: 200
+    view: [id, status, created, lastVerified]
+    data_classes: [mfa-state, pii]
+
+  get-yubikey-token:
+    operation: getYubikeyOtpTokenById
+    summary: One YubiKey OTP token
+    args:
+      token: {path_param: tokenId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [mfa-state, pii]

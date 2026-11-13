@@ -7,13 +7,13 @@ the registry and the pinned spec 2026.42.1. Do not edit; rerun the script.
 
 | Kind | Commands | Done |
 |---|---|---|
-| simple | 168 | 112 |
+| simple | 168 | 155 |
 | resolved | 30 | 29 |
 | composite (post-v1) | 4 | — |
 | excluded | 4 | — |
-| **total** | **206** | **141** |
+| **total** | **206** | **184** |
 
-Gotcha endpoints (record a fixture): 5, 2 to do
+Gotcha endpoints (record a fixture): 6, 1 to do
 
 ## By domain
 
@@ -31,14 +31,14 @@ Gotcha endpoints (record a fixture): 5, 2 to do
 | devices | 5 | 5 | 0 | 0 | 0 | 0 | 5 |
 | groups | 12 | 12 | 0 | 0 | 0 | 12 | 0 |
 | iam | 20 | 20 | 0 | 0 | 0 | 20 | 0 |
-| identity-providers | 12 | 12 | 0 | 0 | 0 | 0 | 12 |
+| identity-providers | 12 | 12 | 0 | 0 | 0 | 12 | 0 |
 | logs | 4 | 1 | 0 | 3 | 0 | 1 | 0 |
 | network-zones | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
 | oauth-client-roles | 4 | 4 | 0 | 0 | 0 | 4 | 0 |
-| org-settings | 14 | 13 | 0 | 0 | 1 | 0 | 13 |
+| org-settings | 14 | 13 | 0 | 0 | 1 | 13 | 0 |
 | policies | 6 | 6 | 0 | 0 | 0 | 6 | 0 |
-| realms | 5 | 5 | 0 | 0 | 0 | 0 | 5 |
-| schemas | 13 | 13 | 0 | 0 | 0 | 0 | 13 |
+| realms | 5 | 5 | 0 | 0 | 0 | 5 | 0 |
+| schemas | 13 | 13 | 0 | 0 | 0 | 13 | 0 |
 | security | 6 | 4 | 0 | 0 | 2 | 4 | 0 |
 | sessions | 1 | 1 | 0 | 0 | 0 | 1 | 0 |
 | users | 34 | 3 | 30 | 0 | 1 | 32 | 1 |
@@ -50,10 +50,6 @@ Gotcha endpoints (record a fixture): 5, 2 to do
 - **device-integrations**: list, get
 - **device-posture**: list, get, list-defaults
 - **devices**: list, get, get-users, get-os-accounts, get-os-account
-- **identity-providers**: list, get, list-keys, get-key, list-csrs, get-csr, list-signing-keys, get-active-signing-key, get-signing-key, list-users, get-user, list-tokens
-- **org-settings**: get, list-contact-types, get-contact, get-captcha-settings, get-third-party-admin-setting, get-preferences, get-communication-settings, get-support-settings, list-support-cases, get-auto-assign-admin-app-setting, get-client-privileges-setting, list-yubikey-tokens, get-yubikey-token
-- **realms**: list-realms, get-realm, list-realm-assignments, get-realm-assignment, list-realm-assignment-operations
-- **schemas**: list, get, get-app-user-schema, get-group-schema, list-log-stream-schemas, get-log-stream-schema, list-linked-objects, get-linked-object, get-user-schema, list-user-types, get-user-type, list-ui-schemas, get-ui-schema
 - **users**: get-linked-objects
 
 ## Registry commands outside the catalogue

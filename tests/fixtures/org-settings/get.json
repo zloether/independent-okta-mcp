@@ -1,0 +1,46 @@
+{
+  "source": "generated",
+  "operation": "getOrgSettings",
+  "body": {
+    "address1": "100 1st St",
+    "address2": "6th floor",
+    "city": "San Fransico",
+    "companyName": "okta",
+    "country": "United States",
+    "endUserSupportHelpURL": "example.okta.com",
+    "phoneNumber": "+18887227871",
+    "postalCode": "94105",
+    "state": "California",
+    "supportPhoneNumber": "+18887227871",
+    "website": "example.okta.com",
+    "id": "00o3qqiw0vSCIwu8I0g7",
+    "created": "2024-01-24T14:15:22Z",
+    "lastUpdated": "2024-07-21T14:15:22Z",
+    "expiresAt": "2024-12-24T14:15:22Z",
+    "status": "ACTIVE",
+    "subdomain": "okta",
+    "_links": {
+      "preferences": {
+        "href": "https://example.okta.com/v1/org/preferences"
+      },
+      "uploadLogo": {
+        "href": "https://example.okta.com/api/v1/org/logo",
+        "hints": {
+          "allow": [
+            "POST"
+          ]
+        }
+      },
+      "oktaCommunication": {
+        "href": "https://example.okta.com/api/v1/org/privacy/oktaCommunication"
+      },
+      "logo": null,
+      "oktaSupport": {
+        "href": "https://example.okta.com/api/v1/org/privacy/oktaSupport"
+      },
+      "contacts": {
+        "href": "https://example.okta.com/api/v1/org/contacts"
+      }
+    }
+  }
+}

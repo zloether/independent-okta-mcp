@@ -1,0 +1,111 @@
+{
+  "source": "generated",
+  "operation": "getLogStreamSchema",
+  "body": {
+    "$schema": "https://host-1.example.com/draft/2020-12/schema",
+    "$id": "http://example.okta.com/api/v1/meta/schemas/logStream/aws_eventbridge",
+    "title": "AWS EventBridge",
+    "type": "object",
+    "properties": {
+      "settings": {
+        "description": "Configuration properties specific to AWS EventBridge",
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "title": "AWS Account ID",
+            "description": "Your Amazon AWS Account ID.",
+            "type": "string",
+            "writeOnce": true,
+            "pattern": "^\\d{12}$"
+          },
+          "eventSourceName": {
+            "title": "AWS Event Source Name",
+            "description": "An alphanumeric name (no spaces) to identify this event source in AWS EventBridge.",
+            "type": "string",
+            "writeOnce": true,
+            "pattern": "^[\\.\\-_A-Za-z0-9]{1,75}$"
+          },
+          "region": {
+            "title": "AWS Region",
+            "description": "The destination AWS region for your system log events.",
+            "type": "string",
+            "writeOnce": true,
+            "oneOf": [
+              {
+                "title": "US East (Ohio)",
+                "const": "us-east-2"
+              },
+              {
+                "title": "US East (N. Virginia)",
+                "const": "us-east-1"
+              },
+              {
+                "title": "US West (N. California)",
+                "const": "us-west-1"
+              },
+              {
+                "title": "US West (Oregon)",
+                "const": "us-west-2"
+              },
+              {
+                "title": "Canada (Central)",
+                "const": "ca-central-1"
+              },
+              {
+                "title": "Europe (Frankfurt)",
+                "const": "eu-central-1"
+              },
+              {
+                "title": "Europe (Ireland)",
+                "const": "eu-west-1"
+              },
+              {
+                "title": "Europe (London)",
+                "const": "eu-west-2"
+              },
+              {
+                "title": "Europe (Paris)",
+                "const": "eu-west-3"
+              },
+              {
+                "title": "Europe (Milan)",
+                "const": "eu-south-1"
+              },
+              {
+                "title": "Europe (Stockholm)",
+                "const": "eu-north-1"
+              }
+            ]
+          }
+        },
+        "required": [
+          "eventSourceName",
+          "accountId",
+          "region"
+        ],
+        "errorMessage": {
+          "properties": {
+            "accountId": "Account number must be 12 digits.",
+            "eventSourceName": "Event source name can use numbers, letters, the symbols \".\", \"-\" or \"_\". It must use fewer than 76 characters."
+          }
+        }
+      },
+      "name": {
+        "title": "Name",
+        "description": "A name for this log stream in Okta",
+        "type": "string",
+        "writeOnce": false,
+        "pattern": "^.{1,100}$"
+      }
+    },
+    "required": [
+      "name",
+      "settings"
+    ],
+    "errorMessage": {
+      "properties": {
+        "name": "Name can't exceed 100 characters."
+      }
+    }
+  }
+}

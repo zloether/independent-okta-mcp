@@ -1,0 +1,66 @@
+{
+  "source": "generated",
+  "operation": "getGroupSchema",
+  "body": {
+    "$schema": "http://host-1.example.com/draft-04/schema#",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/meta/schemas/group/default",
+        "method": "GET",
+        "rel": "self"
+      }
+    },
+    "created": "2021-01-30T00:18:24.000Z",
+    "definitions": {
+      "base": {
+        "id": "#base",
+        "properties": {},
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "custom": {
+        "id": "#custom",
+        "properties": {
+          "groupContact": {
+            "description": "Group administrative contact",
+            "master": {
+              "type": "PROFILE_MASTER"
+            },
+            "mutability": "READ_WRITE",
+            "permissions": [
+              {
+                "action": "READ_WRITE",
+                "principal": "SELF"
+              }
+            ],
+            "scope": "NONE",
+            "title": "Group administrative contact",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    "description": "Okta group profile template",
+    "id": "https://example.okta.com/meta/schemas/group/default",
+    "lastUpdated": "2021-02-25T23:05:31.000Z",
+    "name": "group",
+    "properties": {
+      "profile": {
+        "allOf": [
+          {
+            "$ref": "#/definitions/custom"
+          },
+          {
+            "$ref": "#/definitions/base"
+          }
+        ]
+      }
+    },
+    "title": "Okta group",
+    "type": "object"
+  }
+}

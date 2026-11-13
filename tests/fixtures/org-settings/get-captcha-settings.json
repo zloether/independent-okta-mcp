@@ -1,0 +1,24 @@
+{
+  "source": "generated",
+  "operation": "getOrgCaptchaSettings",
+  "body": {
+    "captchaId": "abcd4567",
+    "enabledPages": [
+      "SSR",
+      "SIGN_IN"
+    ],
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/captchas/abcd4567",
+        "hints": {
+          "allow": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE"
+          ]
+        }
+      }
+    }
+  }
+}

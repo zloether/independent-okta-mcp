@@ -1,0 +1,17 @@
+{
+  "source": "generated",
+  "operation": "getOktaCommunicationSettings",
+  "body": {
+    "optOutEmailUsers": true,
+    "_links": {
+      "optIn": {
+        "href": "https://example.okta.com/api/v1/org/privacy/oktaCommunication/optIn",
+        "hints": {
+          "allow": [
+            "POST"
+          ]
+        }
+      }
+    }
+  }
+}

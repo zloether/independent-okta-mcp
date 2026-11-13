@@ -1,0 +1,41 @@
+{
+  "source": "generated",
+  "operation": "getYubikeyOtpTokenById",
+  "body": {
+    "id": "ykkxdtCA1fKVxyu6R0g3",
+    "created": "2020-06-09T23:42:05.000Z",
+    "activated": "2020-06-09T23:47:29.000Z",
+    "lastVerified": "2020-06-09T23:47:29.000Z",
+    "lastUpdated": "2020-06-09T23:47:29.000Z",
+    "status": "ACTIVE",
+    "profile": {
+      "serial": "000009508427"
+    },
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/org/factors/yubikey_token/tokens/ykkxdtCA1fKVxyu6R0g3",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      },
+      "user": {
+        "href": "https://example.okta.com/api/v1/users/00uu0x8sxTr9HcHOo0g3",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      },
+      "deactivate": {
+        "href": "https://example.okta.com/api/v1/users/00uu0x8sxTr9HcHOo0g3/factors/ykfxduQAhl89YyPrV0g3",
+        "hints": {
+          "allow": [
+            "DELETE"
+          ]
+        }
+      }
+    }
+  }
+}

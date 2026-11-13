@@ -1,0 +1,63 @@
+{
+  "source": "generated",
+  "operation": "listRealmAssignmentOperations",
+  "body": [
+    {
+      "id": "rre4mje4ez6B2a7B60g7",
+      "type": "realm:assignment",
+      "status": "COMPLETED",
+      "created": "2023-10-25T21:02:54.000Z",
+      "started": "2023-10-25T21:02:54.000Z",
+      "completed": "2023-10-25T21:02:54.000Z",
+      "realmId": "00g1b7rvh0xPLKXFf0g5",
+      "realmName": "Realm Name",
+      "assignmentOperation": {
+        "configuration": {
+          "id": "0pr1b7rxZj2ibQzfP0g5",
+          "name": "Realm Assignment 1",
+          "conditions": {
+            "profileSourceId": "0oa4enoRyjwSCy5hx0g4",
+            "expression": {
+              "value": "string"
+            }
+          },
+          "actions": {
+            "assignUserToRealm": {
+              "realmId": "00g1b7rvh0xPLKXFf0g5"
+            }
+          }
+        }
+      },
+      "numUserMoved": 50,
+      "_links": {
+        "self": {
+          "rel": "self",
+          "href": "http://example.okta.com/api/v1/operations/rre4mje4ez6B2a7B60g7",
+          "method": "GET"
+        }
+      }
+    },
+    {
+      "id": "rre4mje4ez7B2a7B60g7",
+      "type": "realm:assignment",
+      "status": "COMPLETED",
+      "created": "2023-10-25T21:02:54.000Z",
+      "started": "2023-10-25T21:02:54.000Z",
+      "completed": "2023-10-25T21:02:54.000Z",
+      "assignmentOperation": {
+        "configuration": {
+          "id": "ALL",
+          "name": "All Assignments"
+        }
+      },
+      "numUserMoved": 50,
+      "_links": {
+        "self": {
+          "rel": "self",
+          "href": "http://example.okta.com/api/v1/operations/rre4mje4ez7B2a7B60g7",
+          "method": "GET"
+        }
+      }
+    }
+  ]
+}

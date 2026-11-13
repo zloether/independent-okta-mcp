@@ -1,0 +1,37 @@
+{
+  "source": "generated",
+  "operation": "listIdentityProviderApplicationUsers",
+  "body": [
+    {
+      "id": "00u5cl9lo7nMjHjPr0h7",
+      "externalId": "109912936038778",
+      "created": "2015-11-03T19:10:11.000Z",
+      "lastUpdated": "2015-11-03T19:11:49.000Z",
+      "profile": {
+        "firstName": "Carol",
+        "middleName": "Lee",
+        "lastName": "Johnson",
+        "email": "user-1@example.com",
+        "displayName": "Carol Johnson",
+        "profile": "https://host-1.example.com/app_scoped_user_id/109912936038778/"
+      },
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/idps/0oa4lb6lbtmH355Hx0h7/users/00u5cl9lo7nMjHjPr0h7",
+          "hints": {
+            "allow": [
+              "GET",
+              "DELETE"
+            ]
+          }
+        },
+        "idp": {
+          "href": "https://example.okta.com/api/v1/idps/0oa4lb6lbtmH355Hx0h7"
+        },
+        "user": {
+          "href": "https://example.okta.com/api/v1/users/00u5cl9lo7nMjHjPr0h7"
+        }
+      }
+    }
+  ]
+}

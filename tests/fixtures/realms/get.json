@@ -1,0 +1,20 @@
+{
+  "source": "generated",
+  "operation": "getRealm",
+  "body": {
+    "id": "guox9jQ16k9V8IQWL0g3",
+    "created": "2022-04-04T15:56:05.000Z",
+    "lastUpdated": "2022-05-05T18:15:44.000Z",
+    "isDefault": true,
+    "profile": {
+      "name": "Default realm"
+    },
+    "_links": {
+      "self": {
+        "rel": "self",
+        "href": "http://example.okta.com/api/v1/realms/guox9jQ16k9V8IQWL0g3",
+        "method": "GET"
+      }
+    }
+  }
+}

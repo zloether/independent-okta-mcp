@@ -1,0 +1,7 @@
+{
+  "source": "generated",
+  "operation": "getAutoAssignAdminAppSetting",
+  "body": {
+    "autoAssignAdminAppSetting": false
+  }
+}

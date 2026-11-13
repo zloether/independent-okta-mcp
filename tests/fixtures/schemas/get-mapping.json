@@ -1,0 +1,48 @@
+{
+  "source": "generated",
+  "operation": "getProfileMapping",
+  "body": {
+    "id": "prm1k47ghydIQOTBW0g4",
+    "source": {
+      "id": "otysbePhQ3yqt4cVv0g3",
+      "name": "user",
+      "type": "user",
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/meta/types/user/otysbePhQ3yqt4cVv0g3"
+        },
+        "schema": {
+          "href": "https://example.okta.com/api/v1/meta/schemas/user/oscsbePhQ3yqt4cVv0g3"
+        }
+      }
+    },
+    "target": {
+      "id": "0oa1qmn4LZQQEH0wZ0g4",
+      "name": "okta_org2org",
+      "type": "appuser",
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/apps/0oa1qmn4LZQQEH0wZ0g4"
+        },
+        "schema": {
+          "href": "https://example.okta.com/api/v1/meta/schemas/apps/0oa1qmn4LZQQEH0wZ0g4/default"
+        }
+      }
+    },
+    "properties": {
+      "firstName": {
+        "expression": "user.firstName",
+        "pushStatus": "PUSH"
+      },
+      "lastName": {
+        "expression": "user.lastName",
+        "pushStatus": "PUSH"
+      }
+    },
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/mappings/prm1k48weFSOnEUnw0g4"
+      }
+    }
+  }
+}

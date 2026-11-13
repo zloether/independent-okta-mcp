@@ -602,11 +602,12 @@ domains:
       kind: simple
       paginate: none
       items_key: supportCases
-    get-auto-assign-admin-app-setting:
+      gotcha: The spec's example is a bare array; its schema wraps the list in `supportCases`
+    get-admin-app-setting:
       operations: [getAutoAssignAdminAppSetting]
       kind: simple
       paginate: none
-    get-client-privileges-setting:
+    get-client-privileges:
       operations: [getClientPrivilegesSetting]
       kind: simple
       paginate: none
@@ -645,33 +646,33 @@ domains:
       kind: simple
       paginate: none
   realms:
-    list-realms:
+    list:
       operations: [listRealms]
       kind: simple
       paginate: link
-    get-realm:
+    get:
       operations: [getRealm]
       kind: simple
       paginate: none
-    list-realm-assignments:
+    list-assignments:
       operations: [listRealmAssignments]
       kind: simple
       paginate: link
-    get-realm-assignment:
+    get-assignment:
       operations: [getRealmAssignment]
       kind: simple
       paginate: none
-    list-realm-assignment-operations:
+    list-operations:
       operations: [listRealmAssignmentOperations]
       kind: simple
       paginate: link
   schemas:
-    list:
+    list-mappings:
       operations: [listProfileMappings]
       kind: simple
       paginate: link
-      notes: List omits `properties`; `get` shows the mappings
-    get:
+      notes: List omits `properties`; `get-mapping` shows the mappings
+    get-mapping:
       operations: [getProfileMapping]
       kind: simple
       paginate: none

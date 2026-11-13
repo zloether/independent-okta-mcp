@@ -119,7 +119,8 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     the spec's schema is an array whose examples show one item (`listAuthenticatorMethods`);
     unwrapped from a one-item list under an object schema (`getOAuth2Claim`); and a list in an
     object under `items_key` for `response_override` wrapped
-    (`listOAuth2ResourceServerJsonWebKeys`)."""
+    (`listOAuth2ResourceServerJsonWebKeys`) or for an object schema whose example is the bare
+    list (`listOktaSupportCases`)."""
     synth = Synth(spec, f"{command.domain}.{command.name}")
     op = cast(dict[str, Any], spec["paths"][command.operation.path]["get"])
     ok = synth.deref(op.get("responses", {}).get("200", {}))
@@ -153,7 +154,11 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     override = command.entry.response_override
     if override is not None and override.kind == "list" and not isinstance(value, list):
         value = [value]
-    if override is not None and override.kind == "wrapped" and isinstance(value, list):
+    # A wrapped list: by override, or by a wrapper schema whose example is the bare list
+    # (`listOktaSupportCases`; the schema wins).
+    wrapped = override is not None and override.kind == "wrapped"
+    by_schema = override is None and command.operation.response.kind == "object"
+    if isinstance(value, list) and command.entry.items_key is not None and (wrapped or by_schema):
         value = {command.entry.items_key: value}
     return Neutralizer()(value)
 

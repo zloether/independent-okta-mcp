@@ -1,0 +1,68 @@
+{
+  "source": "generated",
+  "operation": "getApplicationUserSchema",
+  "body": {
+    "id": "https://example.okta.com/meta/schemas/apps/{appId}/default",
+    "$schema": "http://host-1.example.com/draft-04/schema#",
+    "name": "Example app",
+    "title": "Example app User",
+    "lastUpdated": "2015-09-05T10:40:45.000Z",
+    "created": "2015-02-02T10:27:36.000Z",
+    "definitions": {
+      "custom": {
+        "id": "#custom",
+        "type": "object",
+        "properties": {}
+      },
+      "base": {
+        "id": "#base",
+        "type": "object",
+        "properties": {
+          "userName": {
+            "title": "Username",
+            "type": "string",
+            "required": true,
+            "scope": "SELF",
+            "master": {
+              "type": "PROFILE_MASTER"
+            }
+          },
+          "name": {
+            "title": "Name",
+            "description": "End-User's full name in displayable form.",
+            "type": "string",
+            "scope": "SELF",
+            "master": {
+              "type": "PROFILE_MASTER"
+            }
+          },
+          "email": {
+            "title": "Email",
+            "description": "End-User's preferred email address.",
+            "type": "string",
+            "scope": "SELF",
+            "master": {
+              "type": "PROFILE_MASTER"
+            }
+          }
+        },
+        "required": [
+          "userName"
+        ]
+      },
+      "type": "object",
+      "properties": {
+        "profile": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/base"
+            },
+            {
+              "$ref": "#/definitions/custom"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

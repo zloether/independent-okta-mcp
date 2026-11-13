@@ -1,0 +1,17 @@
+{
+  "source": "generated",
+  "operation": "getOrgPreferences",
+  "body": {
+    "showEndUserFooter": true,
+    "_links": {
+      "hideEndUserFooter": {
+        "href": "https://example.okta.com/api/v1/org/preferences/hideEndUserFooter",
+        "hints": {
+          "allow": [
+            "POST"
+          ]
+        }
+      }
+    }
+  }
+}
