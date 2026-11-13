@@ -50,5 +50,7 @@ pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Shared helpers (`_samples`, `policy._pilot`) import from here whatever the import mode.
+pythonpath = ["tests"]
 addopts = ["--strict-markers", "--strict-config"]
 xfail_strict = true

@@ -97,15 +97,17 @@ commands:
       factor: {path_param: factorId, pattern: "^[A-Za-z0-9]{1,64}$"}
       # Transaction IDs hold a dot: `v2mst.GldKV5VxTrifyeZmWSQguA`.
       txn: {path_param: transactionId, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
-    data_classes: [mfa-state]
+    # `profile.credentialId` is the user's login or email.
+    data_classes: [mfa-state, pii]
 
   get-factors-catalog:
     operation: listSupportedFactors
     summary: Factors the user may enroll
     args:
       user: {path_param: userId, resolve: user_id}
-    view: [factorType, provider, status, enrollment]
-    data_classes: [mfa-state]
+    view: [factorType, provider, vendorName, status, enrollment]
+    # `_embedded.phones[].profile.phoneNumber`: the user's enrolled phones.
+    data_classes: [mfa-state, pii]
 
   get-enrollments:
     operation: listAuthenticatorEnrollments

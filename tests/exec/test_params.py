@@ -2,6 +2,7 @@ from typing import Any
 
 import httpx2
 import pytest
+from _samples import SAMPLES
 
 from okta_mcp.exec.params import build_request, build_url, check_args, path_segment
 from okta_mcp.okta.client import OktaClient, new_http_client
@@ -42,18 +43,6 @@ PAYLOADS: list[object] = [
     None,
     ["a"],
 ]
-# A value matching each registry path-param pattern; a new pattern needs a sample here.
-SAMPLES = {
-    "^00g[A-Za-z0-9]{17}$": "00g1emaKYZTWRYYRRTSK",
-    "^0pr[A-Za-z0-9]{17}$": "0pr1emaKYZTWRYYRRTSK",
-    "^nzo[A-Za-z0-9]{17}$": "nzo1emaKYZTWRYYRRTSK",
-    "^[A-Za-z0-9]{1,64}$": "JBCUYUC7IRCVGS27IFCE2SKO",
-    "^0oa[A-Za-z0-9]{17}$": "0oa1emaKYZTWRYYRRTSK",
-    "^[A-Za-z0-9_-]{1,64}$": "kid_1emaKYZTWRYYRRTSK",
-    "^[A-Za-z0-9_-]{1,100}$": "0oa1emaKYZTWRYYRRTSK",
-    "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$": "v2mst.GldKV5VxTrifyeZmWSQguA",
-    None: "alice@example.com",
-}
 
 
 @pytest.fixture(scope="module")
