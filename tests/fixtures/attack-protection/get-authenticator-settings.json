@@ -1,0 +1,7 @@
+{
+  "source": "generated",
+  "operation": "getAuthenticatorSettings",
+  "body": {
+    "verifyKnowledgeSecondWhen2faRequired": false
+  }
+}

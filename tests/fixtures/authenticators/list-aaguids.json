@@ -1,0 +1,36 @@
+{
+  "source": "generated",
+  "operation": "listAllCustomAAGUIDs",
+  "body": [
+    {
+      "aaguid": "cb69481e-8ff7-4039-93ec-0a272911111",
+      "name": "My Security Key",
+      "authenticatorCharacteristics": {
+        "platformAttached": false,
+        "fipsCompliant": false,
+        "hardwareProtected": false
+      },
+      "attestationRootCertificates": [
+        {
+          "x5c": "X5C...",
+          "x5t#S256": "SHA-256 x5t of the X.509 root certificate",
+          "iss": "Yubico U2F Root CA Serial 457200631",
+          "exp": "2035-05-26T16:04:58.000Z"
+        }
+      ],
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nd8PQhGcQtSxB0g4/aaguids/cb69481e-8ff7-4039-93ec-0a272911111",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

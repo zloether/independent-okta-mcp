@@ -1,0 +1,27 @@
+{
+  "source": "generated",
+  "operation": "getAuthenticatorMethod",
+  "body": {
+    "type": "sms",
+    "status": "ACTIVE",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/authenticators/aut1nd8PQhGcQtSxB0g4/methods/sms",
+        "hints": {
+          "allow": [
+            "GET",
+            "PUT"
+          ]
+        }
+      },
+      "deactivate": {
+        "href": "https://example.okta.com/api/v1/authenticators/aut1nd8PQhGcQtSxB0g4/methods/sms/lifecycle/deactivate",
+        "hints": {
+          "allow\"": [
+            "POST"
+          ]
+        }
+      }
+    }
+  }
+}

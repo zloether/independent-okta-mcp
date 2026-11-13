@@ -1,0 +1,158 @@
+{
+  "source": "generated",
+  "operation": "listAuthenticators",
+  "body": [
+    {
+      "type": "email",
+      "id": "aut1nbsPHh7jNjjyP0g4",
+      "key": "okta_email",
+      "status": "ACTIVE",
+      "name": "Email",
+      "created": "2020-07-26T21:05:23.000Z",
+      "lastUpdated": "2020-07-28T21:45:52.000Z",
+      "settings": {
+        "allowedFor": "any",
+        "tokenLifetimeInMinutes": 5
+      },
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nbsPHh7jNjjyP0g4",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT"
+            ]
+          }
+        },
+        "methods": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nbsPHh7jNjjyP0g4/methods",
+          "hints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        },
+        "deactivate": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nbsPHh7jNjjyP0g4/lifecycle/deactivate",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "password",
+      "id": "aut1nbtrJKKA9m45a0g4",
+      "key": "okta_password",
+      "status": "ACTIVE",
+      "name": "Password",
+      "created": "2020-07-26T21:05:23.000Z",
+      "lastUpdated": "2020-07-26T21:05:23.000Z",
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nbtrJKKA9m45a0g4",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT"
+            ]
+          }
+        },
+        "methods": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nbtrJKKA9m45a0g4/methods",
+          "hints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "phone",
+      "id": "aut1nbuyD8m1ckAYc0g4",
+      "key": "phone_number",
+      "status": "INACTIVE",
+      "name": "Phone",
+      "created": "2020-07-26T21:05:23.000Z",
+      "lastUpdated": "2020-07-29T00:21:29.000Z",
+      "settings": {
+        "allowedFor": "none"
+      },
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nbuyD8m1ckAYc0g4",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT"
+            ]
+          }
+        },
+        "methods": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nbuyD8m1ckAYc0g4/methods",
+          "hints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        },
+        "activate": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nbuyD8m1ckAYc0g4/lifecycle/activate",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "security_key",
+      "id": "aut1nd8PQhGcQtSxB0g4",
+      "key": "webauthn",
+      "status": "ACTIVE",
+      "name": "Security Key or Biometric",
+      "created": "2020-07-26T21:16:37.000Z",
+      "lastUpdated": "2020-07-27T18:59:30.000Z",
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nd8PQhGcQtSxB0g4",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT"
+            ]
+          }
+        },
+        "methods": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nd8PQhGcQtSxB0g4/methods",
+          "hints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        },
+        "deactivate": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nd8PQhGcQtSxB0g4/lifecycle/deactivate",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        },
+        "aaguids": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut1nd8PQhGcQtSxB0g4/aaguids",
+          "hints": {
+            "allow": [
+              "GET",
+              "POST"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -32,7 +32,6 @@ paths:
   - correctAnswer                              # users get-factor-transaction: a live push challenge's number
   - qrcode                                     # factor `_links`/activation: the image encodes the enrollment seed
   - activationToken
-  - recoveryToken
   - sessionToken
   - SSWSToken
   - providerAuthToken
@@ -44,8 +43,10 @@ paths:
   # Event and inline hook headers are `{key, value}` pairs; any of them may carry a credential.
   - channel.config.headers.value
 strings:
-  # Objects elsewhere: password policy `settings.password`, OIDC app
+  # Objects elsewhere: password policy `settings.password` and
+  # `settings.recovery.factors.okta_email.properties.recoveryToken`, OIDC app
   # `settings.oauthClient.refresh_token` rotation settings, `{jti}` in token hook events.
   - password                                   # SMTP servers, app service accounts
   - token                                      # Org2Org app settings.app, app tokens
   - refresh_token                              # token-endpoint responses
+  - recoveryToken                              # user lifecycle responses; an object in password policy recovery settings

@@ -1,0 +1,50 @@
+{
+  "source": "generated",
+  "operation": "getAuthenticator",
+  "body": {
+    "type": "app",
+    "id": "aut9gnvcjUHIWb37J0g4",
+    "key": "duo",
+    "status": "ACTIVE",
+    "name": "Duo Security",
+    "created": "2022-07-15T21:14:02.000Z",
+    "lastUpdated": "2022-07-15T21:14:02.000Z",
+    "settings": {},
+    "provider": {
+      "type": "DUO",
+      "configuration": {
+        "host": "https://host-1.example.com",
+        "userNameTemplate": {
+          "template": "oktaId"
+        }
+      }
+    },
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/authenticators/aut5gnvcjUHIWb25J0g4",
+        "hints": {
+          "allow": [
+            "GET",
+            "PUT"
+          ]
+        }
+      },
+      "deactivate": {
+        "href": "https://example.okta.com/api/v1/authenticators/aut5gnvcjUHIWb25J0g4/lifecycle/deactivate",
+        "hints": {
+          "allow": [
+            "POST"
+          ]
+        }
+      },
+      "methods": {
+        "href": "https://example.okta.com/api/v1/authenticators/aut5gnvcjUHIWb25J0g4/methods",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -137,6 +137,19 @@ def _path_args(cmd: Command) -> dict[str, Any]:
     }
 
 
+def _required_query(cmd: Command) -> dict[str, Any]:
+    """A valid value per required query arg (`policies list` `type`): a spec enum's first
+    value, else its pattern's sample (a missing one is a `KeyError`), else a plain word."""
+    props = cmd.schema["properties"]
+    return {
+        n: props[n]["enum"][0]
+        if "enum" in props[n]
+        else (SAMPLES[a.pattern] if a.pattern else "sample")
+        for n, a in cmd.entry.args.items()
+        if a.query is not None and n in cmd.schema.get("required", ())
+    }
+
+
 def _cases() -> list[tuple[Command, str, object]]:
     spec = load_spec()
     return [
@@ -188,7 +201,7 @@ async def test_path_payload_is_rejected_with_no_request(case: tuple[Command, str
     cmd, name, payload = case
     okta = Okta()
     with pytest.raises(InvalidArguments, match=f"arg '{name}'"):
-        await _call(okta, cmd, {**_path_args(cmd), name: payload})
+        await _call(okta, cmd, {**_required_query(cmd), **_path_args(cmd), name: payload})
     assert okta.requests == []
 
 
@@ -197,7 +210,7 @@ async def test_every_command_builds_its_template_path(spec: SpecIndex) -> None:
     for cmd in _commands(spec):
         okta = Okta()
         args = _path_args(cmd)
-        await _call(okta, cmd, args)
+        await _call(okta, cmd, {**_required_query(cmd), **args})
         expected = cmd.operation.path
         for n, v in args.items():
             expected = expected.replace(

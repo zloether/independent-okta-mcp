@@ -7,11 +7,11 @@ the registry and the pinned spec 2026.42.1. Do not edit; rerun the script.
 
 | Kind | Commands | Done |
 |---|---|---|
-| simple | 170 | 46 |
+| simple | 170 | 62 |
 | resolved | 30 | 29 |
 | composite (post-v1) | 4 | — |
 | excluded | 2 | — |
-| **total** | **206** | **75** |
+| **total** | **206** | **91** |
 
 Gotcha endpoints (record a fixture): 5, 4 to do
 
@@ -21,10 +21,10 @@ Gotcha endpoints (record a fixture): 5, 4 to do
 |---|---|---|---|---|---|---|---|
 | api-tokens | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
 | apps | 31 | 30 | 0 | 1 | 0 | 29 | 1 |
-| attack-protection | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
-| authenticators | 6 | 6 | 0 | 0 | 0 | 0 | 6 |
+| attack-protection | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
+| authenticators | 6 | 6 | 0 | 0 | 0 | 6 | 0 |
 | authorization-servers | 18 | 18 | 0 | 0 | 0 | 0 | 18 |
-| behaviors | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
+| behaviors | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
 | device-assurance | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
 | device-integrations | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
 | device-posture | 3 | 3 | 0 | 0 | 0 | 0 | 3 |
@@ -36,7 +36,7 @@ Gotcha endpoints (record a fixture): 5, 4 to do
 | network-zones | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
 | oauth-client-roles | 4 | 4 | 0 | 0 | 0 | 0 | 4 |
 | org-settings | 14 | 13 | 0 | 0 | 1 | 0 | 13 |
-| policies | 6 | 6 | 0 | 0 | 0 | 0 | 6 |
+| policies | 6 | 6 | 0 | 0 | 0 | 6 | 0 |
 | realms | 5 | 5 | 0 | 0 | 0 | 0 | 5 |
 | schemas | 13 | 13 | 0 | 0 | 0 | 0 | 13 |
 | security | 6 | 6 | 0 | 0 | 0 | 0 | 6 |
@@ -47,10 +47,7 @@ Gotcha endpoints (record a fixture): 5, 4 to do
 
 - **api-tokens**: list, get
 - **apps**: list-jwks
-- **attack-protection**: get-authenticator-settings, get-user-lockout-settings
-- **authenticators**: list, get, list-methods, get-method, list-aaguids, get-aaguid
 - **authorization-servers**: list, get, list-associated-servers, list-claims, get-claim, list-clients, list-tokens, get-token, list-keys, get-key, list-policies, get-policy, list-policy-rules, get-policy-rule, list-resource-server-keys, get-resource-server-key, list-scopes, get-scope
-- **behaviors**: list, get
 - **device-assurance**: list, get
 - **device-integrations**: list, get
 - **device-posture**: list, get, list-defaults
@@ -60,7 +57,6 @@ Gotcha endpoints (record a fixture): 5, 4 to do
 - **logs**: list
 - **oauth-client-roles**: list, get, list-app-targets, list-group-targets
 - **org-settings**: get, list-contact-types, get-contact, get-captcha-settings, get-third-party-admin-setting, get-preferences, get-communication-settings, get-support-settings, list-support-cases, get-auto-assign-admin-app-setting, get-client-privileges-setting, list-yubikey-tokens, get-yubikey-token
-- **policies**: list, get, get-rules, get-rule, list-mappings, get-mapping
 - **realms**: list-realms, get-realm, list-realm-assignments, get-realm-assignment, list-realm-assignment-operations
 - **schemas**: list, get, get-app-user-schema, get-group-schema, list-log-stream-schemas, get-log-stream-schema, list-linked-objects, get-linked-object, get-user-schema, list-user-types, get-user-type, list-ui-schemas, get-ui-schema
 - **security**: get-threat-insight-config, list-security-events-providers, get-security-events-provider, get-ssf-streams, get-ssf-stream-status, get-bot-protection-config

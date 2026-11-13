@@ -1,0 +1,28 @@
+{
+  "source": "generated",
+  "operation": "getBehaviorDetectionRule",
+  "body": {
+    "id": "abcd1234",
+    "name": "My Behavior Rule",
+    "type": "VELOCITY",
+    "settings": {
+      "velocityKph": 805
+    },
+    "status": "ACTIVE",
+    "created": "2021-11-09 20:38:10.0",
+    "lastUpdated": "2021-11-11 20:38:10.0",
+    "_link": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/behaviors/abcd1234",
+        "hints": {
+          "allow": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE"
+          ]
+        }
+      }
+    }
+  }
+}

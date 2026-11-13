@@ -1,0 +1,17 @@
+domain: behaviors
+description: Read behavior detection rules (read-only).
+# Rule definitions (new device, location, IP, velocity), not per-user detections: those are in
+# the System Log. Rule IDs' prefix isn't documented, so only the character set is fixed.
+commands:
+  list:
+    operation: listBehaviorDetectionRules
+    summary: List behavior detection rules
+    view: [id, name, type, status]
+    data_classes: [org-config]
+
+  get:
+    operation: getBehaviorDetectionRule
+    summary: Get a behavior detection rule by ID
+    args:
+      behavior: {path_param: behaviorId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]

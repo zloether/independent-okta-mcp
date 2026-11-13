@@ -1,0 +1,39 @@
+{
+  "source": "generated",
+  "operation": "getPolicyMapping",
+  "body": {
+    "id": "policyId",
+    "_links": {
+      "application": {
+        "href": "https://example.okta.com/api/v1/apps/{appId}",
+        "hints": {
+          "allow": [
+            "GET",
+            "PUT",
+            "DELETE"
+          ]
+        }
+      },
+      "self": {
+        "href": "https://example.okta.com/api/v1/policies/{policyId}/mappings/{mappingId}",
+        "hints": {
+          "allow": [
+            "GET",
+            "PUT",
+            "DELETE"
+          ]
+        }
+      },
+      "policy": {
+        "href": "https://example.okta.com/api/v1/policies/{policyId}",
+        "hints": {
+          "allow": [
+            "GET",
+            "PUT",
+            "DELETE"
+          ]
+        }
+      }
+    }
+  }
+}

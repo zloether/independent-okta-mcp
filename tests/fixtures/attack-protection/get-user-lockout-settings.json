@@ -1,0 +1,7 @@
+{
+  "source": "generated",
+  "operation": "getUserLockoutSettings",
+  "body": {
+    "preventBruteForceLockoutFromUnknownDevices": false
+  }
+}
