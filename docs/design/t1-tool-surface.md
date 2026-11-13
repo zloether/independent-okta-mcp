@@ -130,7 +130,7 @@ Same as design §7.1, plus D4 and D6.
 {"error":{"code":"invalid_arguments","message":"unknown arg 'usr'; valid: user","request_id":"a1b2c3d4"}}
 ```
 
-- Lists of valid options in messages are capped at 20, then `… (+N; see okta_help)`.
+- Lists of valid options in messages are capped at 20, then `… (+N; see okta_help)`. Exception (step 5.3): a registry closed attribute set in a `Search:` line is shown whole.
 - `upstream_error` carries the status and `errorSummary` only. `errorCauses` is included only when it is short (≤ 200 B).
 - `request_id`: 8 hex characters in the response. The full ID stays in the audit log, so correlation still works.
 - `forbidden_by_policy`: one fixed sentence, unchanged (reveals nothing).

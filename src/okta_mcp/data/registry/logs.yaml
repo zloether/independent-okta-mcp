@@ -22,7 +22,7 @@ commands:
         query: filter
         arg_rule:
           attribute_expression: true
-          # Most useful first: `okta_help` shows the first 20.
+          # Most useful first: `okta_help` shows the set in this order.
           attributes:
             [eventType, outcome.result, outcome.reason,
              actor.id, actor.alternateId, actor.type, actor.displayName,

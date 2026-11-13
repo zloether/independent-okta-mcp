@@ -161,19 +161,17 @@ def searchable(engine: Engine, principal: Principal, command: Command) -> str:
         ),
         None,
     )
-    if closed is not None and names:
-        shown = [a for a in closed if "*" in names or a in names]
-        if shown:
-            return f"expressions may name only: {', '.join(shown)}"
+    if closed is not None:
+        shown, cap = [a for a in closed if "*" in names or a in names], len(closed)
     elif "*" in names:
         return "expressions may name any attribute that results don't redact"
     else:
-        shown = sorted(names)
+        shown, cap = sorted(names), _ATTRIBUTES_SHOWN
     if not shown:
         args = " or ".join(expression_args(command)) or "an expression"
         return f"your roles allow no {args} on this command"
-    more = len(shown) - _ATTRIBUTES_SHOWN
-    listed = ", ".join(shown[:_ATTRIBUTES_SHOWN]) + (f" (+{more})" if more > 0 else "")
+    more = len(shown) - cap
+    listed = ", ".join(shown[:cap]) + (f" (+{more})" if more > 0 else "")
     return f"expressions may name only: {listed}"
 
 

@@ -240,8 +240,9 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
             for attr in arg.arg_rule.attributes:
                 # A field without declared children, or a path under one (the spec's arrays,
                 # such as a log event's `target`, are leaves there). An object with declared
-                # children fails, and so does a misspelt name under one. A free-form object
-                # declares none, so it passes here: the registry's tests name those.
+                # children fails, and so does a misspelt name under one. A free-form object or
+                # an array of objects declares none, so it passes here: the registry's tests
+                # name those.
                 segments = attr.split(".")
                 under_leaf = any(
                     (p := ".".join(segments[:i])) in fields and p not in parents
@@ -255,7 +256,7 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
                     )
     # `searchable` and the help text describe one closed set per command, so it's all or none.
     closed = {
-        a.arg_rule.attributes
+        a.arg_rule.attributes and frozenset(a.arg_rule.attributes)
         for a in entry.args.values()
         if a.arg_rule is not None and a.arg_rule.attribute_expression
     }

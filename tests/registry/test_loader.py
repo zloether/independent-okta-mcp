@@ -763,10 +763,14 @@ def test_closed_attribute_sets_are_one_per_command(spec: SpecIndex) -> None:
         _build(spec, list=cmd)
     cmd["args"]["sortby"]["arg_rule"]["attributes"] = ["status"]
     _build(spec, list=cmd)
+    # The same set in another order is the same set.
+    cmd["args"]["search"]["arg_rule"]["attributes"] = ["status", "profile.login"]
+    cmd["args"]["sortby"]["arg_rule"]["attributes"] = ["profile.login", "status"]
+    _build(spec, list=cmd)
 
 
 def test_attribute_pattern_matches_the_tokenizer() -> None:
     from okta_mcp.policy.expression import ATTRIBUTE
     from okta_mcp.registry.loader import _ATTRIBUTE  # pyright: ignore[reportPrivateUsage]
 
-    assert _ATTRIBUTE.pattern == ATTRIBUTE.pattern
+    assert (_ATTRIBUTE.pattern, _ATTRIBUTE.flags) == (ATTRIBUTE.pattern, ATTRIBUTE.flags)

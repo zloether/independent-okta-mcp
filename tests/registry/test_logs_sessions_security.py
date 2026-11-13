@@ -193,8 +193,16 @@ def test_logs_closed_set_is_plain_and_unredacted(registry: Registry) -> None:
     assert rule is not None and rule.attributes is not None
     # Free-form objects in the LogEvent schema: the loader can't tell them from scalars.
     free_form = ("debugContext", "changeDetails", "detailEntry", "transaction.detail")
+    # Arrays of objects, also leaves to the spec index: their items can be named, not they.
+    object_arrays = {
+        "target",
+        "request.ipChain",
+        "securityContext.userBehaviors",
+        "securityContext.ipDetails.ipServiceCategories",
+    }
     for attr in rule.attributes:
         assert not any(part in attr for part in free_form), attr
+        assert attr not in object_arrays, attr
         assert not scrubbed(attr, load_scrub()), attr
 
 
