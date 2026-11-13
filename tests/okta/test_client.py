@@ -22,7 +22,13 @@ from okta_mcp.okta.client import (
     on_origin,
 )
 from okta_mcp.okta.dpop import DPoP
-from okta_mcp.okta.ratelimit import RateLimited, RequestLimiter
+from okta_mcp.okta.ratelimit import (
+    InflightShare,
+    OktaRateLimited,
+    RateLimited,
+    RequestLimiter,
+    share_of,
+)
 from okta_mcp.okta.token import ServiceToken, TokenError
 
 ORG = "https://example.okta.com"
@@ -65,6 +71,7 @@ def client(
     max_inflight: int = 10,
     on_request: Any = None,
     on_sent: Any = None,
+    share: InflightShare | None = None,
 ) -> OktaClient:
     return OktaClient(
         new_http_client(httpx2.MockTransport(handler)),
@@ -75,6 +82,7 @@ def client(
         rate_limit_max_wait=10,
         on_request=on_request,
         on_sent=on_sent,
+        share=share,
     )
 
 
@@ -165,6 +173,55 @@ async def test_semaphore_caps_concurrency() -> None:
         for _ in range(10):
             tg.start_soon(c.get, USERS)
     assert peak == 3
+
+
+@pytest.mark.anyio
+async def test_one_principal_gets_its_share_of_the_slots() -> None:
+    """Plan 6.2: ten slow calls from one user hold at most half the slots; another user's
+    request is sent while they wait, not after them."""
+    inflight: dict[str, int] = {"00u1": 0, "00u2": 0}
+    peak: dict[str, int] = {"00u1": 0, "00u2": 0}
+    order: list[str] = []
+    release = anyio.Event()
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        uid = request.url.params["who"]
+        order.append(uid)
+        inflight[uid] += 1
+        peak[uid] = max(peak[uid], inflight[uid])
+        if uid == "00u1":
+            await release.wait()
+        inflight[uid] -= 1
+        return httpx2.Response(200, json=[])
+
+    c = client(handler, max_inflight=4, share=InflightShare(share_of(4)))
+
+    async def call(uid: str) -> None:
+        token = ratelimit.principal.set(uid)
+        try:
+            await c.get(USERS, {"who": uid})
+        finally:
+            ratelimit.principal.reset(token)
+
+    async with anyio.create_task_group() as tg:
+        for _ in range(10):
+            tg.start_soon(call, "00u1")
+        await anyio.wait_all_tasks_blocked()
+        tg.start_soon(call, "00u2")
+        await anyio.wait_all_tasks_blocked()
+        assert order == ["00u1", "00u1", "00u2"]
+        release.set()
+    assert peak == {"00u1": 2, "00u2": 1}
+    assert len(order) == 11
+
+
+@pytest.mark.anyio
+async def test_a_share_without_a_principal_sends_nothing() -> None:
+    okta = Okta()
+    c = client(okta, share=InflightShare(1))
+    with pytest.raises(RuntimeError, match="principal"):
+        await c.get(USERS)
+    assert okta.requests == []
 
 
 @pytest.mark.anyio
@@ -389,19 +446,27 @@ async def test_429_retried_once() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.usefixtures("no_jitter")
-async def test_429_not_retried_twice() -> None:
+async def test_429_not_retried_twice(caplog: pytest.LogCaptureFixture) -> None:
     okta = Okta(rate_limited(), rate_limited(40))
-    with pytest.raises(RateLimited, match="try again in 40 s"):
+    with pytest.raises(OktaRateLimited, match="try again in 40 s") as e:
         await client(okta).get(USERS)
     assert len(okta.requests) == 2
+    assert e.value.reason == "retry_failed"
+    logged = [getattr(r, "okta_mcp_event", None) for r in caplog.records]
+    assert logged == [
+        ("okta_rate_limited", {"retry": True, "wait_s": 0.0}),
+        ("okta_rate_limited", {"retry": False, "reason": "retry_failed"}),
+    ]
 
 
 @pytest.mark.anyio
-async def test_429_over_max_wait_not_retried() -> None:
+async def test_429_over_max_wait_not_retried(caplog: pytest.LogCaptureFixture) -> None:
     okta = Okta(rate_limited(30))
     with pytest.raises(RateLimited, match="try again in 30 s"):
         await client(okta).get(USERS)
     assert len(okta.requests) == 1
+    logged = [getattr(r, "okta_mcp_event", None) for r in caplog.records]
+    assert logged == [("okta_rate_limited", {"retry": False, "reason": "over_max_wait"})]
 
 
 @pytest.mark.anyio
@@ -465,7 +530,7 @@ async def test_limiter_rejects_before_slot_and_token() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.usefixtures("as_user")
-async def test_limiter_charges_429_retry_before_wait() -> None:
+async def test_limiter_charges_429_retry_before_wait(caplog: pytest.LogCaptureFixture) -> None:
     okta = Okta(rate_limited(5))
     c = client(okta, on_request=RequestLimiter(1).charge)
     start = anyio.current_time()
@@ -473,6 +538,35 @@ async def test_limiter_charges_429_retry_before_wait() -> None:
         await c.get(USERS)
     assert anyio.current_time() - start < 1
     assert len(okta.requests) == 1
+    logged = [getattr(r, "okta_mcp_event", None) for r in caplog.records]
+    assert ("okta_rate_limited", {"retry": False, "reason": "principal_limit"}) in logged
+    assert ("okta_rate_limited", {"retry": True, "wait_s": 5.0}) not in logged
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("no_jitter")
+async def test_a_retry_cut_by_the_deadline_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """Every 429 ends in one give-up event or a successful retry: a deadline hit during the
+    retry logs `cancelled` after the `retry` line."""
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return rate_limited(1)
+        await anyio.sleep_forever()
+        raise AssertionError
+
+    c = client(handler)
+    with anyio.move_on_after(2.5):  # leaves retry_wait's headroom; the retry never answers
+        await c.get(USERS)
+    logged = [getattr(r, "okta_mcp_event", None) for r in caplog.records]
+    assert logged == [
+        ("okta_rate_limited", {"retry": True, "wait_s": 1.0}),
+        ("okta_rate_limited", {"retry": False, "reason": "cancelled"}),
+    ]
+    assert calls == 2
 
 
 @pytest.mark.anyio
@@ -584,3 +678,55 @@ async def test_on_sent_counts_a_request_cancelled_in_flight() -> None:
     with anyio.move_on_after(0.05):
         await client(slow, on_sent=sent.append).get(USERS)
     assert sent == [None]
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("no_jitter")
+@pytest.mark.parametrize(
+    "retry",
+    [httpx2.Response(503, json={"errorSummary": "down"}), httpx2.ConnectError("refused")],
+)
+async def test_a_retry_that_errors_is_logged(
+    retry: httpx2.Response | Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A retry ending in a non-429 error response or a transport error still closes the 429
+    with one `retry_error` give-up."""
+    calls = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return rate_limited()
+        if isinstance(retry, Exception):
+            raise retry
+        return retry
+
+    with pytest.raises(UpstreamError):
+        await client(handler).get(USERS)
+    logged = [getattr(r, "okta_mcp_event", None) for r in caplog.records]
+    assert [e for e in logged if e is not None] == [
+        ("okta_rate_limited", {"retry": True, "wait_s": 0.0}),
+        ("okta_rate_limited", {"retry": False, "reason": "retry_error"}),
+    ]
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("no_jitter", "as_user")
+async def test_a_retry_refused_by_the_limiter_on_its_nonce_retry_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """429, then the retry gets a nonce challenge whose re-charge (the third request, over a
+    limit of 2) is refused: the give-up says `principal_limit`, not `retry_error`."""
+    okta = Okta(rate_limited(), nonce_401(), httpx2.Response(200, json=[]))
+    c = client(
+        okta, FakeTokenProvider(DPOP_TOKEN), dpop=DPoP(), on_request=RequestLimiter(2).charge
+    )
+    with pytest.raises(RateLimited, match="Too many Okta requests"):
+        await c.get(USERS)
+    logged = [e for r in caplog.records if (e := getattr(r, "okta_mcp_event", None))]
+    assert [e for e in logged if e[0] == "okta_rate_limited"] == [
+        ("okta_rate_limited", {"retry": True, "wait_s": 0.0}),
+        ("okta_rate_limited", {"retry": False, "reason": "principal_limit"}),
+    ]
+    assert ("limiter_rejected", {"limit_per_minute": 2}) in logged

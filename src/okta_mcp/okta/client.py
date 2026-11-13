@@ -1,7 +1,8 @@
 """The Okta Management API client (design §6.5).
 
 GET only: `OktaClient.get` is the one way the server reads from Okta. Each call checks the URL
-is on `OKTA_ORG_URL` before anything is sent, holds one of `MCP_OKTA_MAX_INFLIGHT` slots, attaches
+is on `OKTA_ORG_URL` before anything is sent, holds one of the principal's share of slots
+(`ratelimit.InflightShare`) and then one of `MCP_OKTA_MAX_INFLIGHT` slots, attaches
 the service token (and a fresh DPoP proof for a DPoP token), retries once for a `use_dpop_nonce`
 error and once after a 429 (`ratelimit.retry_wait`; else `RateLimited`), and turns any other
 non-2xx response, and a failure to get the service token, into an `UpstreamError`. The provider
@@ -11,13 +12,22 @@ caller's (`anyio.fail_after`); cancelling one aborts the request in flight and f
 
 import logging
 from collections.abc import Callable, Mapping
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Any
 
 import anyio
 import httpx2
 
+from okta_mcp.logs import event
 from okta_mcp.okta.dpop import DPoP, use_dpop_nonce
-from okta_mcp.okta.ratelimit import rate_limited, retry_wait
+from okta_mcp.okta.ratelimit import (
+    GiveUp,
+    InflightShare,
+    OktaRateLimited,
+    RateLimited,
+    rate_limited,
+    retry_wait,
+)
 from okta_mcp.okta.token import ServiceToken, TokenError, TokenProvider
 
 log = logging.getLogger(__name__)
@@ -59,6 +69,25 @@ def _feature_off(response: httpx2.Response) -> bool:
             return False
 
 
+def _log_retry(wait: float) -> None:
+    """`okta_rate_limited` for a 429 about to be retried (design §13)."""
+    log.warning(
+        "Okta rate limit hit; retrying in %.1f s",
+        wait,
+        extra=event("okta_rate_limited", retry=True, wait_s=round(wait, 1)),
+    )
+
+
+def _log_give_up(reason: GiveUp) -> None:
+    """`okta_rate_limited` for a 429 not retried, or whose retry didn't succeed. Every 429
+    ends in exactly one of these or a successful retry (`OktaClient.get`)."""
+    log.warning(
+        "Okta rate limit hit; gave up (%s)",
+        reason,
+        extra=event("okta_rate_limited", retry=False, reason=reason),
+    )
+
+
 def new_http_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx2.AsyncClient:
     """The one `AsyncClient` for Okta, shared with the token provider. TLS is verified against the
     system trust store, and redirects are never followed: a followed redirect would replay the
@@ -95,6 +124,7 @@ class OktaClient:
         rate_limit_max_wait: float,
         on_request: Callable[[], None] | None = None,
         on_sent: Callable[[int | None], None] | None = None,
+        share: InflightShare | None = None,
     ) -> None:
         """`dpop` is the instance the token provider was given, so token and resource proofs
         share one key and nonce. `on_request` (`RequestLimiter.charge`) runs once per request
@@ -102,7 +132,8 @@ class OktaClient:
         for a 429 retry before the wait. What it raises propagates. `on_sent`
         (`audit.record_sent`) runs once per request actually sent, with the response's status
         or None for a transport error or a cancellation: a request attempted, which may not
-        have reached Okta."""
+        have reached Okta. `share`, if given, is taken before a global slot, so a principal's
+        waiting requests don't hold slots others could use."""
         self._http = http
         self._origin = httpx2.URL(org_url)
         self._tokens = tokens
@@ -111,6 +142,7 @@ class OktaClient:
         self._max_wait = rate_limit_max_wait
         self._on_request = on_request
         self._on_sent = on_sent
+        self._share = share
 
     async def get(
         self, url: str, params: Mapping[str, str | list[str]] | None = None
@@ -128,14 +160,38 @@ class OktaClient:
         self._charge()
         token, response = await self._attempt(target)
         if response.status_code == 429:
-            wait = retry_wait(response, self._max_wait)
-            self._charge()  # before the wait: a principal at its limit fails now, not after it
-            log.warning("Okta rate limit hit; retrying in %.1f s", wait)
-            await anyio.sleep(wait)
-            token, response = await self._attempt(target)
-            if response.status_code == 429:
-                log.warning("Okta rate limit hit again; giving up")
-                raise rate_limited(response)
+            try:
+                wait = retry_wait(response, self._max_wait)
+            except OktaRateLimited as e:
+                _log_give_up(e.reason)
+                raise
+            try:
+                self._charge()  # before the wait: a principal at its limit fails now
+            except RateLimited:
+                _log_give_up("principal_limit")
+                raise
+            _log_retry(wait)
+            # One outcome per retry, logged in one place. Anything that isn't an `Exception`
+            # (a cancellation by the deadline or shutdown, or an interpreter exit) keeps the
+            # default.
+            outcome: GiveUp | None = "cancelled"
+            try:
+                await anyio.sleep(wait)
+                token, response = await self._attempt(target)
+                if response.status_code == 429:
+                    outcome = "retry_failed"
+                    raise rate_limited(response, "retry_failed")
+                outcome = None if response.is_success else "retry_error"
+            except RateLimited as e:
+                if not isinstance(e, OktaRateLimited):  # Okta's own: `retry_failed`, set above
+                    outcome = "principal_limit"  # the nonce retry's charge, inside `_attempt`
+                raise
+            except Exception:
+                outcome = "retry_error"
+                raise
+            finally:
+                if outcome is not None:
+                    _log_give_up(outcome)
         if response.is_success:
             return response
         # Only a nonce challenge (about the proof) and a disabled feature are known not to be
@@ -160,13 +216,17 @@ class OktaClient:
     async def _attempt(self, url: httpx2.URL) -> tuple[ServiceToken, httpx2.Response]:
         """One request in one slot, with the nonce retry. The caller has charged the first
         request. The slot is free during a 429 wait."""
-        async with self._slots:
+        async with self._share_slot(), self._slots:
             token, response = await self._send(url)
             if self._dpop is not None and self._dpop.needs_retry(response):
+                log.debug("Okta asked for a DPoP nonce; retrying", extra=event("dpop_nonce_retry"))
                 self._charge()
                 token, response = await self._send(url)
                 self._dpop.needs_retry(response)  # records a rotated nonce; no second retry
         return token, response
+
+    def _share_slot(self) -> AbstractAsyncContextManager[None]:
+        return nullcontext() if self._share is None else self._share.slot()
 
     async def _send(self, url: httpx2.URL) -> tuple[ServiceToken, httpx2.Response]:
         try:
