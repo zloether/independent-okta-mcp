@@ -9,9 +9,10 @@ Skipped when `OKTA_MCP_IMAGE` is unset, so the default `uv run pytest` needs no 
 
 import json
 import os
+import re
 import subprocess
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -53,46 +54,69 @@ FETCH = """
 import sys, urllib.error, urllib.request
 req = urllib.request.Request("http://127.0.0.1:8080" + sys.argv[1], method=sys.argv[2])
 try:
-    r = urllib.request.urlopen(req, timeout=2)
+    r = urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=2)
 except urllib.error.HTTPError as e:
     r = e
 print(r.status, r.headers.get("Retry-After") or "-")
 """
-"""Run inside the container (`--network=none` leaves nothing reachable from outside)."""
+"""Run inside the container (`--network=none` leaves nothing reachable from outside). No proxy,
+like the image's HEALTHCHECK."""
 
 SCAN = r"""
-import json, os, re, stat
-PEM = re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n[A-Za-z0-9+/=]{40}")
-OURS = ("/app", "/app/.venv/lib/python3.12/site-packages/okta_mcp")
-found = {"secrets": [], "setid": [], "dirs": []}
+import json, os, re, stat, sys
+PEM = re.compile(
+    rb"-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n(?:[A-Za-z-]+: [^\n]*\n)*\r?\n?[A-Za-z0-9+/=]{40}"
+)
+JWK = re.compile(rb'"d"\s*:\s*"[A-Za-z0-9_-]{20,}"')
+KEY_NAMES = (".pem", ".key", ".jwk", ".p12", ".pfx", ".der")
+CA_DIRS = ("/etc/ssl/certs/", "/usr/share/ca-certificates/")
+SITE = os.path.join(sys.prefix, "lib", "python%d.%d" % sys.version_info[:2], "site-packages")
+OURS = ("/app", os.path.join(SITE, "okta_mcp"))
+found = {"secrets": [], "setid": [], "dirs": [], "writable": []}
 for root, dirs, files in os.walk("/", onerror=lambda e: None):
     if root in ("/proc", "/sys", "/dev"):
         dirs[:] = []
         continue
+    mine = root == "/app" or root.startswith(("/app/", "/usr/"))
     for d in dirs:
         if root in OURS and d in ("tests", "docs", ".git", ".claude", "src", "scripts", "spikes"):
             found["dirs"].append(os.path.join(root, d))
+    if mine and os.access(root, os.W_OK):
+        found["writable"].append(root)
     for f in files:
         p = os.path.join(root, f)
         try:
             st = os.lstat(p)
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            if st.st_mode & (stat.S_ISUID | stat.S_ISGID):
+                found["setid"].append(p)
+            if mine and os.access(p, os.W_OK):
+                found["writable"].append(p)
+            if f.lower().endswith(KEY_NAMES) and not p.startswith(CA_DIRS):
+                found["secrets"].append(p)
+                continue
+            if st.st_size > 1 << 20 or not os.access(p, os.R_OK):
+                continue
+            with open(p, "rb") as fh:
+                body = fh.read()
         except OSError:
             continue
-        if not stat.S_ISREG(st.st_mode):
-            continue
-        if st.st_mode & (stat.S_ISUID | stat.S_ISGID):
-            found["setid"].append(p)
-        if st.st_size > 1 << 20 or not os.access(p, os.R_OK):
-            continue
-        with open(p, "rb") as fh:
-            if PEM.search(fh.read()):
-                found["secrets"].append(p)
+        if PEM.search(body) or (b'"kty"' in body and JWK.search(body)):
+            found["secrets"].append(p)
 print(json.dumps(found))
 """
-"""Walks the image as the server's user: what it can read is what a compromise could. A key is
-a PEM header followed by a body (`cryptography` holds the bare header as a constant); the
-repo's own trees are looked for at the top of `/app` and in the installed package, since
-third-party packages may ship their own `tests/`."""
+"""Walks the image as the server's user: what it can read is what a compromise could, and
+nothing under `/app` or `/usr` may be writable by it (code it imports, even without
+`--read-only`). A key is a file with a key's extension outside the CA directories, a PEM
+private-key header followed by a body (optionally after `Proc-Type`/`DEK-Info` lines;
+`cryptography` holds the bare header as a constant), or a JWK with a private `d`. The repo's
+own trees are looked for at the top of `/app` and in the installed package, since third-party
+packages may ship their own `tests/`."""
+
+PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
+
+ENV_ARGS = [f"--env={k}={v}" for k, v in ENV.items()]
 
 
 def _docker(
@@ -126,7 +150,7 @@ def test_runs_as_non_root_in_production_mode() -> None:
 
 def test_image_holds_no_keys_sources_or_setid_files() -> None:
     found = json.loads(_python(SCAN).stdout)
-    assert found == {"secrets": [], "setid": [], "dirs": []}
+    assert found == {"secrets": [], "setid": [], "dirs": [], "writable": []}
     assert _docker("run", "--rm", "--entrypoint", "ls", IMAGE, "-A", "/app").stdout.split() == [
         ".venv"
     ]
@@ -138,19 +162,15 @@ def test_package_is_installed_not_editable_and_ships_its_data() -> None:
         "print(p); print(sorted(x.name for x in (p / 'data').iterdir()))"
     )
     where, data = _python(code).stdout.splitlines()
-    assert where == "/app/.venv/lib/python3.12/site-packages/okta_mcp"
+    assert re.fullmatch(r"/app/\.venv/lib/python3\.\d+/site-packages/okta_mcp", where)
     assert data == "['registry', 'resources', 'scrub.yaml', 'specs']"
 
 
-def test_no_pip_and_nothing_writable() -> None:
-    pip = _docker("run", "--rm", "--entrypoint", "python", IMAGE, "-m", "pip", check=False)
-    assert pip.returncode != 0
-    assert "No module named pip" in pip.stderr
-    # Without --read-only too: the server's user can't change the installed code.
-    touch = _docker(
-        "run", "--rm", "--entrypoint", "touch", IMAGE, "/app/.venv/bin/okta-mcp", check=False
-    )
-    assert touch.returncode != 0
+def test_no_pip() -> None:
+    for module in ("pip", "ensurepip"):
+        run = _docker("run", "--rm", "--entrypoint", "python", IMAGE, "-m", module, check=False)
+        assert run.returncode != 0
+        assert f"No module named {module}" in run.stderr
 
 
 def test_version_and_startup_failure() -> None:
@@ -189,8 +209,11 @@ def secrets(tmp_path: Path) -> list[str]:
 
 @pytest.fixture
 def server(secrets: list[str]) -> Iterator[str]:
-    env = [f"--env={k}={v}" for k, v in ENV.items()]
-    cid = _docker("run", "--detach", *HARDENED, *secrets, *env, IMAGE).stdout.strip()
+    """The server, with an egress proxy set as an operator would for the Okta calls: the
+    HEALTHCHECK must not send its loopback probe there (the proxy host doesn't exist)."""
+    proxy = [f"--env={name}=http://proxy.example.com:3128" for name in PROXY_VARS]
+    cid = _docker("run", "--detach", *HARDENED, *secrets, *ENV_ARGS, *proxy, IMAGE).stdout
+    cid = cid.strip()
     try:
         yield cid
     finally:
@@ -198,9 +221,8 @@ def server(secrets: list[str]) -> Iterator[str]:
 
 
 def test_production_image_refuses_dev_mode_and_ssws(secrets: list[str]) -> None:
-    env = [f"--env={k}={v}" for k, v in ENV.items()]
     dev = _docker(
-        "run", "--rm", *HARDENED, *secrets, *env, "--env=MCP_DEV_MODE=1",
+        "run", "--rm", *HARDENED, *secrets, *ENV_ARGS, "--env=MCP_DEV_MODE=1",
         "--env=MCP_DEV_PRINCIPAL_FILE=/run/secrets/policy.yaml", "--env=OKTA_API_TOKEN=x",
         IMAGE, "--stdio", check=False,
     )  # fmt: skip
@@ -214,7 +236,7 @@ def _fetch(cid: str, path: str, method: str = "GET") -> str:
     return out.stdout.strip() if out.returncode == 0 else f"error: {out.stderr.strip()[-200:]}"
 
 
-def _wait(predicate: Any, timeout: float) -> bool:
+def _wait(predicate: Callable[[], bool], timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
