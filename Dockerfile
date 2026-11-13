@@ -16,9 +16,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY LICENSE README.md ./
 COPY src/ src/
 # Non-editable: the package (with its data files) is installed into the venv, so the runtime
-# stage needs no source tree. uv leaves an empty world-writable `.lock` in the venv; nothing
-# reads it at runtime.
-RUN uv sync --frozen --no-dev --no-editable && rm /app/.venv/.lock
+# stage needs no source tree. No group/other write bits anywhere in the venv (uv leaves its
+# `.lock` at 0666): only root may change the code the server imports.
+RUN uv sync --frozen --no-dev --no-editable && chmod -R go-w /app/.venv
 
 FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 # Debian security fixes released since the base digest was built: the pinned digest moves only

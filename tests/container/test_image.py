@@ -68,7 +68,8 @@ PEM = re.compile(
     rb"-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n(?:[A-Za-z-]+: [^\n]*\n)*\r?\n?[A-Za-z0-9+/=]{40}"
 )
 JWK = re.compile(rb'"d"\s*:\s*"[A-Za-z0-9_-]{20,}"')
-KEY_NAMES = (".pem", ".key", ".jwk", ".p12", ".pfx", ".der")
+BINARY_KEYS = (".key", ".jwk", ".p12", ".pfx", ".der")
+SCRATCH = ("/tmp", "/var/tmp", "/run/lock")
 SITE = os.path.join(sys.prefix, "lib", "python%d.%d" % sys.version_info[:2], "site-packages")
 OURS = ("/app", os.path.join(SITE, "okta_mcp"))
 found = {"secrets": [], "setid": [], "dirs": [], "writable": []}
@@ -76,11 +77,12 @@ for root, dirs, files in os.walk("/", onerror=lambda e: None):
     if root in ("/proc", "/sys", "/dev"):
         dirs[:] = []
         continue
-    mine = root in ("/app", "/usr") or root.startswith(("/app/", "/usr/"))
+    in_app = root == "/app" or root.startswith("/app/")
+    scratch = root in SCRATCH
     for d in dirs:
         if root in OURS and d in ("tests", "docs", ".git", ".claude", "src", "scripts", "spikes"):
             found["dirs"].append(os.path.join(root, d))
-    if mine and os.access(root, os.W_OK):
+    if not scratch and os.access(root, os.W_OK):
         found["writable"].append(root)
     for f in files:
         p = os.path.join(root, f)
@@ -90,9 +92,10 @@ for root, dirs, files in os.walk("/", onerror=lambda e: None):
                 continue
             if st.st_mode & (stat.S_ISUID | stat.S_ISGID):
                 found["setid"].append(p)
-            if mine and os.access(p, os.W_OK):
+            if not scratch and os.access(p, os.W_OK):
                 found["writable"].append(p)
-            if root.startswith(OURS[0]) and f.lower().endswith(KEY_NAMES):
+            name = f.lower()
+            if name.endswith(BINARY_KEYS) or (in_app and name.endswith(".pem")):
                 found["secrets"].append(p)
                 continue
             if st.st_size > 1 << 20 or not os.access(p, os.R_OK):
@@ -106,9 +109,10 @@ for root, dirs, files in os.walk("/", onerror=lambda e: None):
 print(json.dumps(found))
 """
 """Walks the image as the server's user: what it can read is what a compromise could, and
-nothing under `/app` or `/usr` may be writable by it (code it imports, even without
-`--read-only`). A key is a file with a key's extension under `/app` (elsewhere public
-certificates may use the same names), a PEM
+nothing it may write outside the sticky scratch directories (`/tmp`, `/var/tmp`, `/run/lock`):
+not the code it imports, not `/etc` (a CA bundle it trusts), even without `--read-only`. A key
+is a file with a binary key format's extension anywhere (the content patterns can't read
+PKCS#12 or DER), a `.pem` under `/app` (elsewhere public certificates use that name), a PEM
 private-key header followed by a body (optionally after `Proc-Type`/`DEK-Info` lines;
 `cryptography` holds the bare header as a constant), or a JWK with a private `d`. The repo's
 own trees are looked for at the top of `/app` and in the installed package, since third-party
