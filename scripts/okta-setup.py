@@ -19,6 +19,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -41,11 +42,24 @@ from pydantic import (
 )
 
 GROUP_PREFIX = "mcp-okta-"
-# Emits IDs of Okta-mastered groups whose name starts with GROUP_PREFIX (design §8.2, V13).
-GROUPS_EXPRESSION = (
-    "user.getGroups({'group.type': {'OKTA_GROUP'}}, "
-    f"{{'group.profile.name': {{'{GROUP_PREFIX}'}}}}).![id]"
-)
+"""Default `group_prefix`."""
+# The prefix goes inside a single-quoted Okta Expression Language literal, so the character set
+# leaves out quotes, backslashes, braces and `$`. At least 4 characters: a short prefix ("a")
+# would put most of a user's groups in every token, past Okta's cap on the claim. Mirrored in
+# terraform/okta/variables.tf (tested).
+GROUP_PREFIX_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9 _.:-]{3,63}$"
+
+
+def groups_expression(prefix: str) -> str:
+    """Emits IDs of Okta-mastered groups whose name starts with `prefix` (design §8.2, V13)."""
+    if not re.fullmatch(GROUP_PREFIX_PATTERN, prefix):
+        raise ValueError(f"invalid group prefix {prefix!r}")
+    return (
+        "user.getGroups({'group.type': {'OKTA_GROUP'}}, "
+        f"{{'group.profile.name': {{'{prefix}'}}}}).![id]"
+    )
+
+
 GROUPS_CLAIM = "groups"
 POLICY_NAME = "okta-mcp clients"
 RULE_NAME = "okta-mcp groups"
@@ -134,6 +148,8 @@ class Config(_Model):
     scope: str = "okta-mcp"
     access_token_minutes: int = Field(default=30, ge=5, le=30)
     refresh_tokens: RefreshTokens | None = None
+    group_prefix: str = Field(default=GROUP_PREFIX, pattern=GROUP_PREFIX_PATTERN)
+    """Role group names start with this; the groups claim emits only such groups' IDs."""
     groups: list[str] = Field(min_length=1)
     clients: list[Client] = Field(min_length=1)
     service_app: ServiceApp
@@ -143,6 +159,18 @@ class Config(_Model):
         if self.refresh_tokens and self.refresh_tokens.idle_minutes < self.access_token_minutes:
             raise ValueError("refresh_tokens.idle_minutes must be at least access_token_minutes")
         return self
+
+    @model_validator(mode="after")
+    def _prefix(self) -> "Config":
+        prefix = self.group_prefix
+        bad = [g for g in self.groups if not g.startswith(prefix) or g == prefix]
+        if bad:
+            raise ValueError(f"group names must start with {prefix!r}, got {bad}")
+        return self
+
+    @property
+    def groups_expression(self) -> str:
+        return groups_expression(self.group_prefix)
 
     @property
     def client_grants(self) -> list[str]:
@@ -180,14 +208,6 @@ class Config(_Model):
         if normalized != url:
             raise ValueError(ENCODED_HOST)
         return url
-
-    @field_validator("groups")
-    @classmethod
-    def _prefix(cls, groups: list[str]) -> list[str]:
-        bad = [g for g in groups if not g.startswith(GROUP_PREFIX) or g == GROUP_PREFIX]
-        if bad:
-            raise ValueError(f"group names must start with {GROUP_PREFIX!r}, got {bad}")
-        return groups
 
 
 def load_config(path: Path) -> Config:
@@ -470,6 +490,7 @@ class Setup:
 
     def _claim(self, base: str) -> None:
         what = f"claim {GROUPS_CLAIM!r}"
+        expression = self.cfg.groups_expression
         claim = next(
             (
                 c
@@ -484,7 +505,7 @@ class Setup:
                 "status": "ACTIVE",
                 "claimType": "RESOURCE",
                 "valueType": "EXPRESSION",
-                "value": GROUPS_EXPRESSION,
+                "value": expression,
                 "alwaysIncludeInToken": True,
                 "conditions": {"scopes": []},
             }
@@ -493,8 +514,8 @@ class Setup:
                 "create on access token",
                 lambda: self.okta.request("POST", f"{base}/claims", body),
             )
-        elif claim["valueType"] != "EXPRESSION" or claim["value"] != GROUPS_EXPRESSION:
-            self.problem(what, f"value is {claim['value']!r}, expected {GROUPS_EXPRESSION!r}")
+        elif claim["valueType"] != "EXPRESSION" or claim["value"] != expression:
+            self.problem(what, f"value is {claim['value']!r}, expected {expression!r}")
         elif claim["status"] != "ACTIVE" or not claim["alwaysIncludeInToken"]:
             self.problem(what, "must be ACTIVE and always included in the token")
         elif scopes := (claim.get("conditions") or {}).get("scopes"):
@@ -628,7 +649,7 @@ class Setup:
             issues.append("includes individual users; grant access through groups only")
         include = (people.get("groups") or {}).get("include", [])
         if "EVERYONE" in include:
-            issues.append("applies to EVERYONE; limit it to the mcp-okta-* groups")
+            issues.append("applies to EVERYONE; limit it to the {cfg.group_prefix}* groups")
         for issue in issues:
             self.problem(what, issue)
         if issues:

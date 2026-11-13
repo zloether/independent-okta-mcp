@@ -8,15 +8,21 @@ If you manage Okta with Terraform, use [`terraform/okta/`](../terraform/okta/) i
 
 | Object | Settings |
 |---|---|
-| Groups | One Okta group per role, named `mcp-okta-*` |
+| Groups | One Okta group per role, named `mcp-okta-*` (the prefix is `group_prefix`; see [Group names](#group-names)) |
 | Public clients | One native OIDC app per approved MCP client: authorization code (plus refresh token with rotation under [option B](#refresh-tokens-option-a-or-b)), PKCE required, no client secret, exact redirect URIs, role groups assigned |
 | Custom authorization server | Audience = `mcp_public_url` |
 | Scope | `okta-mcp`, implicit consent, published in metadata |
-| `groups` claim | On the access token, always included; emits the **IDs** of Okta groups named `mcp-okta-*` |
+| `groups` claim | On the access token, always included; emits the **IDs** of Okta groups whose name starts with the prefix |
 | Access policy `okta-mcp clients` | Applies only to the configured clients |
 | Policy rule `okta-mcp groups` | Authorization code only, role groups only, scopes `openid profile email offline_access okta-mcp`, access token ≤30 min; refresh tokens no longer than an access token under option A, or as set in `refresh_tokens` under option B |
 | Service app | API Services app, `private_key_jwt` with your public key, **Require DPoP on**, the configured `okta.*.read` grants, and the admin role those scopes need (see [the next section](#service-app-scopes-and-admin-roles)) |
 
+
+### Group names
+
+The role groups' names start with a prefix, `mcp-okta-` unless you set `group_prefix` (script config or Terraform variable). The `groups` claim emits the IDs of the user's Okta-mastered groups whose names start with it, and the setup tools refuse group names that don't, since such a group would never reach the token. Pick a prefix only your MCP role groups use: a broader one puts more of each user's group IDs in every token, toward Okta's cap on the claim (about 100). It doesn't grant anything by itself; the policy matches IDs. Allowed: 4 to 64 characters, a letter or digit first, then letters, digits, space, `_`, `.`, `:` and `-` (the prefix goes inside a quoted Okta expression, so quotes, backslashes and braces are refused). Okta matches it as a prefix only, so a convention that marks groups by a suffix or a middle part (`Helpdesk-OktaMCP`) needs a hand-written claim expression, which the script then reports as `manual`.
+
+Changing the prefix after setup: Terraform updates the claim in place; the script never changes a claim expression, so it reports the old one as `manual` and you edit it in the admin console (Security → API → the authorization server → Claims). Rename or recreate the groups to match first, or users lose their roles until you do.
 ## Service app scopes and admin roles
 
 Okta answers a service-app request only when the token's scope **and** the app's admin role both allow it. The scopes you grant (`service_app.scopes`, which become the server's `OKTA_SCOPES`) set which commands the server can offer. The server hides any command whose scope isn't configured. Each scope also needs an admin role broad enough for its endpoints:
@@ -50,7 +56,7 @@ Some endpoints also need an Okta feature that not every org has. `groups get-own
    openssl pkey -in okta-mcp-service.pem -pubout -out okta-mcp-service.pub.pem
    ```
 
-3. **A config file.** Copy [`scripts/okta-setup.example.yaml`](../scripts/okta-setup.example.yaml) and edit it, including the [refresh-token choice](#refresh-tokens-option-a-or-b). Invalid configs are rejected before anything is sent to Okta: unknown keys, group names without the `mcp-okta-` prefix, scopes other than `okta.*.read`, access-token lifetimes over 30 minutes, and refresh-token lifetimes over 24 hours.
+3. **A config file.** Copy [`scripts/okta-setup.example.yaml`](../scripts/okta-setup.example.yaml) and edit it, including the [refresh-token choice](#refresh-tokens-option-a-or-b). Invalid configs are rejected before anything is sent to Okta: unknown keys, a `group_prefix` outside its character set, group names without the prefix, scopes other than `okta.*.read`, access-token lifetimes over 30 minutes, and refresh-token lifetimes over 24 hours.
 
 ## Refresh tokens: option A or B
 
@@ -99,7 +105,7 @@ When nothing is missing, the tool prints the values to give the server (`MCP_ISS
 - **adds** missing links: app group assignments, configured clients in the access policy, and configured groups in the policy rule, plus the grants and the Read-only Administrator role (when the scopes need no more) on a service app it creates in the same run;
 - **turns on** Require DPoP on the service app. Okta leaves it off for apps created through the API.
 
-It never deletes anything, never removes grants, roles, clients or groups, and never changes audiences, claim expressions, app types, redirect URIs or token lifetimes. Those differences are reported as `manual`. So are settings that widen access: extra grants on the service app or admin roles broader than its scopes need, policies that apply to `ALL_CLIENTS` or `EVERYONE`, individual users in the rule, and imported groups with an `mcp-okta-` name.
+It never deletes anything, never removes grants, roles, clients or groups, and never changes audiences, claim expressions, app types, redirect URIs or token lifetimes. Those differences are reported as `manual`. So are settings that widen access: extra grants on the service app or admin roles broader than its scopes need, policies that apply to `ALL_CLIENTS` or `EVERYONE`, individual users in the rule, and imported groups with a role group's name.
 
 An existing object that fails any check is not trusted, and nothing that depends on it is changed:
 
@@ -124,7 +130,7 @@ The rule must allow the authorization code grant only, so a rule that also lists
 
 ## Terraform
 
-`terraform/okta/` is a root module for the [okta/okta provider](https://registry.terraform.io/providers/okta/okta/latest) (`~> 7.1`) with the same objects, names and checks as the script: inputs that would widen access (group names without the prefix, scopes other than `okta.*.read`, access-token lifetimes over 30 minutes, refresh-token lifetimes over 24 hours, a private or short key) fail at `plan`. The service app gets the role [the table](#service-app-scopes-and-admin-roles) names for `service_scopes`; when that is Super Administrator, `plan` fails unless you set `allow_super_admin = true`. Set `refresh_tokens` for option B; leave it unset for A. Unlike the script, changing it later updates the apps and rule in place.
+`terraform/okta/` is a root module for the [okta/okta provider](https://registry.terraform.io/providers/okta/okta/latest) (`~> 7.1`) with the same objects, names and checks as the script: inputs that would widen access (group names without the prefix, scopes other than `okta.*.read`, access-token lifetimes over 30 minutes, refresh-token lifetimes over 24 hours, a private or short key) fail at `plan`. The service app gets the role [the table](#service-app-scopes-and-admin-roles) names for `service_scopes`; when that is Super Administrator, `plan` fails unless you set `allow_super_admin = true`. Set `refresh_tokens` for option B; leave it unset for A. Unlike the script, changing it or `group_prefix` later updates the apps, rule and claim in place.
 
 1. Create the key pair as above, then convert the public half to a JWK. Terraform cannot parse PEM, and needs only the public JWK:
 

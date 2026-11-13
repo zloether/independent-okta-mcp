@@ -8,11 +8,13 @@ mcp_public_url = "https://mcp.example.com/mcp"
 # scope                = "okta-mcp"
 # access_token_minutes = 30
 # service_app_name     = "okta-mcp service"
+# group_prefix         = "mcp-okta-" # role group names start with this
 
 # Option B: rotating refresh tokens. Omit for option A (no refresh tokens).
 # See "Refresh tokens: option A or B" in docs/okta-setup.md.
 # refresh_tokens = { idle_minutes = 60, lifetime_minutes = 480 }
 
+# Role groups, each named with group_prefix.
 groups = ["mcp-okta-helpdesk", "mcp-okta-readers"]
 
 clients = {
