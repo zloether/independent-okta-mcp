@@ -68,7 +68,7 @@ PEM = re.compile(
     rb"-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n(?:[A-Za-z-]+: [^\n]*\n)*\r?\n?[A-Za-z0-9+/=]{40}"
 )
 JWK = re.compile(rb'"d"\s*:\s*"[A-Za-z0-9_-]{20,}"')
-BINARY_KEYS = (".key", ".jwk", ".p12", ".pfx", ".der")
+KEY_EXTENSIONS = (".key", ".jwk", ".p12", ".pfx", ".der")
 SCRATCH = ("/tmp", "/var/tmp", "/run/lock")
 SITE = os.path.join(sys.prefix, "lib", "python%d.%d" % sys.version_info[:2], "site-packages")
 OURS = ("/app", os.path.join(SITE, "okta_mcp"))
@@ -95,7 +95,7 @@ for root, dirs, files in os.walk("/", onerror=lambda e: None):
             if not scratch and os.access(p, os.W_OK):
                 found["writable"].append(p)
             name = f.lower()
-            if name.endswith(BINARY_KEYS) or (in_app and name.endswith(".pem")):
+            if name.endswith(KEY_EXTENSIONS) or (in_app and name.endswith(".pem")):
                 found["secrets"].append(p)
                 continue
             if st.st_size > 1 << 20 or not os.access(p, os.R_OK):
@@ -110,13 +110,14 @@ print(json.dumps(found))
 """
 """Walks the image as the server's user: what it can read is what a compromise could, and
 nothing it may write outside the sticky scratch directories (`/tmp`, `/var/tmp`, `/run/lock`):
-not the code it imports, not `/etc` (a CA bundle it trusts), even without `--read-only`. A key
-is a file with a binary key format's extension anywhere (the content patterns can't read
-PKCS#12 or DER), a `.pem` under `/app` (elsewhere public certificates use that name), a PEM
-private-key header followed by a body (optionally after `Proc-Type`/`DEK-Info` lines;
-`cryptography` holds the bare header as a constant), or a JWK with a private `d`. The repo's
-own trees are looked for at the top of `/app` and in the installed package, since third-party
-packages may ship their own `tests/`."""
+not the code it imports, not `/etc` (a CA bundle it trusts), even without `--read-only`.
+
+A key is: a file named like a private key anywhere (`.key .jwk .p12 .pfx .der`, since the
+content patterns can't read PKCS#12, DER or every encrypted form); a `.pem` under `/app`
+(elsewhere public certificates use that name); a PEM private-key header followed by a body
+(optionally after `Proc-Type`/`DEK-Info` lines; `cryptography` holds the bare header as a
+constant); or a JWK with a private `d`. The repo's own trees are looked for at the top of
+`/app` and in the installed package, since third-party packages may ship their own `tests/`."""
 
 PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
 
