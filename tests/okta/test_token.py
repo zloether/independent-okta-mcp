@@ -289,6 +289,26 @@ async def test_keep_fresh_asks_again_after_the_backoff(key: rsa.RSAPrivateKey) -
 
 
 @pytest.mark.anyio
+async def test_keep_fresh_backs_off_on_repeated_failures(key: rsa.RSAPrivateKey) -> None:
+    """A bad key on an idle server: the background asks double up to the normal cycle."""
+    clock = Clock()
+    okta = Okta(httpx2.Response(401, json={"error": "invalid_client"}))
+    p = provider(okta, key, monotonic=clock)
+    slept: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        clock.now += seconds
+        if len(slept) == 6:
+            raise anyio.get_cancelled_exc_class()
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await keep_fresh(p, sleep=sleep)
+    assert slept == [5, 10, 20, 30, 30, 30]
+    assert len(okta.requests) == 6
+
+
+@pytest.mark.anyio
 async def test_keep_fresh_survives_an_unexpected_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -44,9 +44,18 @@ principal: ContextVar[str | None] = ContextVar("okta_mcp_principal", default=Non
 
 
 GiveUp = Literal[
-    "over_max_wait", "no_reset", "deadline", "retry_failed", "principal_limit", "cancelled"
+    "over_max_wait",
+    "no_reset",
+    "deadline",
+    "principal_limit",
+    "retry_failed",
+    "retry_error",
+    "cancelled",
 ]
-"""Why an Okta 429 wasn't retried, or its retry didn't finish (`okta_rate_limited.reason`)."""
+"""Why an Okta 429 wasn't retried (`over_max_wait`, `no_reset`, `deadline`,
+`principal_limit`), or how its retry ended without success: another 429 (`retry_failed`),
+any other error (`retry_error`), or a cancellation (`cancelled`: the call's deadline, or
+shutdown). The `okta_rate_limited` event's `reason`."""
 
 
 class RateLimited(Exception):
@@ -155,27 +164,33 @@ def share_of(max_inflight: int) -> int:
     return (max_inflight + 1) // 2
 
 
+SHARE_LOG_EVERY = 60.0
+"""At most one `inflight_share_wait` line per principal per this many seconds."""
+
+
 @dataclass
 class _Share:
     semaphore: anyio.Semaphore
     users: int = 0
     """Requests holding or waiting for `semaphore`."""
-    logged: bool = False
-    """`inflight_share_wait` has been logged for this record."""
 
 
 class InflightShare:
     """At most `per_principal` requests in flight per principal. Semaphores exist only while a
     principal has a request holding or waiting for one, so idle principals hold no memory.
-    `inflight_share_wait` is logged once per record, i.e. once until the principal has no
-    request holding or waiting: how many wait is up to the caller, so a line per request
-    would let one user flood the log."""
+    `inflight_share_wait` is logged at most once per `SHARE_LOG_EVERY` per principal: how many
+    wait is up to the caller, so a line per request (or per burst) would let one user flood
+    the log, and a line per busy period would hide hours of saturation. The log times are kept
+    apart from the semaphores, which go when a principal's queue drains, and pruned when a
+    line is written."""
 
-    def __init__(self, per_principal: int) -> None:
+    def __init__(self, per_principal: int, clock: Callable[[], float] = time.monotonic) -> None:
         if per_principal < 1:
             raise ValueError("per_principal must be at least 1")
         self._limit = per_principal
+        self._clock = clock
         self._held: dict[str, _Share] = {}
+        self._logged: dict[str, float] = {}
 
     @asynccontextmanager
     async def slot(self) -> AsyncGenerator[None]:
@@ -189,8 +204,7 @@ class InflightShare:
             share = self._held[uid] = _Share(anyio.Semaphore(self._limit))
         share.users += 1
         try:
-            if share.semaphore.value == 0 and not share.logged:
-                share.logged = True
+            if share.semaphore.value == 0 and self._log_due(uid):
                 log.info(
                     "Per-principal share of in-flight Okta requests in use; waiting",
                     extra=event("inflight_share_wait", share=self._limit),
@@ -201,3 +215,14 @@ class InflightShare:
             share.users -= 1
             if share.users == 0:
                 del self._held[uid]
+
+    def _log_due(self, uid: str) -> bool:
+        """Whether `uid`'s wait line is due, recording it if so. Pruned here, at most once a
+        minute per principal, so the map holds only principals logged in the minute before the
+        latest line."""
+        now = self._clock()
+        if now - self._logged.get(uid, -math.inf) < SHARE_LOG_EVERY:
+            return False
+        self._logged = {u: t for u, t in self._logged.items() if now - t < SHARE_LOG_EVERY}
+        self._logged[uid] = now
+        return True

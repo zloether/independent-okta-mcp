@@ -44,8 +44,8 @@ _ASSERTION_LIFETIME = 300
 _REFRESH_MARGIN = 60
 FAILURE_BACKOFF = 5.0
 """Seconds after a failed token request during which the error is served without a new one.
-`keep_fresh` asks again this long after a failure, so an outage costs one POST per backoff and
-readiness returns within about two backoffs of Okta recovering."""
+`keep_fresh` asks again this long after a first failure, then doubles up to
+`KEEP_FRESH_EVERY`."""
 _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 _HINTS = {
     "invalid_client": "check OKTA_CLIENT_ID, OKTA_PRIVATE_KEY_FILE and OKTA_KEY_ID against the "
@@ -94,18 +94,23 @@ async def keep_fresh(
     """Ask `provider` for a token every `every` seconds until cancelled, so `ready()` reflects
     a token obtained within the last refresh cycle without a probe ever fetching one (§11.4).
     Served from the cache while it is fresh; a failure is the provider's to log. After a
-    failure the next ask comes after `FAILURE_BACKOFF` (if shorter than `every`), so readiness
-    returns within a backoff of Okta recovering, not a whole cycle. Anything else (a bug) is
+    failure the next ask comes after `FAILURE_BACKOFF`, doubling with each further failure up
+    to `every`, so readiness returns soon after a short outage. Anything else (a bug) is
     logged and retried: this shares a task group with the server, so letting it out would stop
     the server rather than just leave it not ready."""
+    failures = 0
     while True:
-        delay = every
         try:
             await provider.token()
         except TokenError:
-            delay = min(every, FAILURE_BACKOFF)
+            failures += 1
         except Exception as e:
             log_internal(log, "service token refresh", e)
+        else:
+            failures = 0
+        # Doubling from the backoff after each failure, up to `every`: quick to notice Okta
+        # recovering, but a bad key on an idle server costs `every`'s rate, not 12 POSTs a min.
+        delay = every if failures == 0 else min(every, FAILURE_BACKOFF * 2 ** (failures - 1))
         await sleep(delay)
 
 

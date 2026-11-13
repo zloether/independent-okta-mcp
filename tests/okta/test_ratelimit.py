@@ -273,11 +273,14 @@ def share_waits(caplog: pytest.LogCaptureFixture) -> int:
 
 
 @pytest.mark.anyio
-async def test_share_wait_is_logged_once_per_episode(caplog: pytest.LogCaptureFixture) -> None:
-    """How many requests wait is up to the caller: one line while the principal has any
-    request holding or waiting, another only after that has drained."""
+async def test_share_wait_is_logged_at_most_once_a_minute(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """How many requests wait is up to the caller: bursts inside a minute give one line;
+    a minute later, still busy, another."""
     caplog.set_level("INFO", "okta_mcp")
-    share = InflightShare(1)
+    clock = Clock()
+    share = InflightShare(1, clock)
 
     async def hold(release: anyio.Event) -> None:
         token = ratelimit.principal.set("00u1")
@@ -287,24 +290,30 @@ async def test_share_wait_is_logged_once_per_episode(caplog: pytest.LogCaptureFi
         finally:
             ratelimit.principal.reset(token)
 
-    for _ in range(2):
+    async def burst() -> None:
         release = anyio.Event()
         async with anyio.create_task_group() as tg:
             for _ in range(6):
                 tg.start_soon(hold, release)
             await anyio.wait_all_tasks_blocked()
             release.set()
+
+    await burst()
+    clock.t += 59
+    await burst()
+    assert share_waits(caplog) == 1
+    clock.t += 1
+    await burst()
     assert share_waits(caplog) == 2
 
 
 @pytest.mark.anyio
-async def test_share_wait_is_logged_once_under_steady_load(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+async def test_share_wait_under_steady_load(caplog: pytest.LogCaptureFixture) -> None:
     """One request over the share, all the time: a new request arrives each time the waiter
-    gets the slot (the 2026-11-13 re-review case). Still one line."""
+    gets the slot. One line, then one more a minute later while it stays busy."""
     caplog.set_level("INFO", "okta_mcp")
-    share = InflightShare(1)
+    clock = Clock()
+    share = InflightShare(1, clock)
     token = ratelimit.principal.set("00u1")
     try:
         releases = [anyio.Event() for _ in range(10)]
@@ -319,10 +328,11 @@ async def test_share_wait_is_logged_once_under_steady_load(
             for i in range(1, 10):
                 tg.start_soon(hold, i)  # waits behind i - 1
                 await anyio.wait_all_tasks_blocked()
-                releases[i - 1].set()  # the waiter gets the slot; nothing waits now
+                releases[i - 1].set()
                 await anyio.wait_all_tasks_blocked()
+                clock.t += 10
             releases[9].set()
     finally:
         ratelimit.principal.reset(token)
-    assert share_waits(caplog) == 1
+    assert share_waits(caplog) == 2  # at t=0 and t=60
     assert share._held == {}  # pyright: ignore[reportPrivateUsage]

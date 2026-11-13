@@ -79,10 +79,10 @@ def _log_retry(wait: float) -> None:
 
 
 def _log_give_up(reason: GiveUp) -> None:
-    """`okta_rate_limited` for a 429 not retried, or whose retry didn't finish. Every 429
-    ends in exactly one of these or a successful retry."""
+    """`okta_rate_limited` for a 429 not retried, or whose retry didn't succeed. Every 429
+    ends in exactly one of these or a successful retry (`OktaClient.get`)."""
     log.warning(
-        "Okta rate limit hit; not retrying (%s)",
+        "Okta rate limit hit; gave up (%s)",
         reason,
         extra=event("okta_rate_limited", retry=False, reason=reason),
     )
@@ -171,15 +171,21 @@ class OktaClient:
                 _log_give_up("principal_limit")
                 raise
             _log_retry(wait)
+            # One outcome per retry, whatever ends it: the `except` covers every exception
+            # (cancellation included) and the `else` every response.
             try:
                 await anyio.sleep(wait)
                 token, response = await self._attempt(target)
-            except anyio.get_cancelled_exc_class():
-                _log_give_up("cancelled")  # the call's deadline, during the wait or the retry
+            except BaseException as e:
+                cancelled = isinstance(e, anyio.get_cancelled_exc_class())
+                _log_give_up("cancelled" if cancelled else "retry_error")
                 raise
-            if response.status_code == 429:
-                _log_give_up("retry_failed")
-                raise rate_limited(response, "retry_failed")
+            else:
+                if response.status_code == 429:
+                    _log_give_up("retry_failed")
+                    raise rate_limited(response, "retry_failed")
+                if not response.is_success:
+                    _log_give_up("retry_error")
         if response.is_success:
             return response
         # Only a nonce challenge (about the proof) and a disabled feature are known not to be

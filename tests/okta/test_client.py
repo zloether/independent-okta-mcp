@@ -678,3 +678,34 @@ async def test_on_sent_counts_a_request_cancelled_in_flight() -> None:
     with anyio.move_on_after(0.05):
         await client(slow, on_sent=sent.append).get(USERS)
     assert sent == [None]
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("no_jitter")
+@pytest.mark.parametrize(
+    "retry",
+    [httpx2.Response(503, json={"errorSummary": "down"}), httpx2.ConnectError("refused")],
+)
+async def test_a_retry_that_errors_is_logged(
+    retry: httpx2.Response | Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A retry ending in a non-429 error response or a transport error still closes the 429
+    with one `retry_error` give-up."""
+    calls = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return rate_limited()
+        if isinstance(retry, Exception):
+            raise retry
+        return retry
+
+    with pytest.raises(UpstreamError):
+        await client(handler).get(USERS)
+    logged = [getattr(r, "okta_mcp_event", None) for r in caplog.records]
+    assert [e for e in logged if e is not None] == [
+        ("okta_rate_limited", {"retry": True, "wait_s": 0.0}),
+        ("okta_rate_limited", {"retry": False, "reason": "retry_error"}),
+    ]
