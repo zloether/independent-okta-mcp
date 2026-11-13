@@ -23,7 +23,7 @@ import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from urllib.parse import urlsplit
 
 import httpx2
@@ -238,7 +238,9 @@ def public_jwk(pem: bytes) -> dict[str, str]:
 
 # Okta's "feature not available" code. On the authorization-server endpoints it most likely
 # means the org lacks API Access Management, which creating a custom authorization server
-# needs (docs/okta-setup.md#prerequisites). Not seen live: matched on the code, any 401/403.
+# needs (docs/okta-setup.md#prerequisites). Not seen live: matched on the code at 401 or 403
+# (Okta sends E0000015 with 401 elsewhere, e.g. group owners) on the list/create endpoint only,
+# since a sub-resource's E0000015 could be another feature.
 FEATURE_OFF = "E0000015"
 AUTHORIZATION_SERVERS = "/api/v1/authorizationServers"
 NO_API_AM = (
@@ -246,6 +248,28 @@ NO_API_AM = (
     "API Access Management add-on (Enterprise and One-App subscriptions include only the "
     "built-in 'default' server); see Prerequisites in docs/okta-setup.md"
 )
+
+
+def _error_detail(response: httpx2.Response) -> tuple[str | None, str]:
+    """Okta's error code and a one-line summary, from whatever shape the body has."""
+    try:
+        error = response.json()
+    except ValueError:
+        return None, ""
+    if not isinstance(error, dict):
+        return None, ""
+    fields = cast(dict[str, Any], error)
+    code = fields.get("errorCode")
+    code = code if isinstance(code, str) else None
+    summary = fields.get("errorSummary")
+    causes = fields.get("errorCauses")
+    cause_text = "; ".join(
+        str(c.get("errorSummary", ""))
+        for c in (causes if isinstance(causes, list) else [])
+        if isinstance(c, dict)
+    )
+    parts = [code, summary if isinstance(summary, str) else None, cause_text or None]
+    return code, " ".join(p for p in parts if p)
 
 
 class Okta:
@@ -257,19 +281,12 @@ class Okta:
     ) -> httpx2.Response:
         response = self.http.request(method, path, json=body, params=params)
         if response.status_code >= 400:
-            code = None
-            try:
-                error = response.json()
-                code = error.get("errorCode")
-                causes = "; ".join(c.get("errorSummary", "") for c in error.get("errorCauses", []))
-                detail = f"{code} {error.get('errorSummary')} {causes}".strip()
-            except (ValueError, AttributeError):
-                detail = ""
-            message = f"{method} {path} -> HTTP {response.status_code} {detail}"
+            code, detail = _error_detail(response)
+            message = f"{method} {path} -> HTTP {response.status_code} {detail}".rstrip()
             if (
                 code == FEATURE_OFF
                 and response.status_code in (401, 403)
-                and httpx2.URL(path).path.startswith(AUTHORIZATION_SERVERS)
+                and httpx2.URL(path).path.rstrip("/") == AUTHORIZATION_SERVERS
             ):
                 message += f"\n{NO_API_AM}"
             raise SetupError(message)
