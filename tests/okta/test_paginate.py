@@ -160,6 +160,22 @@ async def test_wrapped_response_with_link_header() -> None:
 
 
 @pytest.mark.anyio
+async def test_wrapped_null_list_is_empty() -> None:
+    # okta-skills saw `{"keys": null}` for an app without keys; the link is not followed.
+    okta = Okta(page({"resource-sets": None, "_links": {"next": {"href": PAGE2}}}))
+    assert await collect(okta, mode="link_or_body", items_key="resource-sets") == []
+    assert len(okta.requests) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("body", [{}, {"keys": []}, {"resource-sets": {"id": "a"}}, [], None])
+async def test_wrapper_without_the_list_fails(body: Any) -> None:
+    # A missing key is a wrong `items_key` or a changed shape, not an empty list.
+    with pytest.raises(PaginationError, match="not the expected list"):
+        await collect(Okta(page(body)), mode="none", items_key="resource-sets")
+
+
+@pytest.mark.anyio
 async def test_empty_page_stops_even_with_next_link() -> None:
     okta = Okta(page([], PAGE2))
     assert await collect(okta, mode="link") == []

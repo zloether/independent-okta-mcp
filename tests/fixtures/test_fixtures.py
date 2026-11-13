@@ -61,7 +61,8 @@ def _blank(cell: Any) -> bool:
 def _item_fields(command: Command) -> frozenset[str]:
     """Declared fields of one list item: the wrapped list's for an `items_key` command."""
     response = command.operation.response
-    if command.entry.items_key is not None:
+    override = command.entry.response_override
+    if command.entry.items_key is not None and not (override and override.kind == "wrapped"):
         return response.item_fields.get(command.entry.items_key, frozenset())
     return response.fields
 

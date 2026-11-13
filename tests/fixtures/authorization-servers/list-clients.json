@@ -1,0 +1,27 @@
+{
+  "source": "generated",
+  "operation": "listOAuth2ClientsForAuthorizationServer",
+  "body": [
+    {
+      "client_id": "{clientId}",
+      "client_name": "My Web App",
+      "client_uri": "null,",
+      "logo_uri": "null,",
+      "_links": {
+        "client": {
+          "href": "https://example.okta.com/oauth2/v1/clients/{clientId}",
+          "title": "My Web App"
+        },
+        "tokens": {
+          "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/clients/{clientId}/tokens",
+          "hints": {
+            "allow": [
+              "GET",
+              "DELETE"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

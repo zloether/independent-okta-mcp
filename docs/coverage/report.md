@@ -7,34 +7,34 @@ the registry and the pinned spec 2026.42.1. Do not edit; rerun the script.
 
 | Kind | Commands | Done |
 |---|---|---|
-| simple | 168 | 68 |
+| simple | 168 | 112 |
 | resolved | 30 | 29 |
 | composite (post-v1) | 4 | — |
 | excluded | 4 | — |
-| **total** | **206** | **97** |
+| **total** | **206** | **141** |
 
-Gotcha endpoints (record a fixture): 5, 4 to do
+Gotcha endpoints (record a fixture): 5, 2 to do
 
 ## By domain
 
 | Domain | Catalogue | Simple | Resolved | Composite | Excluded | Done | To do |
 |---|---|---|---|---|---|---|---|
-| api-tokens | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
+| api-tokens | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
 | apps | 31 | 30 | 0 | 1 | 0 | 29 | 1 |
 | attack-protection | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
 | authenticators | 6 | 6 | 0 | 0 | 0 | 6 | 0 |
-| authorization-servers | 18 | 18 | 0 | 0 | 0 | 0 | 18 |
+| authorization-servers | 18 | 18 | 0 | 0 | 0 | 18 | 0 |
 | behaviors | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
 | device-assurance | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
 | device-integrations | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
 | device-posture | 3 | 3 | 0 | 0 | 0 | 0 | 3 |
 | devices | 5 | 5 | 0 | 0 | 0 | 0 | 5 |
 | groups | 12 | 12 | 0 | 0 | 0 | 12 | 0 |
-| iam | 20 | 20 | 0 | 0 | 0 | 0 | 20 |
+| iam | 20 | 20 | 0 | 0 | 0 | 20 | 0 |
 | identity-providers | 12 | 12 | 0 | 0 | 0 | 0 | 12 |
 | logs | 4 | 1 | 0 | 3 | 0 | 1 | 0 |
 | network-zones | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
-| oauth-client-roles | 4 | 4 | 0 | 0 | 0 | 0 | 4 |
+| oauth-client-roles | 4 | 4 | 0 | 0 | 0 | 4 | 0 |
 | org-settings | 14 | 13 | 0 | 0 | 1 | 0 | 13 |
 | policies | 6 | 6 | 0 | 0 | 0 | 6 | 0 |
 | realms | 5 | 5 | 0 | 0 | 0 | 0 | 5 |
@@ -45,16 +45,12 @@ Gotcha endpoints (record a fixture): 5, 4 to do
 
 ## To do
 
-- **api-tokens**: list, get
 - **apps**: list-jwks
-- **authorization-servers**: list, get, list-associated-servers, list-claims, get-claim, list-clients, list-tokens, get-token, list-keys, get-key, list-policies, get-policy, list-policy-rules, get-policy-rule, list-resource-server-keys, get-resource-server-key, list-scopes, get-scope
 - **device-assurance**: list, get
 - **device-integrations**: list, get
 - **device-posture**: list, get, list-defaults
 - **devices**: list, get, get-users, get-os-accounts, get-os-account
-- **iam**: list, get, list-permissions, get-permission, list-assignees, list-resource-sets, get-resource-set, list-bindings, get-binding, list-binding-members, get-binding-member, list-resources, get-resource, list-bundles, get-bundle, list-bundle-entitlements, list-bundle-entitlement-values, get-opt-in-status, list-role-subscriptions, get-role-subscription
 - **identity-providers**: list, get, list-keys, get-key, list-csrs, get-csr, list-signing-keys, get-active-signing-key, get-signing-key, list-users, get-user, list-tokens
-- **oauth-client-roles**: list, get, list-app-targets, list-group-targets
 - **org-settings**: get, list-contact-types, get-contact, get-captcha-settings, get-third-party-admin-setting, get-preferences, get-communication-settings, get-support-settings, list-support-cases, get-auto-assign-admin-app-setting, get-client-privileges-setting, list-yubikey-tokens, get-yubikey-token
 - **realms**: list-realms, get-realm, list-realm-assignments, get-realm-assignment, list-realm-assignment-operations
 - **schemas**: list, get, get-app-user-schema, get-group-schema, list-log-stream-schemas, get-log-stream-schema, list-linked-objects, get-linked-object, get-user-schema, list-user-types, get-user-type, list-ui-schemas, get-ui-schema

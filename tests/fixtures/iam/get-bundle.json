@@ -1,0 +1,15 @@
+{
+  "source": "generated",
+  "operation": "getGovernanceBundle",
+  "body": {
+    "id": "0bbfxqCAJWWGELFTYAAA",
+    "name": "Group admin bundle",
+    "description": "Group bundle for administrative access",
+    "status": "ACTIVE",
+    "orn": "orn:okta:governance:00o5rb5mt2H3d1TJd0h7:bundles:0bbfxqCAJWWGELFTYAAA",
+    "_links": {
+      "self": "http://example.okta.com/api/v1/iam/governance/bundles/0bbfxqCAJWWGELFTYAAA",
+      "entitlements": "http://example.okta.com/api/v1/iam/governance/bundles/0bbfxqCAJWWGELFTYAAA/entitlements"
+    }
+  }
+}

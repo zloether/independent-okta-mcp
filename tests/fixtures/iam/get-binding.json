@@ -1,0 +1,18 @@
+{
+  "source": "generated",
+  "operation": "getBinding",
+  "body": {
+    "id": "cr0Yq6IJxGIr0ouum0g3",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/bindings/cr0Yq6IJxGIr0ouum0g3"
+      },
+      "members": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/bindings/cr0Yq6IJxGIr0ouum0g3/members"
+      },
+      "resource-set": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g"
+      }
+    }
+  }
+}

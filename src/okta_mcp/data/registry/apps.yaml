@@ -107,8 +107,9 @@ commands:
       csr: {path_param: csrId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
     data_classes: [credential-material]
 
-  # `list-jwks` (listJwk) is left out: Okta returns `{"keys": [...]}` where the spec has an
-  # array, which the registry can't declare yet (catalogue gotcha).
+  # `list-jwks` (listJwk) is left out until a live response is recorded: the spec declares an
+  # array, its example is `{"jwks": {"keys": [...]}}`, and okta-skills saw `{"keys": [...]}`
+  # (catalogue gotcha). `response_override: wrapped` covers only the last.
   get-jwk:
     operation: getJwk
     summary: One client JWK

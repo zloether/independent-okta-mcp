@@ -1,0 +1,29 @@
+{
+  "source": "generated",
+  "operation": "listOAuth2Scopes",
+  "body": [
+    {
+      "id": "scp5yu8kLOnDzo7lh0g4",
+      "name": "car:drive",
+      "description": "Drive car",
+      "system": false,
+      "default": false,
+      "displayName": "Saml Jackson",
+      "consent": "REQUIRED",
+      "optional": false,
+      "metadataPublish": "NO_CLIENTS",
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/scopes/scp5yu8kLOnDzo7lh0g4",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT",
+              "DELETE"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

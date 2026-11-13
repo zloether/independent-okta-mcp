@@ -1,0 +1,38 @@
+{
+  "source": "generated",
+  "operation": "listAssociatedServersByTrustedType",
+  "body": [
+    {
+      "id": "{authorizationServerId}",
+      "name": "Sample Authorization Server",
+      "description": "Sample Authorization Server description",
+      "audiences": [
+        "https://host-1.example.com"
+      ],
+      "issuer": "https://example.okta.com/oauth2/{authorizationServerId}",
+      "issuerMode": "CUSTOM_URL",
+      "status": "ACTIVE",
+      "created": "2023-05-17T22:25:57.000Z",
+      "lastUpdated": "2023-05-17T22:25:57.000Z",
+      "credentials": {
+        "signing": {
+          "rotationMode": "DYNAMIC",
+          "lastRotated": "2023-05-17T22:25:57.000Z",
+          "nextRotation": "2023-08-15T22:25:57.000Z",
+          "kid": "WYQxoK4XAwGFn5Zw5AzLxFvqEKLP79BbsKmWeuc5TB4",
+          "use": "sig"
+        }
+      },
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}",
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

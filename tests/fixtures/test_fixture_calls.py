@@ -183,3 +183,33 @@ async def test_login_is_resolved_before_the_command_request() -> None:
         f"/api/v1/users/{LOGIN}",
         f"/api/v1/users/{USER_ID}/groups",
     ]
+
+
+RS_KEYS = REGISTRY.domains["authorization-servers"].commands["list-resource-server-keys"]
+
+
+async def _run_rs_keys(body: Any) -> Success | Failure:
+    okta = Okta([(_template(RS_KEYS), body)])
+    executor, principal = _executor(okta)
+    call = Call(principal, RS_KEYS.domain, RS_KEYS.name, args=_args(RS_KEYS))
+    return await executor.execute(call)
+
+
+@pytest.mark.anyio
+async def test_wrapped_override_reads_items_under_the_key() -> None:
+    # V8: Okta wraps the list the spec declares bare.
+    out = await _run_rs_keys({"keys": [{"id": "apk1", "kid": "k1", "status": "ACTIVE"}]})
+    assert isinstance(out, Success), out
+    envelope = json.loads(out.text)
+    assert envelope["count"] == 1
+    out = await _run_rs_keys({"keys": None})
+    assert isinstance(out, Success), out
+    assert json.loads(out.text)["count"] == 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("body", [[{"id": "apk1", "kid": "k1"}], {}, {"jwks": {"keys": []}}])
+async def test_wrapped_override_refuses_other_shapes(body: Any) -> None:
+    # The spec's bare array, or another wrapper, is not the recorded shape: fail, don't guess.
+    out = await _run_rs_keys(body)
+    assert isinstance(out, Failure) and "not the expected list" in out.message

@@ -1,0 +1,27 @@
+{
+  "source": "generated",
+  "operation": "listBundleEntitlementValues",
+  "body": {
+    "entitlementValues": [
+      {
+        "id": "entfxqCAJWWGELFTYAAA",
+        "value": "orn:okta:00o5rb5mt2H3d1TJd0h7:groups:00guaxWZ0AOa5NFAj0g3",
+        "name": "Restricted users group",
+        "_links": {
+          "group": "http://example.okta.com/api/v1/groups/00guaxWZ0AOa5NFAj0g3"
+        }
+      }
+    ],
+    "_links": {
+      "self": {
+        "href": "http://example.okta.com/api/v1/iam/governance/bundles?limit=2&after=10"
+      },
+      "bundle": {
+        "href": "http://example.okta.com/api/v1/iam/governance/bundles/0bbfxqCAJWWGELFTYAAA"
+      },
+      "entitlements": {
+        "href": "http://example.okta.com/api/v1/iam/governance/bundles/0bbfxqCAJWWGELFTYAAA/entitlements"
+      }
+    }
+  }
+}

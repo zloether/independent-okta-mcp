@@ -1,0 +1,36 @@
+{
+  "source": "generated",
+  "operation": "getApiToken",
+  "body": {
+    "name": "My API Token",
+    "userId": "00uXXXXXXXXXXXXXXXXX",
+    "tokenWindow": "P30D",
+    "network": {
+      "connection": "ANYWHERE"
+    },
+    "id": "00Tabcdefg1234567890",
+    "clientName": "Okta API",
+    "expiresAt": "2021-12-11T20:38:10.000Z",
+    "created": "2021-11-09T20:38:10.000Z",
+    "lastUpdated": "2021-11-11T20:38:10.000Z",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/api-tokens/00Tabcdefg1234567890",
+        "hints": {
+          "allow": [
+            "GET",
+            "DELETE"
+          ]
+        }
+      },
+      "user": {
+        "href": "https://example.okta.com/api/v1/users/00uXXXXXXXXXXXXXXXXX",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      }
+    }
+  }
+}

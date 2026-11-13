@@ -1,0 +1,14 @@
+{
+  "source": "generated",
+  "operation": "getMemberOfBinding",
+  "body": {
+    "id": "irb1qe6PGuMc7Oh8N0g4",
+    "created": "2021-02-06T16:20:57.000Z",
+    "lastUpdated": "2021-02-06T16:20:57.000Z",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/users/00uuk41Hjga5qGfQ30g3"
+      }
+    }
+  }
+}

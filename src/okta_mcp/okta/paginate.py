@@ -44,7 +44,13 @@ def _raw_path(url: httpx2.URL) -> str:
 
 def _items(body: Any, items_key: str | None) -> list[Any]:
     if items_key is not None:
-        body = cast(dict[str, Any], body).get(items_key) if isinstance(body, dict) else None
+        # A wrapper with the key set to null has no items (okta-skills saw `{"keys": null}`).
+        # A wrapper without the key is not the expected shape: a wrong `items_key` must fail,
+        # not read as an empty list forever.
+        wrapper = cast(dict[str, Any], body) if isinstance(body, dict) else {}
+        if items_key in wrapper and wrapper[items_key] is None:
+            return []
+        body = wrapper.get(items_key)
     if not isinstance(body, list):
         raise PaginationError("Okta's response is not the expected list")
     return cast(list[Any], body)

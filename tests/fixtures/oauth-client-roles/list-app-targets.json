@@ -1,0 +1,31 @@
+{
+  "source": "generated",
+  "operation": "listAppTargetRoleToClient",
+  "body": [
+    {
+      "name": "facebook",
+      "displayName": "Facebook",
+      "description": "Giving people the power to share and make the world more open and connected.",
+      "status": "ACTIVE",
+      "lastUpdated": "2021-03-18T17:37:56.000Z",
+      "category": "SOCIAL",
+      "verificationStatus": "OKTA_VERIFIED",
+      "website": "https://host-1.example.com/",
+      "signOnModes": [
+        "BROWSER_PLUGIN"
+      ],
+      "_links": {
+        "logo": [
+          {
+            "name": "medium",
+            "href": "https://host-2.example.com/fs/bcg/4/abcdefghijABCC4V1234"
+          }
+        ],
+        "self": {
+          "href": "https://example.okta.com/api/v1/catalog/apps/facebook"
+        }
+      },
+      "id": "00xANpp1ecKI32zJ1wug"
+    }
+  ]
+}

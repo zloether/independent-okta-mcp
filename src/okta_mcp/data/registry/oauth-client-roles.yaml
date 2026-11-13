@@ -1,0 +1,43 @@
+domain: oauth-client-roles
+description: Read admin roles assigned to OAuth service apps, and their targets (read-only).
+# Admin role assignments of service apps (clients): who can administer what, so every command is
+# admin-roles. `client` is the app's `client_id`, usually `0oa` + 17 but settable at creation,
+# so only the character set is fixed. Role assignment IDs vary by role type (groups.yaml).
+commands:
+  list:
+    operation: listRolesForClient
+    summary: Admin roles assigned to a client
+    args:
+      client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
+    view: [id, type, label, status, assignmentType]
+    data_classes: [admin-roles]
+
+  get:
+    operation: retrieveClientRole
+    summary: Get a client's role assignment
+    args:
+      client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [admin-roles]
+
+  list-app-targets:
+    operation: listAppTargetRoleToClient
+    summary: Role app targets
+    args:
+      client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    paginate: link
+    page_size: 20
+    view: [id, name, displayName, status]
+    data_classes: [admin-roles]
+
+  list-group-targets:
+    operation: listGroupTargetRoleForClient
+    summary: Role group targets
+    args:
+      client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
+      role: {path_param: roleAssignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    paginate: link
+    page_size: 20
+    view: [id, type, profile.name]
+    data_classes: [admin-roles]

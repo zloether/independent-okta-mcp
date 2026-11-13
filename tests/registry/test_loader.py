@@ -147,6 +147,24 @@ def test_items_key_selects_wrapped_list(spec: SpecIndex) -> None:
     assert registry.domains["iam"].commands["list"].is_list
 
 
+JWKS = {
+    "operation": "listJwk",
+    "summary": "Client JWKs",
+    "args": {"app": {"path_param": "appId"}},
+    "items_key": "keys",
+    "response_override": {"kind": "wrapped", "reason": "Okta wraps the list in keys (V8)"},
+    "view": ["id", "kid", "status"],
+    "data_classes": ["credential-material"],
+}
+
+
+def test_wrapped_override_reads_the_spec_items_under_items_key(spec: SpecIndex) -> None:
+    # The spec declares an array; Okta returns `{"keys": [...]}`.
+    assert spec.operations["listJwk"].response.kind == "list"
+    cmd = _build(spec, **{"list-jwks": JWKS}).domains["users"].commands["list-jwks"]
+    assert cmd.is_list and cmd.entry.items_key == "keys"
+
+
 def test_items_key_on_paged_value_list(spec: SpecIndex) -> None:
     cmd = {
         "operation": "getIdentitySourceGroupMemberships",
@@ -563,6 +581,22 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
     "response-override-on-list": (
         _with(GET_GROUPS, response_override={"kind": "list", "reason": "x"}),
         "needs an object response",
+    ),
+    "list-override-with-items-key": (
+        _with(JWKS, response_override={"kind": "list", "reason": "x"}),
+        "response_override list needs an object response",
+    ),
+    "wrapped-override-on-object": (
+        _with(GET, items_key="keys", response_override={"kind": "wrapped", "reason": "x"}),
+        "response_override wrapped needs a list response",
+    ),
+    "wrapped-override-without-items-key": (
+        _with(JWKS, items_key=None),
+        "response_override wrapped needs items_key",
+    ),
+    "wrapped-override-view-outside-items": (
+        _with(JWKS, view=["keys"]),
+        "view path keys",
     ),
     # T1 D5 views
     "list-without-view": (_with(GET_GROUPS, view=None), "list commands need a view"),

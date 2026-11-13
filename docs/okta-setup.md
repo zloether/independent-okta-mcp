@@ -26,7 +26,7 @@ Okta answers a service-app request only when the token's scope **and** the app's
 | `okta.users.read` | `READ_ONLY_ADMIN` | Resolving a login to a user ID (any command with a `user` argument) |
 | `okta.groups.read` | `READ_ONLY_ADMIN` | `groups` |
 | `okta.networkZones.read` | `READ_ONLY_ADMIN` | `network-zones` |
-| `okta.roles.read` | `SUPER_ADMIN` | `groups list-roles`, `get-role`, `list-role-app-targets`, `list-role-group-targets` |
+| `okta.roles.read` | `SUPER_ADMIN` | `groups list-roles`, `get-role`, `list-role-app-targets`, `list-role-group-targets`; `iam`; `oauth-client-roles` |
 
 The service app needs the highest role in the table among its scopes, so each deployment picks its role by picking scopes. Under Read-only Administrator, the role commands get HTTP 403 from Okta, because only a Super Administrator can view admin role assignments. Their scope is all `.read`, so even a Super Administrator service app can't write, but a stolen service key can then read everything those scopes cover. To avoid that, leave `okta.roles.read` out: the role commands disappear from every user's tool list, and the app needs only Read-only Administrator.
 

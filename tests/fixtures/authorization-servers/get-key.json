@@ -1,0 +1,23 @@
+{
+  "source": "generated",
+  "operation": "getAuthorizationServerKey",
+  "body": {
+    "status": "ACTIVE",
+    "alg": "RS256",
+    "e": "AQAB",
+    "n": "g0MirhrysJMPm_wK45jvMbbyanfhl-jmTBv0o69GeifPaISaXGv8LKn3-CyJvUJcjjeHE17KtumJWVxUDRzFqtIMZ1ctCZyIAuWO0n LKilg7_EIDXJrS8k14biqkPO1lXGFwtjo3zLHeFSLw6sWf-CEN9zv6Ff3IAXb-RMYpfh-bVrxIgWsWCxjLW-UKI3la-gs0nWHH2PJr5HLJuI JIOL5HLJuIJIOLWahqTnm_r1LSCSYr6N4C-fh--w2_BW8DzTHalBYe76bNr0d7AqtR4tGazmrvrc79Wa2bjyxmhhN1u9jSaZQqq-3VZEod8q3, WHH2PJ5v1LoXniJQ4a2W8nDVqb6h4E8MUKYOpljTfQ",
+    "kid": "RQ8DuhdxCczyMvy7GNJb4Ka3lQ99vrSo3oFBUiZjzzc",
+    "kty": "RSA",
+    "use": "sig",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/credentials/keys/RQ8DuhdxCczyMvy7GNJb4Ka3lQ99vrSo3oFBUiZjzzc",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      }
+    }
+  }
+}

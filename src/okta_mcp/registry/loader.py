@@ -331,12 +331,22 @@ def _scope_sets(
 def _check_shape(entry: CommandEntry, op: Operation, errors: list[str]) -> bool:
     # Check 9 (items_key, paginate) and T1 D5 (views).
     response = op.response
-    if entry.response_override is not None:
+    override = entry.response_override
+    if override is not None and override.kind == "list":
         if response.kind != "object":
-            errors.append(f"response_override needs an object response, not {response.kind}")
+            errors.append(f"response_override list needs an object response, not {response.kind}")
             return False
         if entry.items_key is not None:
-            errors.append("items_key and response_override are exclusive")
+            errors.append("items_key and response_override list are exclusive")
+        item_fields = response.fields
+    elif override is not None:
+        # The spec's list items are the items; the wrapper key isn't in the spec to check.
+        if response.kind != "list":
+            errors.append(f"response_override wrapped needs a list response, not {response.kind}")
+            return False
+        if entry.items_key is None:
+            errors.append("response_override wrapped needs items_key, the wrapper's list key")
+            return False
         item_fields = response.fields
     elif entry.items_key is not None:
         if entry.items_key in response.item_fields:

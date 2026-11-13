@@ -1,0 +1,49 @@
+{
+  "source": "generated",
+  "operation": "listResourceSets",
+  "body": {
+    "resource-sets": [
+      {
+        "id": "iamoJDFKaJxGIr0oamd9g",
+        "label": "SF-IT-1",
+        "description": "First San Francisco IT Resource Set",
+        "created": "2021-02-06T16:20:57.000Z",
+        "lastUpdated": "2021-02-06T16:20:57.000Z",
+        "_links": {
+          "self": {
+            "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g"
+          },
+          "resources": {
+            "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/resources"
+          },
+          "bindings": {
+            "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/bindings"
+          }
+        }
+      },
+      {
+        "id": "iamoJDFKaJxGIr0oamd0q",
+        "label": "SF-IT-2",
+        "description": "Second San Francisco IT Resource Set",
+        "created": "2021-02-06T16:20:57.000Z",
+        "lastUpdated": "2021-02-06T16:20:57.000Z",
+        "_links": {
+          "self": {
+            "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd0q"
+          },
+          "resources": {
+            "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd0q/resources"
+          },
+          "bindings": {
+            "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd0q/bindings"
+          }
+        }
+      }
+    ],
+    "_links": {
+      "next": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets?after=iamoJDFKaJxGIr0oamd0q"
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "source": "generated",
+  "operation": "listBindings",
+  "body": {
+    "roles": [
+      {
+        "id": "cr0WxyzJxGIr0ouum0g4",
+        "_links": {
+          "self": {
+            "href": "https://example.okta.com/api/v1/iam/roles/cr0WxyzJxGIr0ouum0g4"
+          },
+          "members": {
+            "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/bindings/cr0WxyzJxGIr0ouum0g4/members"
+          }
+        }
+      }
+    ],
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/bindings"
+      },
+      "resource-set": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g"
+      },
+      "next": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/bindings?after=cr0WxyzJxGIr0ouum0g4"
+      }
+    }
+  }
+}

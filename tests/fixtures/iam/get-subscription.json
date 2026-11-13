@@ -1,0 +1,24 @@
+{
+  "source": "generated",
+  "operation": "getSubscriptionsNotificationTypeRole",
+  "body": {
+    "channels": [
+      "channels"
+    ],
+    "notificationType": "AD_AGENT",
+    "status": "subscribed",
+    "_links": {
+      "self": {
+        "hints": {
+          "allow": [
+            "DELETE"
+          ]
+        },
+        "href": "https://example.okta.com/",
+        "name": "name",
+        "templated": false,
+        "type": "type"
+      }
+    }
+  }
+}
