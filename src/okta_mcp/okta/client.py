@@ -94,11 +94,15 @@ class OktaClient:
         max_inflight: int,
         rate_limit_max_wait: float,
         on_request: Callable[[], None] | None = None,
+        on_sent: Callable[[int | None], None] | None = None,
     ) -> None:
         """`dpop` is the instance the token provider was given, so token and resource proofs
         share one key and nonce. `on_request` (`RequestLimiter.charge`) runs once per request
         to Okta, nonce and 429 retries included: before the slot and the token are taken, and
-        for a 429 retry before the wait. What it raises propagates."""
+        for a 429 retry before the wait. What it raises propagates. `on_sent`
+        (`audit.record_sent`) runs once per request actually sent, with the response's status
+        or None for a transport error or a cancellation: a request attempted, which may not
+        have reached Okta."""
         self._http = http
         self._origin = httpx2.URL(org_url)
         self._tokens = tokens
@@ -106,6 +110,7 @@ class OktaClient:
         self._slots = anyio.Semaphore(max_inflight)
         self._max_wait = rate_limit_max_wait
         self._on_request = on_request
+        self._on_sent = on_sent
 
     async def get(
         self, url: str, params: Mapping[str, str | list[str]] | None = None
@@ -148,6 +153,10 @@ class OktaClient:
         if self._on_request is not None:
             self._on_request()
 
+    def _sent(self, status: int | None) -> None:
+        if self._on_sent is not None:
+            self._on_sent(status)
+
     async def _attempt(self, url: httpx2.URL) -> tuple[ServiceToken, httpx2.Response]:
         """One request in one slot, with the nonce retry. The caller has charged the first
         request. The slot is free during a 429 wait."""
@@ -177,9 +186,16 @@ class OktaClient:
                 raise RuntimeError("DPoP token but the Okta client has no DPoP key")
             request.headers["DPoP"] = self._dpop.proof("GET", str(request.url), token.value)
         try:
-            return token, await self._http.send(request)
+            response = await self._http.send(request)
         except httpx2.HTTPError as e:
             reason = type(e).__name__
+        except BaseException:
+            self._sent(None)  # cancelled in flight (the call's deadline): it was still sent
+            raise
+        else:
+            self._sent(response.status_code)
+            return token, response
+        self._sent(None)
         # Raised outside `except`: the httpx error holds the request and its Authorization header.
         raise UpstreamError(None, f"Okta request failed: {reason}")
 

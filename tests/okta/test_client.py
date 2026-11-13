@@ -64,6 +64,7 @@ def client(
     dpop: DPoP | None = None,
     max_inflight: int = 10,
     on_request: Any = None,
+    on_sent: Any = None,
 ) -> OktaClient:
     return OktaClient(
         new_http_client(httpx2.MockTransport(handler)),
@@ -73,6 +74,7 @@ def client(
         max_inflight=max_inflight,
         rate_limit_max_wait=10,
         on_request=on_request,
+        on_sent=on_sent,
     )
 
 
@@ -543,3 +545,42 @@ def test_empty_userinfo_is_dropped_by_the_parser() -> None:
     url = httpx2.URL("https://@example.okta.com/x")
     assert url.userinfo == b"" and str(url) == "https://example.okta.com/x"
     assert not on_origin(httpx2.URL("https://:@example.okta.com/x"), httpx2.URL(ORG))
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("no_jitter")
+async def test_on_sent_sees_every_request_sent() -> None:
+    """The audit log's `okta_requests` and `status` (6.1): retries count; a transport error
+    has no status; a request the limiter refuses, or one without a token, isn't sent."""
+    sent: list[int | None] = []
+    okta = Okta(rate_limited(), nonce_401(), httpx2.Response(200, json=[]))
+    tokens = FakeTokenProvider(DPOP_TOKEN)
+    await client(okta, tokens, dpop=DPoP(), on_sent=sent.append).get(USERS)
+    assert sent == [429, 401, 200]
+    sent.clear()
+    with pytest.raises(UpstreamError):
+        await client(Okta(httpx2.ConnectError("boom")), on_sent=sent.append).get(USERS)
+    assert sent == [None]
+    sent.clear()
+
+    def refuse() -> None:
+        raise RateLimited("slow down")
+
+    with pytest.raises(RateLimited):
+        await client(Okta(), on_request=refuse, on_sent=sent.append).get(USERS)
+    with pytest.raises(UpstreamError):
+        await client(Okta(), FailingTokenProvider(), on_sent=sent.append).get(USERS)
+    assert sent == []
+
+
+@pytest.mark.anyio
+async def test_on_sent_counts_a_request_cancelled_in_flight() -> None:
+    sent: list[int | None] = []
+
+    async def slow(request: httpx2.Request) -> httpx2.Response:
+        await anyio.sleep(10)
+        return httpx2.Response(200, json=[])
+
+    with anyio.move_on_after(0.05):
+        await client(slow, on_sent=sent.append).get(USERS)
+    assert sent == [None]
