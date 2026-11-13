@@ -7,7 +7,8 @@ description: Read devices, their users and OS accounts (read-only).
 # (scrub.yaml redacts their credentials, as everywhere).
 #
 # IDs follow the spec's examples: devices `guo` + 17, OS accounts `dao` + 17. No spec path has a
-# literal sibling of `{deviceId}` or `{osAccountId}`.
+# literal sibling of `{deviceId}` or `{osAccountId}`. The spec declares no paging for `get-users`
+# or `get-os-accounts` (unverified live, plan 5.6).
 commands:
   # `search` names device properties (`profile.*`, `id`, `status`, `lastUpdated`): the engine
   # checks the attributes named (design §9.2). `expand` closed to the user embeds the list schema

@@ -27,8 +27,9 @@ All commands are normal, none are sensitive.
   - `WINDOWS` and `MACOS`: `osVersion`, `diskEncryptionType`, `screenLockType` and
     `secureHardwarePresent`. `WINDOWS` can also have `osVersionConstraints`.
   - `IOS`: `osVersion`, `jailbreak` and `screenLockType`.
-  - `ANDROID`: `osVersion`, `jailbreak`, `diskEncryptionType`, `screenLockType` and
-    `secureHardwarePresent`.
+  - `ANDROID`: `osVersion`, `jailbreak`, `diskEncryptionType`, `screenLockType`,
+    `secureHardwarePresent` and `callerContext` (`managedApp`: whether the calling app is
+    managed).
   - `CHROMEOS`: only third-party signal settings.
 - `thirdPartySignalProviders` configures signals from other sources, such as a device posture
   IdP (`devicePostureIdP`) or Chrome Device Trust (`dtc`). `ANDROID` can also use

@@ -31,7 +31,8 @@ All commands are normal, none are sensitive.
 
 - `list` returns only custom checks. Use `list-defaults` for the built-in ones.
 - A check is a definition, not a result. Which devices pass it is not shown here.
-- Check IDs are 20 characters and start with `dch`.
+- A custom check's ID usually starts with `dch`. Use the `id` that `list` or `list-defaults`
+  returns.
 
 ## Related domains
 

@@ -96,8 +96,13 @@ def test_scope_sets(registry: Registry) -> None:
     [
         ("devices", "get", "device", DEVICE, "00u4a5u7JHHhjXrMK0g4"),
         ("device-assurance", "get", "policy", "dae3m8o4rWhwReDeM1c5", "00p3m8o4rWhwReDeM1c5"),
-        ("device-posture", "get", "check", "dch3m8o4rWhwReDeM1c5", "dae3m8o4rWhwReDeM1c5"),
-        ("device-integrations", "get", "integration", "dindyfy1f7Pv1eoVF0g4", "0oadyfy1f7Pv1eoV"),
+        (
+            "device-integrations",
+            "get",
+            "integration",
+            "dindyfy1f7Pv1eoVF0g4",
+            "0oadyfy1f7Pv1eoVF0g4",
+        ),
     ],
 )
 def test_id_shapes(
@@ -111,9 +116,10 @@ def test_id_shapes(
 
 
 def test_posture_check_id_keeps_out_the_default_segment(registry: Registry) -> None:
+    # Only the character set: no spec example shows a built-in check's ID.
     cmd = registry.domains["device-posture"].commands["get"]
     assert "default" in cmd.operation.reserved["postureCheckId"]
-    for bad in ("default", "DEFAULT"):
+    for bad in ("default", "DEFAULT", "Default", "dch3m8o4rWhwReDeM1c5/x", "a.b", "a-b", ".."):
         with pytest.raises(InvalidArguments, match="arg 'check'"):
             build_request(cmd, {"check": bad}, ORG)
     url, _ = build_request(cmd, {"check": "dch3m8o4rWhwReDeM1c5"}, ORG)
