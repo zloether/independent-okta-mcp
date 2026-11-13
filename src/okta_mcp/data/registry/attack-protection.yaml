@@ -1,0 +1,13 @@
+domain: attack-protection
+description: Read the org's attack protection settings (read-only).
+# Org-wide flags. The live response shape (object or one-item array) is unverified (plan 5.2).
+commands:
+  get-authenticator-settings:
+    operation: getAuthenticatorSettings
+    summary: Knowledge factor order under 2FA
+    data_classes: [org-config]
+
+  get-user-lockout-settings:
+    operation: getUserLockoutSettings
+    summary: Unknown-device lockout settings
+    data_classes: [org-config]

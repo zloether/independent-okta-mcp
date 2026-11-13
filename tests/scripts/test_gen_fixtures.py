@@ -154,6 +154,15 @@ def test_response_override_wraps_object_in_list(raw: dict[str, Any], registry: R
     assert isinstance(body, list) and body[0]["id"] == "00g1emaKYZTWRYYRRTSK"
 
 
+def test_array_schema_with_item_examples_is_wrapped(
+    raw: dict[str, Any], registry: Registry
+) -> None:
+    # listAuthenticatorMethods declares an array; each of its examples is one method.
+    command = registry.domains["authenticators"].commands["list-methods"]
+    body = gen.body(raw, command)
+    assert isinstance(body, list) and len(body) == 1 and body[0]["type"] == "nfc_pin"
+
+
 def test_view_path_missing_from_example_is_filled(raw: dict[str, Any], registry: Registry) -> None:
     # The pinned spec's listUserGroups example has no `type`; the schema gives one.
     command = registry.domains["users"].commands["get-groups"]

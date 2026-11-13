@@ -1,0 +1,67 @@
+domain: policies
+description: Read Okta policies, their rules and app mappings (read-only).
+# Policy, rule and mapping IDs vary by type (`00p…`, `rst…`; `0pr…`, `rul…`), so only the
+# character set is fixed; §6.4 and the spec's reserved segments (`simulate` after /policies/)
+# apply to every path value. Policy objects hold configuration: settings, conditions with
+# group, user and zone IDs, and rule actions. No secrets in the pinned spec's schemas.
+# Not exposed: `resourceId` on list (an authorization-server reference whose effect on other
+# policy types the spec doesn't say).
+commands:
+  list:
+    operation: listPolicies
+    summary: List policies of one type
+    args:
+      type: {query: type}
+      status: {query: status, allowed_values: [ACTIVE, INACTIVE]}
+      q: {query: q, arg_rule: {reviewed: "prefix of the policy name, returned"}}
+      sort_by: {query: sortBy, allowed_values: [name]}
+      # Embeds each policy's rules: what `get-rules` returns, same class.
+      expand: {query: expand, allowed_values: [rules]}
+    paginate: link
+    page_size: 200
+    # Whether Okta pages `q` is unverified; treated as unpaged so a cut is reported, not silent.
+    unpaged_args: [q]
+    view: [id, name, type, status, priority, system]
+    data_classes: [org-config]
+
+  get:
+    operation: getPolicy
+    summary: Get a policy by ID
+    args:
+      policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      expand: {query: expand, allowed_values: [rules]}
+    data_classes: [org-config]
+
+  # Okta returns every rule of a policy without paging; `limit` isn't sent.
+  get-rules:
+    operation: listPolicyRules
+    summary: Rules of a policy
+    args:
+      policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    view: [id, name, type, status, priority, system]
+    data_classes: [org-config]
+
+  get-rule:
+    operation: getPolicyRule
+    summary: Get one rule of a policy
+    args:
+      policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      rule: {path_param: ruleId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]
+
+  # Items hold an ID and `_links` to the app and policy: pass `links: true` to see the app.
+  list-mappings:
+    operation: listPolicyMappings
+    summary: Apps mapped to a policy
+    args:
+      policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    view: [id]
+    data_classes: [org-config]
+
+  get-mapping:
+    operation: getPolicyMapping
+    summary: Get one app mapping
+    args:
+      policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      mapping: {path_param: mappingId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]

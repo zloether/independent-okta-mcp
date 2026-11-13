@@ -1,0 +1,54 @@
+domain: authenticators
+description: Read the org's authenticators, their methods and custom AAGUIDs (read-only).
+# Authenticator IDs are `aut` + 17. Org configuration: the Duo `provider.configuration`
+# includes `secretKey` in the spec schema (the spec's response example leaves it out);
+# scrub.yaml redacts it. Custom AAGUIDs carry the vendors' public attestation root
+# certificates: trust anchors for authenticator models, not the org's own keys.
+commands:
+  list:
+    operation: listAuthenticators
+    summary: List authenticators
+    view: [id, key, name, type, status]
+    data_classes: [org-config]
+
+  get:
+    operation: getAuthenticator
+    summary: Get an authenticator by ID
+    args:
+      authenticator: {path_param: authenticatorId, pattern: "^aut[A-Za-z0-9]{17}$"}
+    data_classes: [org-config]
+
+  list-methods:
+    operation: listAuthenticatorMethods
+    summary: Methods of an authenticator
+    args:
+      authenticator: {path_param: authenticatorId, pattern: "^aut[A-Za-z0-9]{17}$"}
+    view: [type, status]
+    data_classes: [org-config]
+
+  get-method:
+    operation: getAuthenticatorMethod
+    summary: One method by type
+    args:
+      authenticator: {path_param: authenticatorId, pattern: "^aut[A-Za-z0-9]{17}$"}
+      # Closed by the spec's enum.
+      method: {path_param: methodType}
+    data_classes: [org-config]
+
+  list-aaguids:
+    operation: listAllCustomAAGUIDs
+    summary: Custom AAGUIDs (WebAuthn)
+    args:
+      authenticator: {path_param: authenticatorId, pattern: "^aut[A-Za-z0-9]{17}$"}
+    view: [aaguid, name]
+    data_classes: [org-config]
+
+  get-aaguid:
+    operation: getCustomAAGUID
+    summary: Get one custom AAGUID
+    args:
+      authenticator: {path_param: authenticatorId, pattern: "^aut[A-Za-z0-9]{17}$"}
+      aaguid:
+        path_param: aaguid
+        pattern: "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+    data_classes: [org-config]

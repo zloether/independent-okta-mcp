@@ -115,7 +115,8 @@ def raw_spec() -> dict[str, Any]:
 
 def body(spec: Mapping[str, Any], command: Command) -> Any:
     """The fixture body: the first spec example of the 200 response, else a synthesized one;
-    wrapped in a list when the registry reads the response as one (`response_override`)."""
+    wrapped in a list when the registry reads the response as one (`response_override`) or the
+    spec's schema is an array whose examples show one item (`listAuthenticatorMethods`)."""
     synth = Synth(spec, f"{command.domain}.{command.name}")
     op = cast(dict[str, Any], spec["paths"][command.operation.path]["get"])
     ok = synth.deref(op.get("responses", {}).get("200", {}))
@@ -128,7 +129,8 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     else:
         value = synth.value(content.get("schema"))
         value = None if value is _OMIT else value
-    if command.entry.response_override is not None and not isinstance(value, list):
+    spec_list = command.operation.response.kind == "list" and value is not None
+    if (command.entry.response_override is not None or spec_list) and not isinstance(value, list):
         value = [value]
     return Neutralizer()(value)
 

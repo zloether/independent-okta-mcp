@@ -1,0 +1,29 @@
+{
+  "source": "generated",
+  "operation": "listAuthenticatorMethods",
+  "body": [
+    {
+      "type": "nfc_pin",
+      "status": "ACTIVE",
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut3l0cm6voCtVWK20g7/methods/nfc_pin",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT"
+            ]
+          }
+        },
+        "deactivate": {
+          "href": "https://example.okta.com/api/v1/authenticators/aut3l0cm6voCtVWK20g7/methods/nfc_pin/lifecycle/deactivate",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

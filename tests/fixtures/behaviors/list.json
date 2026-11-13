@@ -1,0 +1,27 @@
+{
+  "source": "generated",
+  "operation": "listBehaviorDetectionRules",
+  "body": [
+    {
+      "created": "created",
+      "id": "00xkWXkzF1pzTYD1sxir",
+      "lastUpdated": "lastUpdated",
+      "name": "name",
+      "status": "ACTIVE",
+      "type": "ANOMALOUS_DEVICE",
+      "_link": {
+        "self": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        }
+      }
+    }
+  ]
+}
