@@ -27,6 +27,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 | `groups list` with `q` sent `limit` and returned what came back (§6.2, 1.6 review) | New registry field `unpaged_args`: a call that passes one is read as one page, never resumed, and reported cut (`non_resumable`, with a warning) when Okta returns a full page (§7.2, step 2.10) | Okta doesn't page `q`, so a result cut at `page_size` had no next link and no sign of the cut. Not sending `limit` would rely on Okta's undocumented-in-spec query default (300) and still give no signal |
 | The resolver used `getUser` on any non-ID value and trusted the answer (§5.6) | The user returned must have **exactly** the login given (case aside); `me` is refused (§5.6, step 2.10). `me` after a `/users/` segment is refused for every path parameter (§6.4 item 5) | Okta's `getUser` also answers a login shortname, and `/api/v1/users/me` is the token's own user (the SSWS owner in dev mode), a path the spec doesn't list |
 | `.manage ⇒ .read` implication to be modeled in the capability gate (§9.4, V4) | **No implication.** The gate is a plain subset test (step 3.2) | `OKTA_SCOPES` accepts only `.read` scopes (§10, config), so no held scope could imply another. 2 of the spec's 319 GET operations accept only a `.manage` scope (`getAerialConsent`, `previewPolicyBranchPromotion`); they stay unavailable |
+| §9.3 example: only `security-analyst` had `search_attributes`; helpdesk's list was a separate snippet | Helpdesk's list and `platform-admin: search_attributes: ["*"]` are in the example, which is now `docker/policy.example.yaml` (step 5.7) | Without it the admin role, which holds every command, could not search; one block a test can compare against the shipped file |
 
 ### 0.1 Changes from r3
 
@@ -605,6 +606,7 @@ roles:
       users:  ["*", get-factors, get-enrollments]
       groups: ["*"]
       apps:   [list, get, get-users, get-groups]
+    search_attributes: [profile.login, profile.email, profile.firstName, profile.lastName, status, profile.name]
 
   directory-reader:
     groups: ["00g1readers000000000"]      # mcp-okta-readers
@@ -633,22 +635,16 @@ roles:
     allow:
       "*": ["*"]
     include_sensitive: ["*"]
+    search_attributes: ["*"]
 ```
+
+This is [`docker/policy.example.yaml`](../../docker/policy.example.yaml), less its comments; a test loads both against the full registry and checks they compile to the same roles.
 
 A pattern is a command name or `"*"`; there are no partial globs (`get-*`). Domain `"*"` takes only `["*"]`. The wildcard must be quoted (a bare `*` is a YAML alias and fails the load). A principal in any of a role's groups holds the role; a group ID the policy doesn't name grants nothing. The claim's name is `MCP_GROUPS_CLAIM` (§11.3), not a policy field.
 
 `include_sensitive` is per role: within that role's `allow`, a wildcard on a listed domain also matches its sensitive commands; it never widens other roles and never overrides `deny`. A `deny` wildcard always covers sensitive commands.
 
-`search_attributes` is per role: the attributes that role may name in a search, filter or sort expression (an `attribute_expression` argument, §9.2) on the commands it allows. `["*"]` is any attribute results don't redact; without the key the role can pass no such expression. Names are matched exactly, case included (`profile.login`, not `profile.*`). A principal's list for a command is the union over the roles that allow *that command*: a role's attributes don't carry to a command only another role grants. One list covers every command the role allows, so `status` means the user's status on `users list` and nothing on `groups list`; a role that needs different lists per command is two roles. An attribute `scrub.yaml` redacts fails the load: no role can search on it.
-
-```yaml
-  helpdesk:
-    groups: ["00g1helpdsk000000000"]
-    allow:
-      users:  ["*", get-factors, get-enrollments]
-      groups: ["*"]
-    search_attributes: [profile.login, profile.email, profile.firstName, profile.lastName, status, profile.name]
-```
+`search_attributes` is per role: the attributes that role may name in a search, filter or sort expression (an `attribute_expression` argument, §9.2) on the commands it allows. `["*"]` is any attribute results don't redact; without the key the role can pass no such expression. Names are matched exactly, case included (`profile.login`, not `profile.*`). A principal's list for a command is the union over the roles that allow *that command*: a role's attributes don't carry to a command only another role grants. One list covers every command the role allows, so `status` means the user's status on `users list` and nothing on `groups list`; a role that needs different lists per command is two roles. An attribute `scrub.yaml` redacts fails the load: no role can search on it. In the example, `directory-reader` can list but not search, and `security-analyst`'s list holds System Log attributes, so it can't search users by profile.
 
 A call that an `arg_rule` raises to sensitive (§9.2) follows the same rule as a sensitive command: the role must name the command outright, or reach it by a wildcard in a domain in its `include_sensitive`. The loader compiles this per role (`Role.allow_raised`); the engine (§9.4) applies it per call.
 
