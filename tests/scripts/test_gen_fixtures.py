@@ -163,34 +163,24 @@ def test_array_schema_with_item_examples_is_wrapped(
     assert isinstance(body, list) and len(body) == 1 and body[0]["type"] == "nfc_pin"
 
 
+def _with_example(raw: dict[str, Any], path: str, example: Any) -> dict[str, Any]:
+    """`raw` with one 200 example on `path`'s GET; `raw` itself is left alone."""
+    op = raw["paths"][path]["get"]
+    content = {**op["responses"]["200"]["content"]["application/json"]}
+    content["examples"] = {"x": {"value": example}}
+    responses = {"200": {"content": {"application/json": content}}}
+    return {**raw, "paths": {**raw["paths"], path: {"get": {**op, "responses": responses}}}}
+
+
 def test_array_schema_keeps_a_wrapper_example(raw: dict[str, Any], registry: Registry) -> None:
-    # An example that isn't shaped like an item stays as it is, for the fixture test to refuse.
+    # An example that isn't shaped like an item stays exactly as it is, for the fixture test
+    # to refuse: not wrapped, and no view columns filled in.
     command = registry.domains["authenticators"].commands["list-methods"]
-    op = raw["paths"][command.operation.path]["get"]
-    content = op["responses"]["200"]["content"]["application/json"]
-    patched = {
-        **raw,
-        "paths": {
-            **raw["paths"],
-            command.operation.path: {
-                "get": {
-                    **op,
-                    "responses": {
-                        "200": {
-                            "content": {
-                                "application/json": {
-                                    **content,
-                                    "examples": {"x": {"value": {"items": [1]}}},
-                                }
-                            }
-                        }
-                    },
-                }
-            },
-        },
-    }
-    body = gen.body(patched, command)
-    assert isinstance(body, dict) and body["items"] == [1]
+    path = command.operation.path
+    assert gen.body(_with_example(raw, path, {"items": [1]}), command) == {"items": [1]}
+    # `_links` sits on wrappers as well as items, so it doesn't make a wrapper an item.
+    wrapper = {"_links": {"self": {"href": "https://example.okta.com/"}}, "items": [1]}
+    assert gen.body(_with_example(raw, path, wrapper), command) == wrapper
 
 
 def test_view_path_missing_from_example_is_filled(raw: dict[str, Any], registry: Registry) -> None:

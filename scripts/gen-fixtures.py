@@ -124,16 +124,19 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     # An empty list or object exercises nothing; such an example falls back to the schema.
     examples = [synth.deref(e).get("value") for e in (content.get("examples") or {}).values()]
     examples += [content["example"]] if "example" in content else []
-    if found := [e for e in examples if e]:
-        example = found[0]
-        # Only an example that looks like one item is wrapped: a wrapper or error object stays
-        # as it is, so the fixture test fails on it rather than taking it as a one-item list.
-        if command.operation.response.kind == "list" and _item_like(example, command):
-            example = [example]
-        value = _fill_view(example, lambda: synth.value(content.get("schema")), command)
+    found = [e for e in examples if e]
+    if found:
+        value = found[0]
     else:
         value = synth.value(content.get("schema"))
         value = None if value is _OMIT else value
+    # Under an array schema, only a value that looks like one item is wrapped: a wrapper or
+    # error object stays exactly as it is, unfilled, so the fixture test fails on it.
+    spec_list = command.operation.response.kind == "list"
+    if spec_list and not isinstance(value, list) and _item_like(value, command):
+        value = [value]
+    if found and not (spec_list and not isinstance(value, list)):
+        value = _fill_view(value, lambda: synth.value(content.get("schema")), command)
     if command.entry.response_override is not None and not isinstance(value, list):
         value = [value]
     return Neutralizer()(value)
@@ -142,7 +145,8 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
 def _item_like(value: Any, command: Command) -> bool:
     if not isinstance(value, dict):
         return False
-    tops = {f.split(".")[0] for f in command.operation.response.fields}
+    # `_links` and `_embedded` sit on wrappers too, so they prove nothing.
+    tops = {f.split(".")[0] for f in command.operation.response.fields} - {"_links", "_embedded"}
     return bool(set(cast(dict[str, Any], value)) & tops)
 
 
