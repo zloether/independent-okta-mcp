@@ -58,6 +58,14 @@ def _blank(cell: Any) -> bool:
     return cell is None
 
 
+def _item_fields(command: Command) -> frozenset[str]:
+    """Declared fields of one list item: the wrapped list's for an `items_key` command."""
+    response = command.operation.response
+    if command.entry.items_key is not None:
+        return response.item_fields.get(command.entry.items_key, frozenset())
+    return response.fields
+
+
 @pytest.mark.parametrize("command", COMMANDS, ids=lambda c: f"{c.domain}-{c.name}")
 def test_fixture_fits_command(command: Command) -> None:
     doc = _load(command)
@@ -79,7 +87,9 @@ def test_fixture_fits_command(command: Command) -> None:
     cols = columns(None, entry.view)
     rows: list[Any] = []
     for item in items:
-        assert isinstance(item, dict)
+        # Only items whose schema declares no properties may be plain values (interclient
+        # app IDs are strings).
+        assert isinstance(item, dict) or not _item_fields(command)
         rows.append(render(item, RULES, links=False, cols=cols))
         assert render(item, RULES, links=True, cols=None)
     if cols is not None:

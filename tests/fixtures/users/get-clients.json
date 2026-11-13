@@ -1,0 +1,20 @@
+{
+  "source": "generated",
+  "operation": "listUserClients",
+  "body": [
+    {
+      "client_id": "0oabskvc6442nkvQO0h7",
+      "client_name": "My App",
+      "client_uri": null,
+      "logo_uri": null,
+      "_links": {
+        "grants": {
+          "href": "https://example.okta.com/api/v1/users/00u5t60iloOHN9pBi0h7/clients/0oabskvc6442nkvQO0h7/grants"
+        },
+        "tokens": {
+          "href": "https://example.okta.com/api/v1/users/00u5t60iloOHN9pBi0h7/clients/0oabskvc6442nkvQO0h7/tokens"
+        }
+      }
+    }
+  ]
+}

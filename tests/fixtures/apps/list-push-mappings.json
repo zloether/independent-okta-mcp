@@ -1,0 +1,48 @@
+{
+  "source": "generated",
+  "operation": "listGroupPushMappings",
+  "body": [
+    {
+      "created": "2025-01-01T00:00:00Z",
+      "errorSummary": "",
+      "id": "gPm00000000000000000",
+      "lastPush": "2025-01-01T00:00:00Z",
+      "lastUpdated": "2025-01-01T00:00:00Z",
+      "sourceGroupId": "00g00000000000000000",
+      "status": "ACTIVE",
+      "targetGroupId": "00g00000000000000001",
+      "_links": {
+        "app": {
+          "href": "https://example.okta.com/api/v1/apps/0oa00000000000000000"
+        },
+        "sourceGroup": {
+          "href": "https://example.okta.com/api/v1/groups/00g00000000000000000"
+        },
+        "targetGroup": {
+          "href": "https://example.okta.com/api/v1/groups/00g00000000000000001"
+        }
+      }
+    },
+    {
+      "created": "2025-01-02T00:00:00Z",
+      "errorSummary": "",
+      "id": "gPm00000000000000001",
+      "lastPush": "2025-01-02T00:00:00Z",
+      "lastUpdated": "2025-01-02T00:00:00Z",
+      "sourceGroupId": "00g00000000000000002",
+      "status": "INACTIVE",
+      "targetGroupId": "00g00000000000000003",
+      "_links": {
+        "app": {
+          "href": "https://example.okta.com/api/v1/apps/0oa00000000000000000"
+        },
+        "sourceGroup": {
+          "href": "https://example.okta.com/api/v1/groups/00g00000000000000002"
+        },
+        "targetGroup": {
+          "href": "https://example.okta.com/api/v1/groups/00g00000000000000003"
+        }
+      }
+    }
+  ]
+}

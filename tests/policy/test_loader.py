@@ -10,7 +10,15 @@ from okta_mcp.policy.loader import PolicyError, build_policy, load_policy
 from okta_mcp.registry.loader import Registry, load_registry
 from okta_mcp.registry.spec import load_spec
 
-from ._pilot import GROUPS_NORMAL, GROUPS_SENSITIVE, HELPDESK, PILOT, READERS, ZONES
+from ._pilot import (
+    GROUPS_NORMAL,
+    GROUPS_SENSITIVE,
+    HELPDESK,
+    PILOT,
+    READERS,
+    ZONES,
+    pilot_registry,
+)
 
 G1, G2 = READERS, HELPDESK
 
@@ -49,10 +57,12 @@ def test_registry_fixture_matches_the_assumed_sensitivities(registry: Registry) 
     assert {(d, n) for d in ("network-zones",) for n in registry.domains[d].commands} == ZONES
 
 
-def test_pilot_policy_loads_clean() -> None:
-    # Against the shipped registry alone, as the server loads it.
-    policy = load_policy(PILOT, load_registry(load_spec()))
-    assert policy.warnings == ()
+def test_pilot_policy_loads_clean_against_the_shipped_registry() -> None:
+    assert load_policy(PILOT, load_registry(load_spec())).warnings == ()
+
+
+def test_pilot_policy_roles() -> None:
+    policy = load_policy(PILOT, pilot_registry())
     assert set(policy.roles) == {
         "directory-reader",
         "helpdesk",
@@ -264,9 +274,7 @@ def test_duplicate_command(registry: Registry, field: str, commands: list[str]) 
 
 
 @pytest.mark.parametrize("field", ["allow", "deny"])
-@pytest.mark.parametrize(
-    "domain", ["users", "Groups", "groups ", "group*", "", "**", "okta_groups"]
-)
+@pytest.mark.parametrize("domain", ["logs", "Groups", "groups ", "group*", "", "**", "okta_groups"])
 def test_unknown_domain(registry: Registry, field: str, domain: str) -> None:
     error = _one_error(_doc(r=_role(**{field: {domain: ["*"]}})), registry)
     assert error == f"roles.r.{field}: unknown domain {domain!r}"
@@ -293,7 +301,7 @@ def test_only_star_under_the_all_domains_wildcard(
     assert 'the only entry allowed under domain "*" is ["*"]' in error
 
 
-@pytest.mark.parametrize("include", [["users"], ["Groups"], ["groups", "nope"], ["list"]])
+@pytest.mark.parametrize("include", [["logs"], ["Groups"], ["groups", "nope"], ["list"]])
 def test_include_sensitive_unknown_domain(registry: Registry, include: list[str]) -> None:
     error = _one_error(_doc(r=_role(include_sensitive=include)), registry)
     assert error == f"roles.r.include_sensitive: unknown domain {include[-1]!r}"
@@ -369,11 +377,11 @@ def test_unknown_role_key(registry: Registry, key: str) -> None:
 
 def test_every_error_is_reported_at_once(registry: Registry) -> None:
     doc = _doc(
-        a=_role(allow={"users": ["*"], "groups": ["nope", "list"]}, deny={"groups": ["gone"]}),
+        a=_role(allow={"logs": ["*"], "groups": ["nope", "list"]}, deny={"groups": ["gone"]}),
         b=_role(allow={"network-zones": ["list"]}, include_sensitive=["logs"]),
     )
     assert _errors(doc, registry) == [
-        "roles.a.allow: unknown domain 'users'",
+        "roles.a.allow: unknown domain 'logs'",
         "roles.a.allow.groups: unknown command 'nope'",
         "roles.a.deny.groups: unknown command 'gone'",
         "roles.b.include_sensitive: unknown domain 'logs'",

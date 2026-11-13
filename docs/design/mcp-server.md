@@ -339,7 +339,6 @@ commands:
     summary: Get a user by ID or login
     args:
       user: {path_param: id}           # Okta accepts ID or login here; §6.4 character rule applies
-      expand: {query: expand, allowed_values: []}   # empty → argument not exposed
     data_classes: [pii]
 
   get-groups:
@@ -357,7 +356,8 @@ commands:
     summary: MFA factors enrolled by a user
     args:
       user: {path_param: userId, resolve: user_id}
-    data_classes: [mfa-state]
+    view: [id, factorType, provider, status]
+    data_classes: [mfa-state, pii]
 
   get-enrollments:
     operation: listAuthenticatorEnrollments
@@ -616,7 +616,7 @@ roles:
     groups: ["00g1secanalyst000000"]      # mcp-okta-security
     allow:
       logs:              ["*"]
-      users:             [get, search, get-groups, get-devices, get-risk]
+      users:             [get, list, get-groups, get-devices, get-risk]
       policies:          ["*"]
       network-zones:     ["*"]
       attack-protection: ["*"]

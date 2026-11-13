@@ -2,6 +2,7 @@ from typing import Any
 
 import httpx2
 import pytest
+from _samples import SAMPLES
 
 from okta_mcp.exec.params import build_request, build_url, check_args, path_segment
 from okta_mcp.okta.client import OktaClient, new_http_client
@@ -42,14 +43,6 @@ PAYLOADS: list[object] = [
     None,
     ["a"],
 ]
-# A value matching each registry path-param pattern; a new pattern needs a sample here.
-SAMPLES = {
-    "^00g[A-Za-z0-9]{17}$": "00g1emaKYZTWRYYRRTSK",
-    "^0pr[A-Za-z0-9]{17}$": "0pr1emaKYZTWRYYRRTSK",
-    "^nzo[A-Za-z0-9]{17}$": "nzo1emaKYZTWRYYRRTSK",
-    "^[A-Za-z0-9]{1,64}$": "JBCUYUC7IRCVGS27IFCE2SKO",
-    None: "alice@example.com",
-}
 
 
 @pytest.fixture(scope="module")
@@ -135,7 +128,13 @@ def _commands(spec: SpecIndex) -> list[Command]:
 
 
 def _path_args(cmd: Command) -> dict[str, Any]:
-    return {n: SAMPLES[a.pattern] for n, a in cmd.entry.args.items() if a.path_param is not None}
+    """A valid value per path arg: by pattern, or a spec enum's first value."""
+    props = cmd.schema["properties"]
+    return {
+        n: props[n]["enum"][0] if "enum" in props[n] else SAMPLES[a.pattern]
+        for n, a in cmd.entry.args.items()
+        if a.path_param is not None
+    }
 
 
 def _cases() -> list[tuple[Command, str, object]]:

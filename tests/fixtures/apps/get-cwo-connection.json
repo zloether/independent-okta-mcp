@@ -1,0 +1,12 @@
+{
+  "source": "generated",
+  "operation": "getCrossAppAccessConnection",
+  "body": {
+    "created": "2024-10-15T10:30:00.000Z",
+    "id": "cwofxqCAJWWGELFTYASJ",
+    "lastUpdated": "2024-10-15T14:20:00.000Z",
+    "requestingAppInstanceId": "0oafxqCAJWWGELFTYASJ",
+    "resourceAppInstanceId": "0oafxqCBJWWGELFTYASK",
+    "status": "ACTIVE"
+  }
+}

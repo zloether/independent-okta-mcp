@@ -7,20 +7,20 @@ the registry and the pinned spec 2026.42.1. Do not edit; rerun the script.
 
 | Kind | Commands | Done |
 |---|---|---|
-| simple | 170 | 14 |
-| resolved | 30 | 0 |
+| simple | 170 | 46 |
+| resolved | 30 | 29 |
 | composite (post-v1) | 4 | — |
 | excluded | 2 | — |
-| **total** | **206** | **14** |
+| **total** | **206** | **75** |
 
-Gotcha endpoints (record a fixture): 5, 5 to do
+Gotcha endpoints (record a fixture): 5, 4 to do
 
 ## By domain
 
 | Domain | Catalogue | Simple | Resolved | Composite | Excluded | Done | To do |
 |---|---|---|---|---|---|---|---|
 | api-tokens | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
-| apps | 31 | 30 | 0 | 1 | 0 | 0 | 30 |
+| apps | 31 | 30 | 0 | 1 | 0 | 29 | 1 |
 | attack-protection | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
 | authenticators | 6 | 6 | 0 | 0 | 0 | 0 | 6 |
 | authorization-servers | 18 | 18 | 0 | 0 | 0 | 0 | 18 |
@@ -41,12 +41,12 @@ Gotcha endpoints (record a fixture): 5, 5 to do
 | schemas | 13 | 13 | 0 | 0 | 0 | 0 | 13 |
 | security | 6 | 6 | 0 | 0 | 0 | 0 | 6 |
 | sessions | 1 | 1 | 0 | 0 | 0 | 0 | 1 |
-| users | 34 | 3 | 30 | 0 | 1 | 0 | 33 |
+| users | 34 | 3 | 30 | 0 | 1 | 32 | 1 |
 
 ## To do
 
 - **api-tokens**: list, get
-- **apps**: list, get, get-users, get-groups, get-group, get-connection, get-connection-jwks, list-csrs, get-csr, list-jwks, get-jwk, list-keys, get-key, list-secrets, get-secret, list-cwo-connections, get-cwo-connection, list-features, get-feature, list-federated-claims, get-federated-claim, list-grants, get-grant, list-group-push-mappings, get-group-push-mapping, list-interclient-allowed-apps, list-interclient-target-apps, list-tokens, get-token, get-user
+- **apps**: list-jwks
 - **attack-protection**: get-authenticator-settings, get-user-lockout-settings
 - **authenticators**: list, get, list-methods, get-method, list-aaguids, get-aaguid
 - **authorization-servers**: list, get, list-associated-servers, list-claims, get-claim, list-clients, list-tokens, get-token, list-keys, get-key, list-policies, get-policy, list-policy-rules, get-policy-rule, list-resource-server-keys, get-resource-server-key, list-scopes, get-scope
@@ -65,7 +65,7 @@ Gotcha endpoints (record a fixture): 5, 5 to do
 - **schemas**: list, get, get-app-user-schema, get-group-schema, list-log-stream-schemas, get-log-stream-schema, list-linked-objects, get-linked-object, get-user-schema, list-user-types, get-user-type, list-ui-schemas, get-ui-schema
 - **security**: get-threat-insight-config, list-security-events-providers, get-security-events-provider, get-ssf-streams, get-ssf-stream-status, get-bot-protection-config
 - **sessions**: get
-- **users**: list, get, search, get-apps, get-blocks, get-groups, get-idps, get-linked-objects, get-enrollments, get-classification, get-clients, get-client-grants, get-client-tokens, get-client-token, get-devices, get-factors, get-grants, get-grant, get-risk, get-roles, get-role, get-subscriptions, get-subscription, get-factors-catalog, get-factor, get-factor-transaction, get-enrollment, get-role-governance, get-role-governance-grant, get-role-governance-grant-resources, get-role-app-targets, get-role-group-targets, get-role-targets
+- **users**: get-linked-objects
 
 ## Registry commands outside the catalogue
 

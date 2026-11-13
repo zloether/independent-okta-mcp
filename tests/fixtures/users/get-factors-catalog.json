@@ -1,0 +1,127 @@
+{
+  "source": "generated",
+  "operation": "listSupportedFactors",
+  "body": [
+    {
+      "factorType": "question",
+      "provider": "OKTA",
+      "vendorName": "OKTA",
+      "_links": {
+        "questions": {
+          "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors/questions",
+          "hints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        },
+        "enroll": {
+          "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      },
+      "status": "ACTIVE",
+      "enrollment": "OPTIONAL"
+    },
+    {
+      "factorType": "token:software:totp",
+      "provider": "OKTA",
+      "_links": {
+        "enroll": {
+          "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "factorType": "token:software:totp",
+      "provider": "GOOGLE",
+      "_links": {
+        "enroll": {
+          "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "factorType": "sms",
+      "provider": "OKTA",
+      "vendorName": "OKTA",
+      "_links": {
+        "enroll": {
+          "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      },
+      "_embedded": {
+        "phones": [
+          {
+            "id": "mblldntFJevYKbyQQ0g3",
+            "profile": {
+              "phoneNumber": "+14081234567"
+            },
+            "status": "ACTIVE"
+          }
+        ]
+      }
+    },
+    {
+      "factorType": "call",
+      "provider": "OKTA",
+      "_links": {
+        "enroll": {
+          "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "factorType": "token",
+      "provider": "RSA",
+      "_links": {
+        "enroll": {
+          "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "factorType": "token",
+      "provider": "SYMANTEC",
+      "_links": {
+        "enroll": {
+          "href": "https://example.okta.com/api/v1/users/00u15s1KDETTQMQYABRL/factors",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

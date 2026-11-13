@@ -1,0 +1,27 @@
+{
+  "source": "generated",
+  "operation": "getUserRisk",
+  "body": {
+    "riskLevel": "HIGH",
+    "reason": "override.by.admin",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/users/{userId}/risk",
+        "hints": {
+          "allow": [
+            "GET",
+            "PUT"
+          ]
+        }
+      },
+      "user": {
+        "href": "https://example.okta.com/api/v1/users/{userId}",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "source": "generated",
+  "operation": "listGrantsForUserAndClient",
+  "body": [
+    {
+      "clientId": "oag3ih1zrm1cBFOiq0h6",
+      "created": "2017-03-28T01:11:10.000Z",
+      "createdBy": {
+        "id": "00u5t60iloOHN9pBi0h7",
+        "type": "User"
+      },
+      "id": "oag3ih1zrm1cBFOiq0h6",
+      "issuer": "https://host-1.example.com",
+      "lastUpdated": "2026-01-01T00:00:00.000Z",
+      "scopeId": "okta.users.read",
+      "source": "ADMIN",
+      "status": "ACTIVE",
+      "userId": "00u5t60iloOHN9pBi0h7",
+      "_embedded": {
+        "scope": {
+          "id": "okta.users.read"
+        }
+      },
+      "_links": {
+        "self": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        },
+        "app": {
+          "href": "https://example.okta.com/api/v1/apps/0oabskvc6442nkvQO0h7",
+          "title": "My App"
+        },
+        "client": {
+          "href": "https://example.okta.com/api/v1/apps/0oabskvc6442nkvQO0h7",
+          "title": "My App"
+        },
+        "scope": {
+          "href": "https://example.okta.com/api/v1/authorizationServers/ausain6z9zIedDCxB0h7/scopes/scpCmCCV1DpxVkCaye2X",
+          "title": "My phone"
+        },
+        "user": {
+          "href": "https://example.okta.com/api/v1/users/00u5t60iloOHN9pBi0h7",
+          "title": "SAML Jackson"
+        },
+        "authorizationServer": {
+          "href": "https://example.okta.com/api/v1/authorizationServers/ausain6z9zIedDCxB0h7",
+          "title": "Example Authorization Server"
+        }
+      }
+    }
+  ]
+}

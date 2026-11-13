@@ -16,16 +16,18 @@ left over from a command that no longer exists. Exit status 2: invalid spec or r
 """
 
 import argparse
+import copy
 import functools
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
 import yaml
 from fixturelib import Neutralizer, okta_id
 
+from okta_mcp.exec.output import pick
 from okta_mcp.registry.loader import Command, Registry, RegistryError, load_registry
 from okta_mcp.registry.spec import SPEC, Resolver, SpecError, load_spec
 
@@ -122,13 +124,53 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     examples = [synth.deref(e).get("value") for e in (content.get("examples") or {}).values()]
     examples += [content["example"]] if "example" in content else []
     if found := [e for e in examples if e]:
-        value = found[0]
+        value = _fill_view(found[0], lambda: synth.value(content.get("schema")), command)
     else:
         value = synth.value(content.get("schema"))
         value = None if value is _OMIT else value
     if command.entry.response_override is not None and not isinstance(value, list):
         value = [value]
     return Neutralizer()(value)
+
+
+def _items(value: Any, command: Command) -> list[Any]:
+    if isinstance(value, dict) and command.entry.items_key is not None:
+        value = cast(dict[str, Any], value).get(command.entry.items_key)
+    return cast(list[Any], value) if isinstance(value, list) else [value]
+
+
+def _fill_view(example: Any, synthesize: Callable[[], Any], command: Command) -> Any:
+    """A spec example can leave out a field the command's view shows (the users-groups example
+    has no `type`). Such a path is copied from the schema-built body into the first item, so
+    the fixture carries every view column. A column counts as present by the fixture test's
+    rule (`pick`, with `[]` and `[None]` blank); a path through a non-object is left alone."""
+    items = [i for i in _items(example, command) if isinstance(i, dict)]
+    missing = [p for p in command.entry.view or () if all(_blank(pick(i, p)) for i in items)]
+    if not items or not missing:
+        return example
+    built = [i for i in _items(synthesize(), command) if isinstance(i, dict)]
+    if not built:
+        return example
+    example = copy.deepcopy(example)
+    first = next(i for i in _items(example, command) if isinstance(i, dict))
+    for path in missing:
+        if _blank(v := pick(built[0], path)):
+            continue
+        *parents, leaf = path.split(".")
+        node: Any = first
+        for k in parents:
+            node = cast(dict[str, Any], node).setdefault(k, {})
+            if not isinstance(node, dict):
+                break
+        else:
+            cast(dict[str, Any], node)[leaf] = v
+    return example
+
+
+def _blank(cell: Any) -> bool:
+    if isinstance(cell, list):
+        return all(_blank(c) for c in cast(list[Any], cell))
+    return cell is None
 
 
 def fixture(spec: Mapping[str, Any], command: Command) -> dict[str, Any]:

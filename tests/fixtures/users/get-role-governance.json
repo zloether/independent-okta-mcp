@@ -1,0 +1,36 @@
+{
+  "source": "generated",
+  "operation": "getUserAssignedRoleGovernance",
+  "body": {
+    "grants": [
+      {
+        "type": "CUSTOM",
+        "grantId": "grai24zWTjnDazeOI0g4",
+        "_links": {
+          "resources": {
+            "href": "https://example.okta.com/api/v1/users/00u15r0i2hC4jeTne0g5/roles/KVJUKUS7IFCE2SKO/governance/grai24zWTjnDazeOI0g4/resources"
+          }
+        }
+      },
+      {
+        "type": "ENTITLEMENT-BUNDLE",
+        "grantId": "grai2556vZgWesWf10g4",
+        "bundleId": "enbhz2pAwtts9UBes0g4",
+        "expirationDate": "2024-12-09 14:17:22.0",
+        "_links": {
+          "resources": {
+            "href": "https://example.okta.com//api/v1/users/00u15r0i2hC4jeTne0g5/roles/KVJUKUS7IFCE2SKO/governance/grai2556vZgWesWf10g4/resources"
+          }
+        }
+      }
+    ],
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/users/00u15r0i2hC4jeTne0g5/roles/KVJUKUS7IFCE2SKO/governance"
+      },
+      "assignee": {
+        "href": "https://example.okta.com/api/v1/users/00u15r0i2hC4jeTne0g5\""
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "source": "generated",
+  "operation": "getRoleTargetsByUserIdAndRoleId",
+  "body": [
+    {
+      "orn": "orn:okta:directory:00o5v1t2W4OSF9r4N0g4:groups:00g5vhi3rEJMOog1S0g4",
+      "assignmentType": "USER",
+      "expiration": "2025-05-10T20:21:11.000Z",
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/groups/00g5vhi3rEJMOog1S0g4"
+        }
+      }
+    }
+  ]
+}

@@ -167,8 +167,10 @@ def test_visibility_follows_roles(shipped: Resources) -> None:
 
     refs = [FILTERS_URI, EXPRESSION_LANGUAGE_URI]
     assert uris(_who(READERS)) == [*refs, "okta://guide/groups"]
-    assert uris(_who(ADMINS)) == [*refs, "okta://guide/groups", "okta://guide/network-zones"]
-    assert uris(_who(HELPDESK)) == uris(_who(ADMINS))
+    pilots = ["okta://guide/groups", "okta://guide/network-zones"]
+    assert uris(_who(HELPDESK)) == [*refs, *pilots]
+    # The pilot policy's admin role allows every domain.
+    assert uris(_who(ADMINS)) == [*refs, "okta://guide/apps", *pilots, "okta://guide/users"]
 
 
 def test_no_roles_sees_only_references(shipped: Resources) -> None:

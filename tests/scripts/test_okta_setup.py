@@ -217,6 +217,17 @@ def test_example_config_is_valid() -> None:
     assert cfg.service_app.scopes == ["okta.users.read", "okta.groups.read"]
 
 
+# Scopes the registry uses whose narrowest admin role hasn't been checked against an org yet
+# (plan 5.1). The setup script refuses them, so their commands stay unavailable until a live
+# check adds each to SCOPE_ROLES and is removed from here.
+UNVERIFIED_SCOPES = {
+    "okta.apps.read",
+    "okta.appGrants.read",
+    "okta.apps.interclientTrust.read",
+    "okta.userRisk.read",
+}
+
+
 def test_scope_roles_cover_the_registry() -> None:
     registry = load_registry(load_spec())
     used = {
@@ -226,7 +237,10 @@ def test_scope_roles_cover_the_registry() -> None:
         for ss in c.scope_sets
         for s in ss
     }
-    assert used <= set(setup.SCOPE_ROLES)
+    assert used - UNVERIFIED_SCOPES <= set(setup.SCOPE_ROLES)
+    # Each pending scope is still used, and not already verified.
+    assert used >= UNVERIFIED_SCOPES
+    assert not UNVERIFIED_SCOPES & set(setup.SCOPE_ROLES)
 
 
 def test_docs_table_matches_scope_roles() -> None:

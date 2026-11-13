@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from _load import load_script
 
-from okta_mcp.registry.loader import Registry, load_registry
+from okta_mcp.registry.loader import Command, Registry, load_registry
 from okta_mcp.registry.model import ResponseOverride
 from okta_mcp.registry.spec import SpecIndex, load_spec
 
@@ -152,6 +152,57 @@ def test_response_override_wraps_object_in_list(raw: dict[str, Any], registry: R
     entry = command.entry.model_copy(update={"response_override": override})
     body = gen.body(raw, dataclasses.replace(command, entry=entry))
     assert isinstance(body, list) and body[0]["id"] == "00g1emaKYZTWRYYRRTSK"
+
+
+def test_view_path_missing_from_example_is_filled(raw: dict[str, Any], registry: Registry) -> None:
+    # The pinned spec's listUserGroups example has no `type`; the schema gives one.
+    command = registry.domains["users"].commands["get-groups"]
+    example = raw["components"]["examples"]
+    body = gen.body(raw, command)
+    assert body[0]["type"] in {"OKTA_GROUP", "APP_GROUP", "BUILT_IN"}
+    assert all("type" not in item for item in body[1:])  # only the first item gains it
+    assert body[0]["profile"]["name"] == "Cloud app users"  # the example is kept
+    assert example == raw["components"]["examples"]  # the spec isn't modified
+
+
+def test_view_path_in_example_is_left_alone(raw: dict[str, Any], registry: Registry) -> None:
+    command = registry.domains["groups"].commands["list"]
+    filled = gen.body(raw, command)
+    plain = gen.body(
+        raw, dataclasses.replace(command, entry=command.entry.model_copy(update={"view": None}))
+    )
+    assert filled == plain
+
+
+def _cmd(registry: Registry, view: tuple[str, ...]) -> Command:
+    command = registry.domains["groups"].commands["get"]
+    return dataclasses.replace(command, entry=command.entry.model_copy(update={"view": view}))
+
+
+def test_fill_view_skips_a_path_through_a_non_object(registry: Registry) -> None:
+    built = {"profile": {"name": "x"}, "tags": ["a"]}
+    for example in ({"profile": None}, {"profile": ["a"]}, {"profile": "s"}):
+        out = gen._fill_view(example, lambda: built, _cmd(registry, ("profile.name",)))
+        assert out == example  # no TypeError, nothing written
+
+
+def test_fill_view_treats_empty_lists_as_blank(registry: Registry) -> None:
+    out = gen._fill_view({"tags": []}, lambda: {"tags": ["a"]}, _cmd(registry, ("tags",)))
+    assert out == {"tags": ["a"]}
+
+
+def test_fill_view_synthesizes_only_when_needed(registry: Registry) -> None:
+    def fail() -> Any:
+        raise AssertionError("synthesized")
+
+    example = {"id": "00g1emaKYZTWRYYRRTSK"}
+    assert gen._fill_view(example, fail, _cmd(registry, ("id",))) == example
+
+
+def test_fill_view_does_not_change_its_input(registry: Registry) -> None:
+    example = {"id": "x"}
+    gen._fill_view(example, lambda: {"id": "x", "type": "OKTA_GROUP"}, _cmd(registry, ("type",)))
+    assert example == {"id": "x"}
 
 
 # --- neutralizing (shared with sanitize-fixture.py) ---
