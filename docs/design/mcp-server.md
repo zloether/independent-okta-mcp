@@ -969,13 +969,13 @@ Future work: Path B (XAA), composite handlers, per-bucket 429 handling, `/metric
 }
 ```
 
-The `groups` claim carries IDs of Okta-mastered `mcp-okta-*` groups (§8.2).
+The `groups` claim carries IDs of Okta-mastered `mcp-okta-*` groups (§8.2; the prefix is `group_prefix` in the setup tools).
 
 ## Appendix C — Okta setup runbook (outline; verify against current Okta docs)
 
 Steps 1–4 are automated by `scripts/okta-setup.py` or the `terraform/okta/` module ([guide](../okta-setup.md)).
 
-1. **Dedicated custom AS:** audience `MCP_PUBLIC_URL`; scope `okta-mcp`; `groups` claim on the access token emitting **IDs** of Okta-mastered `mcp-okta-*` groups (V13); access-token lifetime ≤30 min; rule scopes include `offline_access`; refresh tokens off (A) or rotating with bounded lifetimes (B, §8.3); access policy limiting clients/users.
+1. **Dedicated custom AS:** audience `MCP_PUBLIC_URL`; scope `okta-mcp`; `groups` claim on the access token emitting **IDs** of Okta-mastered `mcp-okta-*` groups (V13; prefix configurable); access-token lifetime ≤30 min; rule scopes include `offline_access`; refresh tokens off (A) or rotating with bounded lifetimes (B, §8.3); access policy limiting clients/users.
 2. **Groups:** create role groups; copy their IDs into the policy (names as comments); keep them out of delegated admins' resource sets and out of group rules, and alert on membership changes (§8.2).
 3. **Service app:** API Services app, `private_key_jwt` (upload public JWK, note `kid`), "Require DPoP" on (the console default; turn it on explicitly if the app was created through the API, V15); grant only intended `okta.*.read` scopes; assign the role the scopes need (§10: Read-only Administrator, or Super Admin only if `okta.roles.read` is granted) or a custom role; store the private key as a container secret.
 4. **Clients:** register approved MCP clients as public OIDC apps (PKCE, exact redirect URIs); allow them in the AS access policy; assign them an authentication policy that requires MFA (§8.2). Cap the service app's rate-limit share (§10).

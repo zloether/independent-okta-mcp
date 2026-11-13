@@ -792,7 +792,7 @@ def add_group(config: Path) -> None:
             lambda policy, rule: rule["conditions"]["people"]["groups"].update(
                 include=["EVERYONE"]
             ),
-            "applies to EVERYONE",
+            "applies to EVERYONE; limit it to the mcp-okta-* groups",
         ),
     ],
 )

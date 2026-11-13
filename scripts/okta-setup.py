@@ -649,7 +649,7 @@ class Setup:
             issues.append("includes individual users; grant access through groups only")
         include = (people.get("groups") or {}).get("include", [])
         if "EVERYONE" in include:
-            issues.append("applies to EVERYONE; limit it to the {cfg.group_prefix}* groups")
+            issues.append(f"applies to EVERYONE; limit it to the {cfg.group_prefix}* groups")
         for issue in issues:
             self.problem(what, issue)
         if issues:
