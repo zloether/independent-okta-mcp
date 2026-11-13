@@ -19,10 +19,11 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from urllib.parse import urlsplit
 
 import httpx2
@@ -41,11 +42,24 @@ from pydantic import (
 )
 
 GROUP_PREFIX = "mcp-okta-"
-# Emits IDs of Okta-mastered groups whose name starts with GROUP_PREFIX (design §8.2, V13).
-GROUPS_EXPRESSION = (
-    "user.getGroups({'group.type': {'OKTA_GROUP'}}, "
-    f"{{'group.profile.name': {{'{GROUP_PREFIX}'}}}}).![id]"
-)
+"""Default `group_prefix`."""
+# The prefix goes inside a single-quoted Okta Expression Language literal, so the character set
+# leaves out quotes, backslashes, braces and `$`. At least 4 characters: a short prefix ("a")
+# would put most of a user's groups in every token, past Okta's cap on the claim. Mirrored in
+# terraform/okta/variables.tf (tested).
+GROUP_PREFIX_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9 _.:-]{3,63}$"
+
+
+def groups_expression(prefix: str) -> str:
+    """Emits IDs of Okta-mastered groups whose name starts with `prefix` (design §8.2, V13)."""
+    if not re.fullmatch(GROUP_PREFIX_PATTERN, prefix):
+        raise ValueError(f"invalid group prefix {prefix!r}")
+    return (
+        "user.getGroups({'group.type': {'OKTA_GROUP'}}, "
+        f"{{'group.profile.name': {{'{prefix}'}}}}).![id]"
+    )
+
+
 GROUPS_CLAIM = "groups"
 POLICY_NAME = "okta-mcp clients"
 RULE_NAME = "okta-mcp groups"
@@ -134,6 +148,8 @@ class Config(_Model):
     scope: str = "okta-mcp"
     access_token_minutes: int = Field(default=30, ge=5, le=30)
     refresh_tokens: RefreshTokens | None = None
+    group_prefix: str = Field(default=GROUP_PREFIX, pattern=GROUP_PREFIX_PATTERN)
+    """Role group names start with this; the groups claim emits only such groups' IDs."""
     groups: list[str] = Field(min_length=1)
     clients: list[Client] = Field(min_length=1)
     service_app: ServiceApp
@@ -143,6 +159,18 @@ class Config(_Model):
         if self.refresh_tokens and self.refresh_tokens.idle_minutes < self.access_token_minutes:
             raise ValueError("refresh_tokens.idle_minutes must be at least access_token_minutes")
         return self
+
+    @model_validator(mode="after")
+    def _prefix(self) -> "Config":
+        prefix = self.group_prefix
+        bad = [g for g in self.groups if not g.startswith(prefix) or g == prefix]
+        if bad:
+            raise ValueError(f"group names must start with {prefix!r}, got {bad}")
+        return self
+
+    @property
+    def groups_expression(self) -> str:
+        return groups_expression(self.group_prefix)
 
     @property
     def client_grants(self) -> list[str]:
@@ -181,14 +209,6 @@ class Config(_Model):
             raise ValueError(ENCODED_HOST)
         return url
 
-    @field_validator("groups")
-    @classmethod
-    def _prefix(cls, groups: list[str]) -> list[str]:
-        bad = [g for g in groups if not g.startswith(GROUP_PREFIX) or g == GROUP_PREFIX]
-        if bad:
-            raise ValueError(f"group names must start with {GROUP_PREFIX!r}, got {bad}")
-        return groups
-
 
 def load_config(path: Path) -> Config:
     try:
@@ -216,6 +236,59 @@ def public_jwk(pem: bytes) -> dict[str, str]:
     return {"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": jwk["n"], "e": jwk["e"]}
 
 
+# Okta's "feature not available" code. On the authorization-server list/create endpoint it
+# most likely means the org lacks API Access Management, which creating a custom authorization
+# server needs (docs/okta-setup.md#prerequisites). Under an existing server (its claims,
+# policies) it could be that or another feature, so the note says so. Not seen live: matched on
+# the code at 401 or 403 (Okta sends E0000015 with 401 elsewhere, e.g. group owners).
+FEATURE_OFF = "E0000015"
+AUTHORIZATION_SERVERS = "/api/v1/authorizationServers"
+NO_API_AM = (
+    "this org can't create or use custom authorization servers. They need Okta's "
+    "API Access Management add-on (Enterprise and One-App subscriptions include only the "
+    "built-in 'default' server); see Prerequisites in docs/okta-setup.md"
+)
+MAYBE_NO_API_AM = (
+    "a feature this server needs is off for the org. If the org lacks Okta's API Access "
+    "Management add-on, that is the likely cause; see Prerequisites in docs/okta-setup.md"
+)
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+
+
+def _one_line(text: str) -> str:
+    """Okta's text with control characters (newlines, ANSI escapes) collapsed to a space."""
+    return " ".join(_CONTROL.sub(" ", text).split())
+
+
+def _error_detail(response: httpx2.Response) -> tuple[str | None, str]:
+    """Okta's error code and a one-line summary, from whatever shape the body has."""
+    try:
+        error = response.json()
+    except ValueError:
+        return None, ""
+    if not isinstance(error, dict):
+        return None, ""
+    fields = cast(dict[str, Any], error)
+    code = fields.get("errorCode")
+    code = code if isinstance(code, str) else None
+    summary = fields.get("errorSummary")
+    causes = fields.get("errorCauses")
+    cause_summaries = [
+        c.get("errorSummary")
+        for c in (causes if isinstance(causes, list) else [])
+        if isinstance(c, dict)
+    ]
+    cause_text = "; ".join(
+        _one_line(s) for s in cause_summaries if isinstance(s, str) and s.strip()
+    )
+    parts = [
+        _one_line(code) if code else None,
+        _one_line(summary) if isinstance(summary, str) else None,
+        cause_text,
+    ]
+    return code, " ".join(p for p in parts if p)
+
+
 class Okta:
     def __init__(self, http: httpx2.Client) -> None:
         self.http = http
@@ -225,13 +298,15 @@ class Okta:
     ) -> httpx2.Response:
         response = self.http.request(method, path, json=body, params=params)
         if response.status_code >= 400:
-            try:
-                error = response.json()
-                causes = "; ".join(c.get("errorSummary", "") for c in error.get("errorCauses", []))
-                detail = f"{error.get('errorCode')} {error.get('errorSummary')} {causes}".strip()
-            except ValueError:
-                detail = ""
-            raise SetupError(f"{method} {path} -> HTTP {response.status_code} {detail}")
+            code, detail = _error_detail(response)
+            message = f"{method} {path} -> HTTP {response.status_code} {detail}".rstrip()
+            target = httpx2.URL(path).path.rstrip("/")
+            if code == FEATURE_OFF and response.status_code in (401, 403):
+                if target == AUTHORIZATION_SERVERS:
+                    message += f"\n{NO_API_AM}"
+                elif target.startswith(f"{AUTHORIZATION_SERVERS}/"):
+                    message += f"\n{MAYBE_NO_API_AM}"
+            raise SetupError(message)
         return response
 
     def request(self, method: str, path: str, body: Any = None, **params: Any) -> Any:
@@ -470,6 +545,7 @@ class Setup:
 
     def _claim(self, base: str) -> None:
         what = f"claim {GROUPS_CLAIM!r}"
+        expression = self.cfg.groups_expression
         claim = next(
             (
                 c
@@ -484,7 +560,7 @@ class Setup:
                 "status": "ACTIVE",
                 "claimType": "RESOURCE",
                 "valueType": "EXPRESSION",
-                "value": GROUPS_EXPRESSION,
+                "value": expression,
                 "alwaysIncludeInToken": True,
                 "conditions": {"scopes": []},
             }
@@ -493,8 +569,8 @@ class Setup:
                 "create on access token",
                 lambda: self.okta.request("POST", f"{base}/claims", body),
             )
-        elif claim["valueType"] != "EXPRESSION" or claim["value"] != GROUPS_EXPRESSION:
-            self.problem(what, f"value is {claim['value']!r}, expected {GROUPS_EXPRESSION!r}")
+        elif claim["valueType"] != "EXPRESSION" or claim["value"] != expression:
+            self.problem(what, f"value is {claim['value']!r}, expected {expression!r}")
         elif claim["status"] != "ACTIVE" or not claim["alwaysIncludeInToken"]:
             self.problem(what, "must be ACTIVE and always included in the token")
         elif scopes := (claim.get("conditions") or {}).get("scopes"):
@@ -628,7 +704,7 @@ class Setup:
             issues.append("includes individual users; grant access through groups only")
         include = (people.get("groups") or {}).get("include", [])
         if "EVERYONE" in include:
-            issues.append("applies to EVERYONE; limit it to the mcp-okta-* groups")
+            issues.append(f"applies to EVERYONE; limit it to the {cfg.group_prefix}* groups")
         for issue in issues:
             self.problem(what, issue)
         if issues:

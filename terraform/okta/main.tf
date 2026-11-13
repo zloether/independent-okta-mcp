@@ -1,9 +1,9 @@
 locals {
   description = "Managed by okta-mcp terraform/okta"
 
-  # Emits IDs of Okta-mastered groups whose name starts with mcp-okta- (design §8.2, V13).
-  # Keep in sync with GROUPS_EXPRESSION in scripts/okta-setup.py.
-  groups_expression = "user.getGroups({'group.type': {'OKTA_GROUP'}}, {'group.profile.name': {'mcp-okta-'}}).![id]"
+  # Emits IDs of Okta-mastered groups whose name starts with group_prefix (design §8.2, V13).
+  # Keep in sync with groups_expression() in scripts/okta-setup.py (tested).
+  groups_expression = "user.getGroups({'group.type': {'OKTA_GROUP'}}, {'group.profile.name': {'${var.group_prefix}'}}).![id]"
 
   jwk = jsondecode(file(var.service_public_jwk_file))
   # RFC 7638 thumbprint, the same kid scripts/okta-setup.py computes.
@@ -27,6 +27,13 @@ resource "okta_group" "role" {
 
   name        = each.value
   description = local.description
+
+  lifecycle {
+    precondition {
+      condition     = startswith(each.value, var.group_prefix) && each.value != var.group_prefix
+      error_message = "Group names must start with group_prefix (${var.group_prefix})."
+    }
+  }
 }
 
 # --- Public clients --------------------------------------------------------------

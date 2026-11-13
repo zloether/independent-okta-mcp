@@ -1,0 +1,59 @@
+# Example policy (design §9.3). Copy it, then replace the group IDs with your org's role-group
+# IDs; keep each group's name in a comment, since the claim carries IDs only. Mount it read-only
+# (MCP_POLICY_FILE); changes take effect on restart. tests/policy/test_example.py loads it against
+# the full registry, so a renamed command fails CI rather than a deploy.
+#
+# Rules in brief:
+#   - Default deny. Effective permission is (union of allow) minus (union of deny); deny wins.
+#   - A pattern is a command name or "*"; no partial globs. Quote "*" (a bare * is a YAML alias).
+#   - "*" matches only normal commands. A sensitive command needs its name, or a wildcard in a
+#     domain listed in the role's include_sensitive.
+#   - search_attributes: what the role may name in a search, filter or sort expression, on the
+#     commands that role allows. Absent means none; ["*"] means any attribute results don't redact.
+version: 1
+
+roles:
+  helpdesk:
+    groups: ["00g1helpdsk000000000"]      # mcp-okta-helpdesk
+    allow:
+      users:  ["*", get-factors, get-enrollments]
+      groups: ["*"]
+      apps:   [list, get, get-users, get-groups]
+    # One list for every command the role allows: `status` is the user's status on `users list`
+    # and nothing on `groups list`; `profile.name` is the group's name.
+    search_attributes:
+      [profile.login, profile.email, profile.firstName, profile.lastName, status, profile.name]
+
+  directory-reader:
+    groups: ["00g1readers000000000"]      # mcp-okta-readers
+    allow:
+      users:  ["*"]
+      groups: ["*"]
+    # No search_attributes: this role can list and get, but not pass a search expression.
+
+  security-analyst:
+    groups: ["00g1secanalyst000000"]      # mcp-okta-security
+    allow:
+      logs:              ["*"]
+      users:             [get, list, get-groups, get-devices, get-risk]
+      policies:          ["*"]
+      network-zones:     ["*"]
+      attack-protection: ["*"]
+      behaviors:         ["*"]
+      sessions:          ["*"]
+    include_sensitive: [logs, sessions]
+    # System Log filter attributes (`okta_logs list` takes only a closed set, design §6.2).
+    search_attributes:
+      [eventType, outcome.result, actor.id, actor.alternateId, target.id, client.ipAddress,
+       authenticationContext.externalSessionId]
+    deny:
+      users: [get-factors]
+
+  platform-admin:
+    groups: ["00g1abc2defGHI3jkL45"]      # mcp-okta-admins
+    allow:
+      "*": ["*"]
+    # Every sensitive command in every domain. Startup logs a warning for this; keep it to a
+    # small group.
+    include_sensitive: ["*"]
+    search_attributes: ["*"]

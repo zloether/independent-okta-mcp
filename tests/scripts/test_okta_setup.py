@@ -1,6 +1,7 @@
 import copy
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -217,6 +218,119 @@ def test_example_config_is_valid() -> None:
     assert cfg.service_app.scopes == ["okta.users.read", "okta.groups.read"]
 
 
+# The expression verified live in 0.5 (V1, V13); the default prefix must still produce it.
+DEFAULT_EXPRESSION = (
+    "user.getGroups({'group.type': {'OKTA_GROUP'}}, {'group.profile.name': {'mcp-okta-'}}).![id]"
+)
+TERRAFORM = SCRIPTS.parent / "terraform" / "okta"
+
+
+def use_prefix(config: Path, prefix: str, groups: list[str]) -> None:
+    text = config.read_text().replace(
+        "groups: [mcp-okta-helpdesk, mcp-okta-readers]",
+        f"group_prefix: {json.dumps(prefix)}\ngroups: {json.dumps(groups)}",
+    )
+    config.write_text(text)
+
+
+def test_default_prefix_keeps_the_verified_expression(config: Path) -> None:
+    cfg = setup.load_config(config)
+    assert cfg.group_prefix == setup.GROUP_PREFIX == "mcp-okta-"
+    assert cfg.groups_expression == DEFAULT_EXPRESSION
+
+
+@pytest.mark.parametrize("prefix", ["APP-OktaMCP-", "MCP Okta ", "corp:mcp.", "okta_mcp_", "1234"])
+def test_custom_prefix(config: Path, prefix: str) -> None:
+    use_prefix(config, prefix, [f"{prefix}helpdesk"])
+    cfg = setup.load_config(config)
+    assert cfg.groups_expression == DEFAULT_EXPRESSION.replace("mcp-okta-", prefix)
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "",
+        "abc",  # too short: the claim would carry most of a user's groups
+        "x" * 65,
+        " mcp-",
+        "-mcp-",
+        "mcp'}).![id] + {'",  # would close the expression's string literal
+        "mcp\\-x",
+        "mcp{x}",
+        "mcp${x}",
+        'mcp"x',
+        "mcp-é-",
+        "mcp-\n",
+        "mcp*",
+    ],
+)
+def test_bad_prefix_fails_closed(config: Path, prefix: str) -> None:
+    use_prefix(config, prefix, [f"{prefix}helpdesk"])
+    with pytest.raises(setup.SetupError, match="invalid config"):
+        setup.load_config(config)
+    with pytest.raises(ValueError, match="invalid group prefix"):
+        setup.groups_expression(prefix)
+
+
+@pytest.mark.parametrize(
+    "groups",
+    [
+        ["mcp-okta-helpdesk"],  # the default prefix no longer applies
+        ["APP-OktaMCP-"],  # the prefix alone
+        ["app-oktamcp-helpdesk"],  # case differs
+        ["APP-OktaMCP-helpdesk", "helpdesk"],
+    ],
+)
+def test_groups_must_use_the_configured_prefix(config: Path, groups: list[str]) -> None:
+    use_prefix(config, "APP-OktaMCP-", groups)
+    with pytest.raises(setup.SetupError, match="must start with 'APP-OktaMCP-'"):
+        setup.load_config(config)
+
+
+def test_apply_with_custom_prefix_then_check_is_clean(config: Path, capsys) -> None:
+    use_prefix(config, "APP-OktaMCP-", ["APP-OktaMCP-helpdesk"])
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    assert run(okta, "check", config) == 0
+    server = okta.find("api", "v1", "authorizationServers", name="okta-mcp")
+    claim = okta.find("api", "v1", "authorizationServers", server["id"], "claims", name="groups")
+    assert claim["value"] == DEFAULT_EXPRESSION.replace("mcp-okta-", "APP-OktaMCP-")
+    assert {g["profile"]["name"] for g in okta.items("api", "v1", "groups")} == {
+        "APP-OktaMCP-helpdesk"
+    }
+
+
+def test_changed_prefix_reports_the_old_claim_as_manual(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    use_prefix(config, "APP-OktaMCP-", ["APP-OktaMCP-helpdesk"])
+    capsys.readouterr()
+    writes = len(okta.writes)
+    assert run(okta, "apply", config) == 1
+    out = capsys.readouterr().out
+    assert "[manual] claim 'groups': value is" in out
+    claims = [w for w in okta.writes[writes:] if "/claims" in w[1]]
+    assert claims == []  # never rewrites a claim expression
+
+
+def test_terraform_prefix_matches_the_script() -> None:
+    variables = (TERRAFORM / "variables.tf").read_text()
+    block = re.search(r'variable "group_prefix" \{(.*?)\n\}', variables, re.DOTALL)
+    assert block
+    assert re.search(r'default\s*=\s*"mcp-okta-"', block[1])
+    pattern = re.search(r'regex\("(.*?)", var\.group_prefix\)', block[1])
+    assert pattern
+    assert pattern[1] == setup.GROUP_PREFIX_PATTERN
+    main = (TERRAFORM / "main.tf").read_text()
+    expression = re.search(r'groups_expression = "(.*)"', main)
+    assert expression
+    assert expression[1].replace("${var.group_prefix}", "X-prefix") == setup.groups_expression(
+        "X-prefix"
+    )
+    assert "startswith(each.value, var.group_prefix)" in main
+    assert "mcp-okta-" not in main
+
+
 # Scopes the registry uses whose narrowest admin role hasn't been checked against an org yet
 # (plans 5.1 to 5.6). The setup script refuses them, so their commands stay unavailable
 # until a live check adds each to SCOPE_ROLES and is removed from here.
@@ -362,7 +476,7 @@ def test_apply_creates_everything_then_check_is_clean(config: Path, capsys) -> N
     server = okta.find("api", "v1", "authorizationServers", name="okta-mcp")
     assert server["audiences"] == [MCP_URL]
     base = ("api", "v1", "authorizationServers", server["id"])
-    assert okta.find(*base, "claims", name="groups")["value"] == setup.GROUPS_EXPRESSION
+    assert okta.find(*base, "claims", name="groups")["value"] == DEFAULT_EXPRESSION
     policy = okta.find(*base, "policies", name=setup.POLICY_NAME)
     assert policy["conditions"]["clients"]["include"] == [client["id"]]
     rule = okta.find(*base, "policies", policy["id"], "rules", name=setup.RULE_NAME)
@@ -679,7 +793,7 @@ def add_group(config: Path) -> None:
             lambda policy, rule: rule["conditions"]["people"]["groups"].update(
                 include=["EVERYONE"]
             ),
-            "applies to EVERYONE",
+            "applies to EVERYONE; limit it to the mcp-okta-* groups",
         ),
     ],
 )
@@ -869,3 +983,121 @@ def test_missing_credentials_is_an_error(config: Path, monkeypatch, capsys) -> N
     monkeypatch.delenv("OKTA_SETUP_API_TOKEN", raising=False)
     assert setup.run(["check", "--config", str(config)]) == 2
     assert "OKTA_SETUP_API_TOKEN" in capsys.readouterr().err
+
+
+def failing(
+    status: int,
+    match: Callable[[httpx2.Request], bool],
+    body: Any = None,
+    okta: FakeOkta | None = None,
+    content: bytes | None = None,
+) -> tuple[FakeOkta, httpx2.Client]:
+    """A FakeOkta whose requests that `match` answer `status` with `body` (or raw `content`)."""
+    okta = okta or FakeOkta()
+    fake = okta
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        if match(request):
+            if content is not None:
+                return httpx2.Response(status, content=content)
+            return httpx2.Response(status, json=body)
+        return fake.handle(request)
+
+    return okta, httpx2.Client(base_url=ORG, transport=httpx2.MockTransport(handle))
+
+
+def at(path: str, method: str | None = None) -> Callable[[httpx2.Request], bool]:
+    return lambda r: r.url.path.startswith(path) and method in (None, r.method)
+
+
+FEATURE_OFF_BODY = {
+    "errorCode": "E0000015",
+    "errorSummary": "You do not have permission to access the feature you are requesting",
+}
+AS_PATH = "/api/v1/authorizationServers"
+
+
+@pytest.mark.parametrize(("status", "method"), [(401, "GET"), (403, "GET"), (401, "POST")])
+def test_no_api_access_management_names_the_add_on(
+    config: Path, status: int, method: str, capsys
+) -> None:
+    okta, http = failing(status, at(AS_PATH, method), FEATURE_OFF_BODY)
+    assert setup.run(["apply", "--config", str(config)], http=http, confirm=lambda: True) == 2
+    err = capsys.readouterr().err
+    assert f"HTTP {status} E0000015 You do not have permission" in err
+    assert setup.NO_API_AM in err
+    assert okta.items("api", "v1", "authorizationServers") == []
+
+
+@pytest.mark.parametrize(
+    ("status", "path", "code"),
+    [
+        (401, "/api/v1/groups", "E0000015"),  # another endpoint
+        (403, "/api/v1/authorizationServers", "E0000006"),  # a plain permission error
+        (500, "/api/v1/authorizationServers", "E0000015"),
+    ],
+)
+def test_other_errors_get_no_add_on_hint(
+    config: Path, status: int, path: str, code: str, capsys
+) -> None:
+    _, http = failing(status, at(path), {"errorCode": code, "errorSummary": "x"})
+    assert setup.run(["check", "--config", str(config)], http=http) == 2
+    err = capsys.readouterr().err
+    assert f"HTTP {status} {code} x" in err
+    assert "API Access Management" not in err
+
+
+def test_sub_resource_feature_off_gets_the_softer_note(config: Path, capsys) -> None:
+    # Under an existing server (`authorization_server: default`, or one made before the add-on
+    # lapsed) E0000015 may be the add-on or another feature.
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    server = okta.find("api", "v1", "authorizationServers", name="okta-mcp")
+    claims = f"{server['id']}/claims"
+    _, http = failing(403, lambda r: r.url.path.endswith(claims), FEATURE_OFF_BODY, okta)
+    assert setup.run(["check", "--config", str(config)], http=http) == 2
+    err = capsys.readouterr().err
+    assert "HTTP 403 E0000015" in err
+    assert setup.MAYBE_NO_API_AM in err
+    assert setup.NO_API_AM not in err
+
+
+@pytest.mark.parametrize(
+    ("body", "detail"),
+    [
+        (["x"], ""),
+        ("text", ""),
+        ({"errorCode": "E0000015", "errorCauses": None}, "E0000015"),
+        ({"errorCode": "E0000015", "errorCauses": "x"}, "E0000015"),
+        ({"errorCode": "E0000015", "errorCauses": ["x", 1]}, "E0000015"),
+        ({"errorCode": "E0000015", "errorCauses": [{"errorSummary": "cause"}]}, "E0000015 cause"),
+        (
+            {
+                "errorCode": "E0000001",
+                "errorCauses": [{"errorSummary": None}, {}, {"errorSummary": "taken"}],
+            },
+            "E0000001 taken",
+        ),
+        ({"errorCode": 15, "errorSummary": ["x"]}, ""),
+        # control characters (newlines, ANSI escapes) collapse to one space
+        (
+            {"errorCode": "E0000001", "errorSummary": "bad\nline\x1b[31m red"},
+            "E0000001 bad line [31m red",
+        ),
+    ],
+)
+def test_malformed_error_bodies(config: Path, body: Any, detail: str, capsys) -> None:
+    _, http = failing(403, at(AS_PATH), body)
+    assert setup.run(["check", "--config", str(config)], http=http) == 2
+    err = capsys.readouterr().err
+    first = err.splitlines()[0]
+    assert first.endswith(f"HTTP 403 {detail}".rstrip())
+    # The note needs the code: it never appears without E0000015 in the message.
+    assert ("API Access Management" in err) == ("E0000015" in first)
+
+
+@pytest.mark.parametrize("content", [b"", b"null", b"not json"])
+def test_error_bodies_that_are_not_objects(config: Path, content: bytes, capsys) -> None:
+    _, http = failing(403, at(AS_PATH), content=content)
+    assert setup.run(["check", "--config", str(config)], http=http) == 2
+    assert capsys.readouterr().err.splitlines()[0].endswith("HTTP 403")

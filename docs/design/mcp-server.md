@@ -27,6 +27,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 | `groups list` with `q` sent `limit` and returned what came back (§6.2, 1.6 review) | New registry field `unpaged_args`: a call that passes one is read as one page, never resumed, and reported cut (`non_resumable`, with a warning) when Okta returns a full page (§7.2, step 2.10) | Okta doesn't page `q`, so a result cut at `page_size` had no next link and no sign of the cut. Not sending `limit` would rely on Okta's undocumented-in-spec query default (300) and still give no signal |
 | The resolver used `getUser` on any non-ID value and trusted the answer (§5.6) | The user returned must have **exactly** the login given (case aside); `me` is refused (§5.6, step 2.10). `me` after a `/users/` segment is refused for every path parameter (§6.4 item 5) | Okta's `getUser` also answers a login shortname, and `/api/v1/users/me` is the token's own user (the SSWS owner in dev mode), a path the spec doesn't list |
 | `.manage ⇒ .read` implication to be modeled in the capability gate (§9.4, V4) | **No implication.** The gate is a plain subset test (step 3.2) | `OKTA_SCOPES` accepts only `.read` scopes (§10, config), so no held scope could imply another. 2 of the spec's 319 GET operations accept only a `.manage` scope (`getAerialConsent`, `previewPolicyBranchPromotion`); they stay unavailable |
+| §9.3 example: only `security-analyst` had `search_attributes`; helpdesk's list was a separate snippet | Helpdesk's list and `platform-admin: search_attributes: ["*"]` are in the example, which is now `docker/policy.example.yaml` (step 5.7) | Without it the admin role, which holds every command, could not search; one block a test can compare against the shipped file |
 
 ### 0.1 Changes from r3
 
@@ -521,7 +522,7 @@ The SDK covers the path-specific PRM URL, the 401/403 statuses and header-only r
 
 **Dedicated AS is mandatory** (a custom AS has one static audience and ignores `resource`; sharing it lets other apps' tokens pass the `aud` check). `MCP_ALLOWED_CLIENT_IDS` is **required**.
 
-**Groups claim.** The claim value is an expression that emits the IDs of Okta-mastered groups whose name starts with `mcp-okta-`, for example `user.getGroups({'group.type': {'OKTA_GROUP'}}, {'group.profile.name': {'mcp-okta-'}}).![id]` (verified, V1/V13). Emitting IDs makes renames and look-alike imported groups irrelevant to authorization; the name prefix only bounds claim size.
+**Groups claim.** The claim value is an expression that emits the IDs of Okta-mastered groups whose name starts with a prefix (`mcp-okta-` by default; `group_prefix` in the setup tools), for example `user.getGroups({'group.type': {'OKTA_GROUP'}}, {'group.profile.name': {'mcp-okta-'}}).![id]` (verified, V1/V13). Emitting IDs makes renames and look-alike imported groups irrelevant to authorization; the name prefix only bounds claim size.
 
 **Role-group membership is the authorization boundary.** Whoever can add a user to a role group grants that role, and the server cannot tell. In Okta that is more people than Super Admins: Org Admins, Group Admins and Group Membership Admins whose scope includes the group, custom roles with `okta.groups.members.manage`, and anyone who can write a group rule targeting it. A help-desk admin who adds themselves to `mcp-okta-admins` reads the System Log, admin-role assignments and everything else the service app can see. Required setup (Appendix C step 2): scope delegated admins' resource sets to exclude the `mcp-okta-*` groups; no group rules that target them; alert on `group.user_membership.add` for those group IDs. The same applies to who may edit the policy file and the AS access policy.
 
@@ -605,6 +606,7 @@ roles:
       users:  ["*", get-factors, get-enrollments]
       groups: ["*"]
       apps:   [list, get, get-users, get-groups]
+    search_attributes: [profile.login, profile.email, profile.firstName, profile.lastName, status, profile.name]
 
   directory-reader:
     groups: ["00g1readers000000000"]      # mcp-okta-readers
@@ -633,22 +635,16 @@ roles:
     allow:
       "*": ["*"]
     include_sensitive: ["*"]
+    search_attributes: ["*"]
 ```
+
+This is [`docker/policy.example.yaml`](../../docker/policy.example.yaml), less its comments; a test loads both against the full registry and checks they compile to the same roles.
 
 A pattern is a command name or `"*"`; there are no partial globs (`get-*`). Domain `"*"` takes only `["*"]`. The wildcard must be quoted (a bare `*` is a YAML alias and fails the load). A principal in any of a role's groups holds the role; a group ID the policy doesn't name grants nothing. The claim's name is `MCP_GROUPS_CLAIM` (§11.3), not a policy field.
 
 `include_sensitive` is per role: within that role's `allow`, a wildcard on a listed domain also matches its sensitive commands; it never widens other roles and never overrides `deny`. A `deny` wildcard always covers sensitive commands.
 
-`search_attributes` is per role: the attributes that role may name in a search, filter or sort expression (an `attribute_expression` argument, §9.2) on the commands it allows. `["*"]` is any attribute results don't redact; without the key the role can pass no such expression. Names are matched exactly, case included (`profile.login`, not `profile.*`). A principal's list for a command is the union over the roles that allow *that command*: a role's attributes don't carry to a command only another role grants. One list covers every command the role allows, so `status` means the user's status on `users list` and nothing on `groups list`; a role that needs different lists per command is two roles. An attribute `scrub.yaml` redacts fails the load: no role can search on it.
-
-```yaml
-  helpdesk:
-    groups: ["00g1helpdsk000000000"]
-    allow:
-      users:  ["*", get-factors, get-enrollments]
-      groups: ["*"]
-    search_attributes: [profile.login, profile.email, profile.firstName, profile.lastName, status, profile.name]
-```
+`search_attributes` is per role: the attributes that role may name in a search, filter or sort expression (an `attribute_expression` argument, §9.2) on the commands it allows. `["*"]` is any attribute results don't redact; without the key the role can pass no such expression. Names are matched exactly, case included (`profile.login`, not `profile.*`). A principal's list for a command is the union over the roles that allow *that command*: a role's attributes don't carry to a command only another role grants. One list covers every command the role allows, so `status` means the user's status on `users list` and nothing on `groups list`; a role that needs different lists per command is two roles. An attribute `scrub.yaml` redacts fails the load: no role can search on it. In the example, `directory-reader` can list but not search, and `security-analyst`'s list holds System Log attributes, so it can't search users by profile.
 
 A call that an `arg_rule` raises to sensitive (§9.2) follows the same rule as a sensitive command: the role must name the command outright, or reach it by a wildcard in a domain in its `include_sensitive`. The loader compiles this per role (`Role.allow_raised`); the engine (§9.4) applies it per call.
 
@@ -973,13 +969,13 @@ Future work: Path B (XAA), composite handlers, per-bucket 429 handling, `/metric
 }
 ```
 
-The `groups` claim carries IDs of Okta-mastered `mcp-okta-*` groups (§8.2).
+The `groups` claim carries IDs of Okta-mastered `mcp-okta-*` groups (§8.2; the prefix is `group_prefix` in the setup tools).
 
 ## Appendix C — Okta setup runbook (outline; verify against current Okta docs)
 
 Steps 1–4 are automated by `scripts/okta-setup.py` or the `terraform/okta/` module ([guide](../okta-setup.md)).
 
-1. **Dedicated custom AS:** audience `MCP_PUBLIC_URL`; scope `okta-mcp`; `groups` claim on the access token emitting **IDs** of Okta-mastered `mcp-okta-*` groups (V13); access-token lifetime ≤30 min; rule scopes include `offline_access`; refresh tokens off (A) or rotating with bounded lifetimes (B, §8.3); access policy limiting clients/users.
+1. **Dedicated custom AS** (creating one needs the API Access Management add-on in production orgs; [prerequisites](../okta-setup.md#prerequisites)): audience `MCP_PUBLIC_URL`; scope `okta-mcp`; `groups` claim on the access token emitting **IDs** of Okta-mastered `mcp-okta-*` groups (V13; prefix configurable); access-token lifetime ≤30 min; rule scopes include `offline_access`; refresh tokens off (A) or rotating with bounded lifetimes (B, §8.3); access policy limiting clients/users.
 2. **Groups:** create role groups; copy their IDs into the policy (names as comments); keep them out of delegated admins' resource sets and out of group rules, and alert on membership changes (§8.2).
 3. **Service app:** API Services app, `private_key_jwt` (upload public JWK, note `kid`), "Require DPoP" on (the console default; turn it on explicitly if the app was created through the API, V15); grant only intended `okta.*.read` scopes; assign the role the scopes need (§10: Read-only Administrator, or Super Admin only if `okta.roles.read` is granted) or a custom role; store the private key as a container secret.
 4. **Clients:** register approved MCP clients as public OIDC apps (PKCE, exact redirect URIs); allow them in the AS access policy; assign them an authentication policy that requires MFA (§8.2). Cap the service app's rate-limit share (§10).

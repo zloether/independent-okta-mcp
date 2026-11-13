@@ -70,13 +70,29 @@ variable "refresh_tokens" {
   }
 }
 
+variable "group_prefix" {
+  description = "Role group names start with this; the groups claim emits only such groups' IDs."
+  type        = string
+  default     = "mcp-okta-"
+
+  # It goes inside a single-quoted Okta expression literal: no quotes, backslashes, braces or $.
+  # At least 4 characters, so the claim doesn't carry most of a user's groups.
+  # Keep in sync with GROUP_PREFIX_PATTERN in scripts/okta-setup.py (tested).
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9 _.:-]{3,63}$", var.group_prefix))
+    error_message = "4-64 characters: a letter or digit, then letters, digits, space, _ . : or -."
+  }
+}
+
 variable "groups" {
-  description = "Role groups; their IDs go into policy.yaml."
+  description = "Role groups, each named with group_prefix; their IDs go into policy.yaml."
   type        = set(string)
 
+  # The prefix check is a precondition on okta_group.role: a variable's validation can't read
+  # another variable before Terraform 1.9.
   validation {
-    condition     = length(var.groups) > 0 && alltrue([for g in var.groups : startswith(g, "mcp-okta-") && g != "mcp-okta-"])
-    error_message = "At least one group; names must start with \"mcp-okta-\"."
+    condition     = length(var.groups) > 0
+    error_message = "At least one group."
   }
 }
 

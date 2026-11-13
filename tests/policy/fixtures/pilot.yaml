@@ -1,5 +1,5 @@
-# Example policy for the pilot domains (groups, network-zones). The full example,
-# docker/policy.example.yaml, lands with step 5.7. Group IDs are placeholders: use your org's
+# Example policy for the pilot domains (groups, network-zones). The full example is
+# docker/policy.example.yaml. Group IDs are placeholders: use your org's
 # role-group IDs and keep the names in comments.
 version: 1
 
