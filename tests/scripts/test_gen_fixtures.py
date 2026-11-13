@@ -360,3 +360,13 @@ def test_wrapped_override_puts_the_list_under_items_key(
     body = gen.body(raw, command)
     assert isinstance(body, dict) and set(body) == {"keys"}
     assert isinstance(body["keys"], list) and body["keys"][0]["kty"] == "RSA"
+
+
+def test_bare_list_example_under_wrapper_schema_is_wrapped(
+    raw: dict[str, Any], registry: Registry
+) -> None:
+    # listOktaSupportCases: the schema is {"supportCases": [...]}, the example the bare list.
+    command = registry.domains["org-settings"].commands["list-support-cases"]
+    body = gen.body(raw, command)
+    assert isinstance(body, dict) and set(body) == {"supportCases"}
+    assert isinstance(body["supportCases"], list) and body["supportCases"][0]["caseNumber"]

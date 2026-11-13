@@ -1,0 +1,99 @@
+domain: schemas
+description: Read profile schemas, profile mappings, user types, linked objects and UI schemas (read-only).
+# All org configuration: attribute definitions and the expressions that map them, not users'
+# values. scrub.yaml still applies by key name, so a custom attribute named after a redacted
+# key (`secret`, `apiKey`) has its definition shown as "[redacted]".
+#
+# App IDs are `0oa` + 17. Other IDs vary by object (mappings `prm`, UI schemas `uis`, user
+# types `oty`, user schemas `osc` or `default`), so only the character set is fixed;
+# `linkedobjects` is reserved after /meta/schemas/user/.
+commands:
+  # Items have no `properties`; `get` shows the mappings (catalogue note).
+  list:
+    operation: listProfileMappings
+    summary: Profile mappings
+    args:
+      source: {query: sourceId}
+      target: {query: targetId}
+    paginate: link
+    page_size: 200
+    view: [id, source.name, source.type, target.name, target.type]
+    data_classes: [org-config]
+
+  get:
+    operation: getProfileMapping
+    summary: One profile mapping with its expressions
+    args:
+      mapping: {path_param: mappingId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]
+
+  get-user-schema:
+    operation: getUserSchema
+    summary: A user type's profile schema
+    args:
+      schema: {path_param: schemaId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]
+
+  get-group-schema:
+    operation: getGroupSchema
+    summary: The group profile schema
+    data_classes: [org-config]
+
+  get-app-user-schema:
+    operation: getApplicationUserSchema
+    summary: An app's user profile schema
+    args:
+      app: {path_param: appId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    data_classes: [org-config]
+
+  list-log-stream-schemas:
+    operation: listLogStreamSchemas
+    summary: Log stream settings schemas
+    view: [id, title]
+    data_classes: [org-config]
+
+  get-log-stream-schema:
+    operation: getLogStreamSchema
+    summary: One log stream type's schema
+    args:
+      type: {path_param: logStreamType}
+    data_classes: [org-config]
+
+  list-linked-objects:
+    operation: listLinkedObjectDefinitions
+    summary: Linked object definitions
+    view: [primary.name, associated.name]
+    data_classes: [org-config]
+
+  get-linked-object:
+    operation: getLinkedObjectDefinition
+    summary: One linked object definition
+    args:
+      name: {path_param: linkedObjectName, pattern: "^[A-Za-z0-9_]{1,64}$"}
+    data_classes: [org-config]
+
+  list-user-types:
+    operation: listUserTypes
+    summary: User types
+    view: [id, name, displayName, default]
+    data_classes: [org-config]
+
+  get-user-type:
+    operation: getUserType
+    summary: One user type
+    args:
+      type: {path_param: typeId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]
+
+  list-ui-schemas:
+    operation: listUISchemas
+    summary: UI schemas
+    view: [id, uiSchema.label, lastUpdated]
+    data_classes: [org-config]
+
+  get-ui-schema:
+    operation: getUISchema
+    summary: One UI schema
+    args:
+      schema: {path_param: id, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]

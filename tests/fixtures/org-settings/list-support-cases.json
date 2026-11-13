@@ -1,0 +1,30 @@
+{
+  "source": "generated",
+  "operation": "listOktaSupportCases",
+  "body": {
+    "supportCases": [
+      {
+        "impersonation": {
+          "status": "ENABLED",
+          "expiration": "2024-01-24T11:13:14.000Z"
+        },
+        "selfAssigned": {
+          "status": "REQUESTED"
+        },
+        "subject": "Reset admin password",
+        "caseNumber": "1000001"
+      },
+      {
+        "impersonation": {
+          "status": "REQUESTED",
+          "expiration": null
+        },
+        "selfAssigned": {
+          "status": "NOT_REQUIRED"
+        },
+        "subject": "Review IP restriction configuration",
+        "caseNumber": "1000002"
+      }
+    ]
+  }
+}

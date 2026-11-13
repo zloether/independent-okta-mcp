@@ -1,0 +1,7 @@
+{
+  "source": "generated",
+  "operation": "getClientPrivilegesSetting",
+  "body": {
+    "clientPrivilegesSetting": true
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "source": "generated",
+  "operation": "getOrgContactUser",
+  "body": {
+    "userId": "00ux3u0ujW1r5AfZC1d7",
+    "_links": {
+      "user": {
+        "href": "https://example.okta.com/api/v1/users/00ux3u0ujW1r5AfZC1d7"
+      }
+    }
+  }
+}

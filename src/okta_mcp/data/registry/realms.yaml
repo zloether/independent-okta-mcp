@@ -1,0 +1,49 @@
+domain: realms
+description: Read realms, realm assignment rules and their runs (read-only).
+# Realms partition users; assignments are the rules that place users in them; operations are
+# runs of those rules. All org configuration. IDs vary (`vvr…` realms, `rul…` assignments), so
+# only the character set is fixed; `operations` is reserved after /realm-assignments/.
+commands:
+  # `search` names any realm property (the spec documents only `profile.name co`), so the engine
+  # checks the attributes named (design §9.2); `sort_by` likewise. `fields` is not exposed.
+  list:
+    operation: listRealms
+    summary: List or search realms
+    args:
+      search: {query: search, arg_rule: {attribute_expression: true}}
+      sort_by: {query: sortBy, arg_rule: {attribute_expression: true}}
+      sort_order: {query: sortOrder}
+    paginate: link
+    page_size: 200
+    view: [id, profile.name, profile.realmType, isDefault]
+    data_classes: [org-config]
+
+  get:
+    operation: getRealm
+    summary: Get a realm
+    args:
+      realm: {path_param: realmId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]
+
+  list-assignments:
+    operation: listRealmAssignments
+    summary: Realm assignment rules
+    paginate: link
+    page_size: 200
+    view: [id, name, status, priority, actions.assignUserToRealm.realmId]
+    data_classes: [org-config]
+
+  get-assignment:
+    operation: getRealmAssignment
+    summary: One realm assignment rule
+    args:
+      assignment: {path_param: assignmentId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]
+
+  list-operations:
+    operation: listRealmAssignmentOperations
+    summary: Runs of realm assignment rules
+    paginate: link
+    page_size: 200
+    view: [id, type, status, realmName, numUserMoved, completed]
+    data_classes: [org-config]

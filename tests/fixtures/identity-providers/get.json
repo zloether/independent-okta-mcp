@@ -1,0 +1,112 @@
+{
+  "source": "generated",
+  "operation": "getIdentityProvider",
+  "body": {
+    "id": "0oaulob4BFVa4zQvt0g3",
+    "type": "OIDC",
+    "name": "Example OpenID Connect IdP",
+    "status": "ACTIVE",
+    "created": "2019-02-07T20:07:47.000Z",
+    "lastUpdated": "2019-02-07T20:07:47.000Z",
+    "protocol": {
+      "type": "OIDC",
+      "endpoints": {
+        "authorization": {
+          "url": "https://idp.example.com/authorize",
+          "binding": "HTTP-REDIRECT"
+        },
+        "token": {
+          "url": "https://idp.example.com/token",
+          "binding": "HTTP-POST"
+        },
+        "userInfo": {
+          "url": "https://idp.example.com/userinfo",
+          "binding": "HTTP-REDIRECT"
+        },
+        "jwks": {
+          "url": "https://idp.example.com/keys",
+          "binding": "HTTP-REDIRECT"
+        },
+        "slo": {
+          "url": "https://idp.example.com/slo",
+          "binding": "HTTP-REDIRECT"
+        }
+      },
+      "algorithms": {
+        "request": {
+          "signature": {
+            "algorithm": "HS256",
+            "scope": "REQUEST"
+          }
+        }
+      },
+      "scopes": [
+        "openid"
+      ],
+      "settings": {
+        "participateSlo": true
+      },
+      "issuer": {
+        "url": "https://idp.example.com"
+      },
+      "credentials": {
+        "client": {
+          "client_id": "your-client-id",
+          "client_secret": "your-client-secret",
+          "pkce_required": "true"
+        }
+      }
+    },
+    "policy": {
+      "provisioning": {
+        "action": "AUTO",
+        "profileMaster": false,
+        "groups": {
+          "action": "NONE"
+        },
+        "conditions": {
+          "deprovisioned": {
+            "action": "NONE"
+          },
+          "suspended": {
+            "action": "NONE"
+          }
+        }
+      },
+      "accountLink": {
+        "filter": null,
+        "action": "AUTO"
+      },
+      "subject": {
+        "userNameTemplate": {
+          "template": "idpuser.email"
+        },
+        "filter": null,
+        "matchType": "USERNAME",
+        "matchAttribute": null
+      },
+      "mapAMRClaims": false,
+      "trustClaims": false,
+      "maxClockSkew": 0
+    },
+    "_links": {
+      "authorize": {
+        "href": "https://example.okta.com/oauth2/v1/authorize?idp=0oaulob4BFVa4zQvt0g3&client_id={clientId}&response_type={responseType}&response_mode={responseMode}&scope={scopes}&redirect_uri={redirectUri}&state={state}&nonce={nonce}",
+        "templated": true,
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      },
+      "clientRedirectUri": {
+        "href": "https://example.okta.com/oauth2/v1/authorize/callback",
+        "hints": {
+          "allow": [
+            "POST"
+          ]
+        }
+      }
+    }
+  }
+}

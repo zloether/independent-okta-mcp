@@ -1,0 +1,121 @@
+domain: identity-providers
+description: Read identity providers, their keys, CSRs and linked users (read-only).
+# An IdP object carries `protocol.credentials` (an OIDC client secret, a Persona API key), so
+# `list` and `get` are credential-material until V14 confirms otherwise (design §9.2), as
+# `users get-idps` is; scrub.yaml redacts those fields for every role. Keys, signing keys and
+# CSRs are credential material (design §9.2: IdP keys/CSRs), public halves included. Linked
+# users are pii: the IdP's own profile of an Okta user. Social auth tokens hold the raw token a
+# social IdP issued (scrub.yaml redacts `token` strings); metadata is all that leaves.
+#
+# IdP IDs are `0oa` + 17, which also keeps out `credentials` (the reserved segment after
+# /idps/). Every `user` arg takes an ID or an exact login and resolves to an ID. Key IDs vary
+# (the spec's are 20 characters; Okta's docs show UUIDs), so only the character set is fixed.
+commands:
+  # `type` is a spec enum; `q` matches the IdP name.
+  list:
+    operation: listIdentityProviders
+    summary: List or search identity providers
+    args:
+      q: {query: q, arg_rule: {reviewed: "matches the IdP name, which is returned"}}
+      type: {query: type}
+    paginate: link
+    page_size: 200
+    view: [id, type, name, status, issuerMode]
+    data_classes: [org-config, credential-material]
+
+  get:
+    operation: getIdentityProvider
+    summary: Get an identity provider
+    args:
+      idp: {path_param: idpId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    data_classes: [org-config, credential-material]
+
+  # Org-wide X.509 trust certificates IdPs sign with (/idps/credentials/keys).
+  list-keys:
+    operation: listIdentityProviderKeys
+    summary: IdP key credentials
+    paginate: link
+    page_size: 200
+    view: [kid, kty, use, expiresAt]
+    data_classes: [credential-material]
+
+  get-key:
+    operation: getIdentityProviderKey
+    summary: One IdP key credential
+    args:
+      key: {path_param: kid, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [credential-material]
+
+  list-csrs:
+    operation: listCsrsForIdentityProvider
+    summary: Certificate signing requests of an IdP
+    args:
+      idp: {path_param: idpId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    view: [id, kty, created]
+    data_classes: [credential-material]
+
+  get-csr:
+    operation: getCsrForIdentityProvider
+    summary: One CSR
+    args:
+      idp: {path_param: idpId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      csr: {path_param: idpCsrId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [credential-material]
+
+  # Keys Okta signs requests to this IdP with.
+  list-signing-keys:
+    operation: listIdentityProviderSigningKeys
+    summary: Signing keys of an IdP
+    args:
+      idp: {path_param: idpId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    view: [kid, kty, use, expiresAt]
+    data_classes: [credential-material]
+
+  # A list of at most one key: `[]` when the IdP has no active signing key (catalogue gotcha).
+  get-active-signing-key:
+    operation: listActiveIdentityProviderSigningKey
+    summary: Active signing key of an IdP
+    args:
+      idp: {path_param: idpId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+    view: [kid, kty, use, expiresAt]
+    data_classes: [credential-material]
+
+  # `active` and `generate` are reserved segments at {kid}.
+  get-signing-key:
+    operation: getIdentityProviderSigningKey
+    summary: One signing key of an IdP
+    args:
+      idp: {path_param: idpId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      key: {path_param: kid, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [credential-material]
+
+  # `q` is not exposed: the spec says only "searches the records", and the records hold the
+  # IdP's free-form profile, so Okta could match a key scrub.yaml redacts. `expand=user` embeds
+  # the Okta user, the same class.
+  list-users:
+    operation: listIdentityProviderApplicationUsers
+    summary: Users linked to an IdP
+    args:
+      idp: {path_param: idpId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      expand: {query: expand, allowed_values: [user]}
+    paginate: link
+    page_size: 200
+    view: [id, externalId, created, lastUpdated]
+    data_classes: [pii]
+
+  get-user:
+    operation: getIdentityProviderApplicationUser
+    summary: One user's link to an IdP
+    args:
+      idp: {path_param: idpId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      user: {path_param: userId, resolve: user_id}
+    data_classes: [pii]
+
+  list-tokens:
+    operation: listSocialAuthTokens
+    summary: Social auth tokens (metadata)
+    args:
+      idp: {path_param: idpId, pattern: "^0oa[A-Za-z0-9]{17}$"}
+      user: {path_param: userId, resolve: user_id}
+    view: [id, tokenType, tokenAuthScheme, scopes, expiresAt]
+    data_classes: [credential-material, pii]

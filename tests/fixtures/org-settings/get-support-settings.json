@@ -1,0 +1,27 @@
+{
+  "source": "generated",
+  "operation": "getOrgOktaSupportSettings",
+  "body": {
+    "support": "ENABLED",
+    "expiration": "2024-01-24T11:13:14.000Z",
+    "caseNumber": "20000144",
+    "_links": {
+      "case": {
+        "href": "https://example.okta.com/api/v1/org/privacy/oktaSupport/case/{caseNumber}",
+        "hints": {
+          "allow": [
+            "PATCH"
+          ]
+        }
+      },
+      "cases": {
+        "href": "https://example.okta.com/api/v1/org/privacy/oktaSupport/cases",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      }
+    }
+  }
+}

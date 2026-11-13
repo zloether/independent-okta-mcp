@@ -1,0 +1,25 @@
+{
+  "source": "generated",
+  "operation": "listLinkedObjectDefinitions",
+  "body": [
+    {
+      "primary": {
+        "name": "manager",
+        "title": "manager",
+        "description": "Manager link property",
+        "type": "USER"
+      },
+      "associated": {
+        "name": "subordinate",
+        "title": "subordinate",
+        "description": "Subordinate link property",
+        "type": "USER"
+      },
+      "_links": {
+        "self": {
+          "href": "http://example.okta.com/api/v1/meta/schemas/user/linkedObjects/manager"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "source": "generated",
+  "operation": "listOrgContactTypes",
+  "body": [
+    {
+      "contactType": "BILLING",
+      "_links": {
+        "billing": {
+          "href": "https://example.okta.com/api/v1/org/contacts/billing"
+        }
+      }
+    },
+    {
+      "contactType": "TECHNICAL",
+      "_links": {
+        "technical": {
+          "href": "https://example.okta.com/api/v1/org/contacts/technical"
+        }
+      }
+    }
+  ]
+}
