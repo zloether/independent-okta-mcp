@@ -982,3 +982,69 @@ def test_missing_credentials_is_an_error(config: Path, monkeypatch, capsys) -> N
     monkeypatch.delenv("OKTA_SETUP_API_TOKEN", raising=False)
     assert setup.run(["check", "--config", str(config)]) == 2
     assert "OKTA_SETUP_API_TOKEN" in capsys.readouterr().err
+
+
+def feature_off(status: int, path: str, method: str = "GET"):
+    """A FakeOkta handler that answers `method path…` with Okta's E0000015."""
+    okta = FakeOkta()
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        if request.method == method and request.url.path.startswith(path):
+            return httpx2.Response(
+                status,
+                json={
+                    "errorCode": "E0000015",
+                    "errorSummary": "You do not have permission to access the feature you are "
+                    "requesting",
+                },
+            )
+        return okta.handle(request)
+
+    return okta, handle
+
+
+@pytest.mark.parametrize(("status", "method"), [(401, "GET"), (403, "GET"), (401, "POST")])
+def test_no_api_access_management_names_the_add_on(
+    config: Path, status: int, method: str, capsys
+) -> None:
+    okta, handle = feature_off(status, "/api/v1/authorizationServers", method)
+    http = httpx2.Client(base_url=ORG, transport=httpx2.MockTransport(handle))
+    assert setup.run(["apply", "--config", str(config)], http=http, confirm=lambda: True) == 2
+    err = capsys.readouterr().err
+    assert f"HTTP {status} E0000015" in err
+    assert "API Access Management" in err
+    assert "Prerequisites in docs/okta-setup.md" in err
+    assert okta.items("api", "v1", "authorizationServers") == []
+
+
+@pytest.mark.parametrize(
+    ("status", "path", "code"),
+    [
+        (401, "/api/v1/groups", "E0000015"),  # another endpoint: no AS hint
+        (403, "/api/v1/authorizationServers", "E0000006"),  # a plain permission error
+        (500, "/api/v1/authorizationServers", "E0000015"),
+    ],
+)
+def test_other_errors_get_no_add_on_hint(
+    config: Path, status: int, path: str, code: str, capsys
+) -> None:
+    okta = FakeOkta()
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path.startswith(path):
+            return httpx2.Response(status, json={"errorCode": code, "errorSummary": "x"})
+        return okta.handle(request)
+
+    http = httpx2.Client(base_url=ORG, transport=httpx2.MockTransport(handle))
+    assert setup.run(["check", "--config", str(config)], http=http) == 2
+    err = capsys.readouterr().err
+    assert f"HTTP {status} {code}" in err
+    assert "API Access Management" not in err
+
+
+def test_error_body_that_is_not_an_object(config: Path, capsys) -> None:
+    http = httpx2.Client(
+        base_url=ORG, transport=httpx2.MockTransport(lambda _: httpx2.Response(401, json=["x"]))
+    )
+    assert setup.run(["check", "--config", str(config)], http=http) == 2
+    assert "HTTP 401" in capsys.readouterr().err

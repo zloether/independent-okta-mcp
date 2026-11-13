@@ -4,6 +4,18 @@
 
 If you manage Okta with Terraform, use [`terraform/okta/`](../terraform/okta/) instead; see [Terraform](#terraform). It creates the same objects. Pick one tool per org.
 
+## Prerequisites
+
+**A custom authorization server, which needs Okta's API Access Management add-on.** Users sign in to okta-mcp through a custom authorization server, because the org authorization server can't issue access tokens with your own audience or the `groups` claim. Both setup tools create a new one (`okta-mcp` by default). Okta says:
+
+- Custom authorization servers are part of API Access Management, an optional add-on in production orgs.
+- Since March 2023, an Enterprise or One-App subscription without the add-on includes only the built-in `default` custom authorization server and can't create new ones. Servers created before then keep working.
+- Developer and Integrator Free Plan orgs include it.
+
+To check your org: in the Admin Console, go to **Security → API**. No **Authorization Servers** tab means no custom authorization servers at all. A tab listing only `default`, with **Add Authorization Server** refused, means you can't create one. Okta's code for a missing feature is `E0000015`; when `okta-setup.py` gets it (HTTP 401 or 403) from the authorization-server endpoints, it stops with a note naming the add-on. The exact response on such an org hasn't been seen, so another error is possible. Terraform fails at `apply` with the provider's error. To add it, ask your Okta account team for the API Access Management SKU.
+
+Without the add-on there is no supported path today. Pointing the tools at the built-in `default` server (`authorization_server: default`) would mean changing its audience to `mcp_public_url`, which breaks anything else that validates `api://default` tokens; the script never changes an audience and reports it as `manual`. This hasn't been tried. The alternative the design names (the org authorization server plus a server-side group lookup, design §9.5) isn't built.
+
 ## What it manages
 
 | Object | Settings |

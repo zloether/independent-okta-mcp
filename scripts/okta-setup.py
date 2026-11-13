@@ -236,6 +236,18 @@ def public_jwk(pem: bytes) -> dict[str, str]:
     return {"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": jwk["n"], "e": jwk["e"]}
 
 
+# Okta's "feature not available" code. On the authorization-server endpoints it most likely
+# means the org lacks API Access Management, which creating a custom authorization server
+# needs (docs/okta-setup.md#prerequisites). Not seen live: matched on the code, any 401/403.
+FEATURE_OFF = "E0000015"
+AUTHORIZATION_SERVERS = "/api/v1/authorizationServers"
+NO_API_AM = (
+    "this org can't create or use custom authorization servers. They need Okta's "
+    "API Access Management add-on (Enterprise and One-App subscriptions include only the "
+    "built-in 'default' server); see Prerequisites in docs/okta-setup.md"
+)
+
+
 class Okta:
     def __init__(self, http: httpx2.Client) -> None:
         self.http = http
@@ -245,13 +257,22 @@ class Okta:
     ) -> httpx2.Response:
         response = self.http.request(method, path, json=body, params=params)
         if response.status_code >= 400:
+            code = None
             try:
                 error = response.json()
+                code = error.get("errorCode")
                 causes = "; ".join(c.get("errorSummary", "") for c in error.get("errorCauses", []))
-                detail = f"{error.get('errorCode')} {error.get('errorSummary')} {causes}".strip()
-            except ValueError:
+                detail = f"{code} {error.get('errorSummary')} {causes}".strip()
+            except (ValueError, AttributeError):
                 detail = ""
-            raise SetupError(f"{method} {path} -> HTTP {response.status_code} {detail}")
+            message = f"{method} {path} -> HTTP {response.status_code} {detail}"
+            if (
+                code == FEATURE_OFF
+                and response.status_code in (401, 403)
+                and httpx2.URL(path).path.startswith(AUTHORIZATION_SERVERS)
+            ):
+                message += f"\n{NO_API_AM}"
+            raise SetupError(message)
         return response
 
     def request(self, method: str, path: str, body: Any = None, **params: Any) -> Any:

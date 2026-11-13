@@ -1,6 +1,6 @@
 # independent-okta-mcp
 
-A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server for the Okta Management API. Users sign in with OAuth against an Okta custom authorization server; their Okta group memberships map to roles in a version-controlled policy that decides which tools and commands each user may call. The server calls Okta with a read-only service app and caps every result by items, bytes and time. It ships as a single stateless container.
+A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server for the Okta Management API. Users sign in with OAuth against an Okta custom authorization server (needs Okta's API Access Management add-on in production orgs; see [Prerequisites](docs/okta-setup.md#prerequisites)); their Okta group memberships map to roles in a version-controlled policy that decides which tools and commands each user may call. The server calls Okta with a read-only service app and caps every result by items, bytes and time. It ships as a single stateless container.
 
 **Status:** pre-alpha. Not usable yet; under active development.
 
