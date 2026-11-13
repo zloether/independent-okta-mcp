@@ -22,6 +22,7 @@ from collections import deque
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC
 from email.utils import parsedate_to_datetime
 
@@ -43,7 +44,12 @@ principal: ContextVar[str | None] = ContextVar("okta_mcp_principal", default=Non
 
 class RateLimited(Exception):
     """Okta's rate limit outlasted the wait we allow, or the principal sent too many requests.
-    The message is safe to return to the caller."""
+    The message is safe to return to the caller. `reason` says why an Okta 429 wasn't retried
+    (`over_max_wait`, `no_reset`, `deadline`, `retry_failed`), for the client's log event."""
+
+    def __init__(self, message: str, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 def _jitter() -> float:
@@ -68,21 +74,24 @@ def _reset_wait(response: httpx2.Response, now: Callable[[], float]) -> float | 
         return None
 
 
-def rate_limited(response: httpx2.Response, now: Callable[[], float] = time.time) -> RateLimited:
+def rate_limited(
+    response: httpx2.Response, reason: str, now: Callable[[], float] = time.time
+) -> RateLimited:
     """The error for a 429 that won't be retried, with Okta's wait (no jitter) when known."""
     wait = _reset_wait(response, now)
     if wait is None:
-        return RateLimited("Okta rate limit reached; try again later")
-    return RateLimited(f"Okta rate limit reached; try again in {math.ceil(wait)} s")
+        return RateLimited("Okta rate limit reached; try again later", reason)
+    return RateLimited(f"Okta rate limit reached; try again in {math.ceil(wait)} s", reason)
 
 
 def retry_wait(
     response: httpx2.Response, max_wait: float, now: Callable[[], float] = time.time
 ) -> float:
-    """Seconds to sleep before retrying a 429 `response`, or `RateLimited` if the wait is over
-    `max_wait`, doesn't leave `_RETRY_HEADROOM` before the current deadline, or Okta sent no
-    usable reset time. `now` is used only when the response has no valid `Date`. Call inside
-    the caller's cancel scope."""
+    """Seconds to sleep before retrying a 429 `response`, or `RateLimited` (with its `reason`)
+    if the wait is over `max_wait`, doesn't leave `_RETRY_HEADROOM` before the current
+    deadline, or Okta sent no usable reset time. `now` is used only when the response has no
+    valid `Date`. Call inside the caller's cancel scope. Logs nothing: the client logs every
+    429 outcome."""
     wait = _reset_wait(response, now)
     if wait is None or wait > max_wait:
         reason = "no_reset" if wait is None else "over_max_wait"
@@ -91,12 +100,7 @@ def retry_wait(
         if anyio.current_time() + delay + _RETRY_HEADROOM <= anyio.current_effective_deadline():
             return delay
         reason = "deadline"
-    log.warning(
-        "Okta rate limit hit; not retrying (%s)",
-        reason,
-        extra=event("okta_rate_limited", retry=False, reason=reason),
-    )
-    raise rate_limited(response, now)
+    raise rate_limited(response, reason, now)
 
 
 class RequestLimiter:
@@ -140,15 +144,27 @@ def share_of(max_inflight: int) -> int:
     return (max_inflight + 1) // 2
 
 
+@dataclass
+class _Share:
+    semaphore: anyio.Semaphore
+    users: int = 0
+    """Requests holding or waiting for `semaphore`."""
+    waiting: int = 0
+    """Requests waiting for it."""
+
+
 class InflightShare:
     """At most `per_principal` requests in flight per principal. Semaphores exist only while a
-    principal has a request holding or waiting for one, so idle principals hold no memory."""
+    principal has a request holding or waiting for one, so idle principals hold no memory.
+    `inflight_share_wait` is logged when a principal's first request starts waiting, not for
+    each one: how many wait is up to the caller, so a line per request would let one user
+    flood the log."""
 
     def __init__(self, per_principal: int) -> None:
         if per_principal < 1:
             raise ValueError("per_principal must be at least 1")
         self._limit = per_principal
-        self._held: dict[str, tuple[anyio.Semaphore, int]] = {}
+        self._held: dict[str, _Share] = {}
 
     @asynccontextmanager
     async def slot(self) -> AsyncGenerator[None]:
@@ -157,21 +173,29 @@ class InflightShare:
         uid = principal.get()
         if uid is None:
             raise RuntimeError("Okta request outside a principal's call")
-        semaphore, users = self._held.get(uid, (None, 0))
-        if semaphore is None:
-            semaphore = anyio.Semaphore(self._limit)
-        self._held[uid] = (semaphore, users + 1)
+        share = self._held.get(uid)
+        if share is None:
+            share = self._held[uid] = _Share(anyio.Semaphore(self._limit))
+        share.users += 1
         try:
-            if semaphore.value == 0:
-                log.info(
-                    "Per-principal share of in-flight Okta requests in use; waiting",
-                    extra=event("inflight_share_wait", share=self._limit),
-                )
-            async with semaphore:
-                yield
-        finally:
-            semaphore, users = self._held[uid]
-            if users == 1:
-                del self._held[uid]
+            if share.semaphore.value == 0:
+                if share.waiting == 0:
+                    log.info(
+                        "Per-principal share of in-flight Okta requests in use; waiting",
+                        extra=event("inflight_share_wait", share=self._limit),
+                    )
+                share.waiting += 1
+                try:
+                    await share.semaphore.acquire()
+                finally:
+                    share.waiting -= 1
             else:
-                self._held[uid] = (semaphore, users - 1)
+                await share.semaphore.acquire()
+            try:
+                yield
+            finally:
+                share.semaphore.release()
+        finally:
+            share.users -= 1
+            if share.users == 0:
+                del self._held[uid]

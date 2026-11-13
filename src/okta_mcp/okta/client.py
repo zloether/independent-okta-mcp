@@ -20,7 +20,7 @@ import httpx2
 
 from okta_mcp.logs import event
 from okta_mcp.okta.dpop import DPoP, use_dpop_nonce
-from okta_mcp.okta.ratelimit import InflightShare, rate_limited, retry_wait
+from okta_mcp.okta.ratelimit import InflightShare, RateLimited, rate_limited, retry_wait
 from okta_mcp.okta.token import ServiceToken, TokenError, TokenProvider
 
 log = logging.getLogger(__name__)
@@ -60,6 +60,23 @@ def _feature_off(response: httpx2.Response) -> bool:
             return code == _FEATURE_OFF
         case _:
             return False
+
+
+def _log_429(*, retry: bool, wait: float | None = None, reason: str | None = None) -> None:
+    """The one `okta_rate_limited` event (design §13): a retry has `wait_s`, a give-up
+    `reason`."""
+    if retry:
+        log.warning(
+            "Okta rate limit hit; retrying in %.1f s",
+            wait,
+            extra=event("okta_rate_limited", retry=True, wait_s=round(wait or 0.0, 1)),
+        )
+    else:
+        log.warning(
+            "Okta rate limit hit; not retrying (%s)",
+            reason,
+            extra=event("okta_rate_limited", retry=False, reason=reason),
+        )
 
 
 def new_http_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx2.AsyncClient:
@@ -134,21 +151,18 @@ class OktaClient:
         self._charge()
         token, response = await self._attempt(target)
         if response.status_code == 429:
-            wait = retry_wait(response, self._max_wait)
+            try:
+                wait = retry_wait(response, self._max_wait)
+            except RateLimited as e:
+                _log_429(retry=False, reason=e.reason)
+                raise
             self._charge()  # before the wait: a principal at its limit fails now, not after it
-            log.warning(
-                "Okta rate limit hit; retrying in %.1f s",
-                wait,
-                extra=event("okta_rate_limited", retry=True, wait_s=round(wait, 1)),
-            )
+            _log_429(retry=True, wait=wait)
             await anyio.sleep(wait)
             token, response = await self._attempt(target)
             if response.status_code == 429:
-                log.warning(
-                    "Okta rate limit hit again; giving up",
-                    extra=event("okta_rate_limited", retry=False),
-                )
-                raise rate_limited(response)
+                _log_429(retry=False, reason="retry_failed")
+                raise rate_limited(response, "retry_failed")
         if response.is_success:
             return response
         # Only a nonce challenge (about the proof) and a disabled feature are known not to be

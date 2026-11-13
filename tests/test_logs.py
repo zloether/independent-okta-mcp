@@ -152,7 +152,7 @@ def test_events_carry_their_name_and_fields(capsys: pytest.CaptureFixture[str]) 
 
 
 def test_an_event_field_cannot_replace_a_base_key() -> None:
-    for key in ("ts", "level", "logger", "request_id", "msg", "event"):
+    for key in ("ts", "level", "logger", "request_id", "msg", "event", "exc_type"):
         with pytest.raises(ValueError, match="base key"):
             event("x", **{key: 1})
 

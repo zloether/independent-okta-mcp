@@ -440,19 +440,27 @@ async def test_429_retried_once() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.usefixtures("no_jitter")
-async def test_429_not_retried_twice() -> None:
+async def test_429_not_retried_twice(caplog: pytest.LogCaptureFixture) -> None:
     okta = Okta(rate_limited(), rate_limited(40))
-    with pytest.raises(RateLimited, match="try again in 40 s"):
+    with pytest.raises(RateLimited, match="try again in 40 s") as e:
         await client(okta).get(USERS)
     assert len(okta.requests) == 2
+    assert e.value.reason == "retry_failed"
+    logged = [getattr(r, "okta_mcp_event", None) for r in caplog.records]
+    assert logged == [
+        ("okta_rate_limited", {"retry": True, "wait_s": 0.0}),
+        ("okta_rate_limited", {"retry": False, "reason": "retry_failed"}),
+    ]
 
 
 @pytest.mark.anyio
-async def test_429_over_max_wait_not_retried() -> None:
+async def test_429_over_max_wait_not_retried(caplog: pytest.LogCaptureFixture) -> None:
     okta = Okta(rate_limited(30))
     with pytest.raises(RateLimited, match="try again in 30 s"):
         await client(okta).get(USERS)
     assert len(okta.requests) == 1
+    logged = [getattr(r, "okta_mcp_event", None) for r in caplog.records]
+    assert logged == [("okta_rate_limited", {"retry": False, "reason": "over_max_wait"})]
 
 
 @pytest.mark.anyio

@@ -44,7 +44,9 @@ _ASSERTION_LIFETIME = 300
 _REFRESH_MARGIN = 60
 FAILURE_BACKOFF = 5.0
 """Seconds after a failed token request during which the error is served without a new one.
-Well under `KEEP_FRESH_EVERY`, so the background refresh is never held off by it."""
+A background refresh (`keep_fresh`) that lands inside it sends nothing either, so after Okta
+recovers an idle server can stay not ready for up to one more `KEEP_FRESH_EVERY`; any tool call
+after the backoff fetches at once."""
 _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 _HINTS = {
     "invalid_client": "check OKTA_CLIENT_ID, OKTA_PRIVATE_KEY_FILE and OKTA_KEY_ID against the "

@@ -67,8 +67,9 @@ def test_jitter_bounded() -> None:
 
 @pytest.mark.anyio
 async def test_wait_over_cap_raises() -> None:
-    with pytest.raises(RateLimited, match="try again in 11 s"):
+    with pytest.raises(RateLimited, match="try again in 11 s") as e:
         retry_wait(at(SENT, SENT + 11), 10)
+    assert e.value.reason == "over_max_wait"
 
 
 @pytest.mark.anyio
@@ -90,16 +91,18 @@ async def test_zero_cap_retries_only_past_reset() -> None:
     ],
 )
 async def test_no_usable_reset_raises(headers: dict[str, str]) -> None:
-    with pytest.raises(RateLimited, match="try again later"):
+    with pytest.raises(RateLimited, match="try again later") as e:
         retry_wait(response_429(headers), 10)
+    assert e.value.reason == "no_reset"
 
 
 @pytest.mark.anyio
 async def test_wait_must_leave_headroom_before_deadline() -> None:
     with anyio.fail_after(3):
         assert retry_wait(at(SENT, SENT + 1), 10) == 1
-        with pytest.raises(RateLimited):
+        with pytest.raises(RateLimited) as e:
             retry_wait(at(SENT, SENT + 2), 10)  # ends 1 s before the deadline: too close
+    assert e.value.reason == "deadline"
 
 
 @pytest.mark.anyio
@@ -110,8 +113,13 @@ async def test_message_wait_excludes_jitter(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_rate_limited_message() -> None:
-    assert str(rate_limited(at(SENT, SENT + 40))) == "Okta rate limit reached; try again in 40 s"
-    assert str(rate_limited(response_429({}))) == "Okta rate limit reached; try again later"
+    limited = rate_limited(at(SENT, SENT + 40), "over_max_wait")
+    assert str(limited) == "Okta rate limit reached; try again in 40 s"
+    assert limited.reason == "over_max_wait"
+    assert (
+        str(rate_limited(response_429({}), "no_reset"))
+        == "Okta rate limit reached; try again later"
+    )
 
 
 class Clock:
@@ -255,3 +263,33 @@ async def test_share_without_principal_fails() -> None:
     with pytest.raises(RuntimeError):
         async with InflightShare(1).slot():
             pass
+
+
+@pytest.mark.anyio
+async def test_share_wait_is_logged_once_per_episode(caplog: pytest.LogCaptureFixture) -> None:
+    """How many requests wait is up to the caller: one line when the first starts waiting,
+    another only after the principal's queue has drained."""
+    share = InflightShare(1)
+    release = anyio.Event()
+
+    async def hold() -> None:
+        token = ratelimit.principal.set("00u1")
+        try:
+            async with share.slot():
+                await release.wait()
+        finally:
+            ratelimit.principal.reset(token)
+
+    def waits() -> int:
+        return sum(getattr(r, "okta_mcp_event", ("",))[0] == "inflight_share_wait"
+                   for r in caplog.records)  # fmt: skip
+
+    caplog.set_level("INFO", "okta_mcp")
+    for _ in range(2):
+        release = anyio.Event()
+        async with anyio.create_task_group() as tg:
+            for _ in range(6):
+                tg.start_soon(hold)
+            await anyio.wait_all_tasks_blocked()
+            release.set()
+    assert waits() == 2

@@ -45,13 +45,13 @@ def log_internal(logger: logging.Logger, where: str, e: BaseException) -> None:
 Field = str | int | float | bool | None
 
 _EVENT = "okta_mcp_event"
-_BASE = ("ts", "level", "logger", "request_id", "msg", "event")
+_BASE = frozenset({"ts", "level", "logger", "request_id", "msg", "event", "exc_type"})
 
 
 def event(name: str, **fields: Field) -> dict[str, object]:
     """`extra=` for a structured event: `log.warning("...", extra=event("okta_rate_limited",
     retry=False))`. A field named like a base key (`ts`, `msg`, ...) is a bug."""
-    if clash := set(fields) & set(_BASE):
+    if clash := fields.keys() & _BASE:
         raise ValueError(f"event field names a base key: {sorted(clash)}")
     return {_EVENT: (name, fields)}
 
