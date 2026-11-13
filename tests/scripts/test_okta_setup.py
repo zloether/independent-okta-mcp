@@ -1,6 +1,7 @@
 import copy
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -984,19 +985,32 @@ def test_missing_credentials_is_an_error(config: Path, monkeypatch, capsys) -> N
     assert "OKTA_SETUP_API_TOKEN" in capsys.readouterr().err
 
 
-def failing(status: int, path: str, body: Any, method: str | None = None):
-    """A FakeOkta whose `method path…` (any method if None) answers `status` with `body`."""
-    okta = FakeOkta()
+def failing(
+    status: int,
+    match: Callable[[httpx2.Request], bool],
+    body: Any = None,
+    okta: FakeOkta | None = None,
+    content: bytes | None = None,
+) -> tuple[FakeOkta, httpx2.Client]:
+    """A FakeOkta whose requests that `match` answer `status` with `body` (or raw `content`)."""
+    okta = okta or FakeOkta()
+    fake = okta
 
     def handle(request: httpx2.Request) -> httpx2.Response:
-        if request.url.path.startswith(path) and method in (None, request.method):
+        if match(request):
+            if content is not None:
+                return httpx2.Response(status, content=content)
             return httpx2.Response(status, json=body)
-        return okta.handle(request)
+        return fake.handle(request)
 
     return okta, httpx2.Client(base_url=ORG, transport=httpx2.MockTransport(handle))
 
 
-FEATURE_OFF = {
+def at(path: str, method: str | None = None) -> Callable[[httpx2.Request], bool]:
+    return lambda r: r.url.path.startswith(path) and method in (None, r.method)
+
+
+FEATURE_OFF_BODY = {
     "errorCode": "E0000015",
     "errorSummary": "You do not have permission to access the feature you are requesting",
 }
@@ -1007,12 +1021,11 @@ AS_PATH = "/api/v1/authorizationServers"
 def test_no_api_access_management_names_the_add_on(
     config: Path, status: int, method: str, capsys
 ) -> None:
-    okta, http = failing(status, AS_PATH, FEATURE_OFF, method)
+    okta, http = failing(status, at(AS_PATH, method), FEATURE_OFF_BODY)
     assert setup.run(["apply", "--config", str(config)], http=http, confirm=lambda: True) == 2
     err = capsys.readouterr().err
     assert f"HTTP {status} E0000015 You do not have permission" in err
-    assert "API Access Management" in err
-    assert "Prerequisites in docs/okta-setup.md" in err
+    assert setup.NO_API_AM in err
     assert okta.items("api", "v1", "authorizationServers") == []
 
 
@@ -1027,29 +1040,26 @@ def test_no_api_access_management_names_the_add_on(
 def test_other_errors_get_no_add_on_hint(
     config: Path, status: int, path: str, code: str, capsys
 ) -> None:
-    _, http = failing(status, path, {"errorCode": code, "errorSummary": "x"})
+    _, http = failing(status, at(path), {"errorCode": code, "errorSummary": "x"})
     assert setup.run(["check", "--config", str(config)], http=http) == 2
     err = capsys.readouterr().err
     assert f"HTTP {status} {code} x" in err
     assert "API Access Management" not in err
 
 
-def test_sub_resource_feature_off_gets_no_add_on_hint(config: Path, capsys) -> None:
-    # Once the server exists, an E0000015 under it is some other feature.
+def test_sub_resource_feature_off_gets_the_softer_note(config: Path, capsys) -> None:
+    # Under an existing server (`authorization_server: default`, or one made before the add-on
+    # lapsed) E0000015 may be the add-on or another feature.
     okta = FakeOkta()
     assert run(okta, "apply", config) == 0
     server = okta.find("api", "v1", "authorizationServers", name="okta-mcp")
-
-    def handle(request: httpx2.Request) -> httpx2.Response:
-        if request.url.path.endswith(f"{server['id']}/claims"):
-            return httpx2.Response(403, json=FEATURE_OFF)
-        return okta.handle(request)
-
-    http = httpx2.Client(base_url=ORG, transport=httpx2.MockTransport(handle))
+    claims = f"{server['id']}/claims"
+    _, http = failing(403, lambda r: r.url.path.endswith(claims), FEATURE_OFF_BODY, okta)
     assert setup.run(["check", "--config", str(config)], http=http) == 2
     err = capsys.readouterr().err
     assert "HTTP 403 E0000015" in err
-    assert "API Access Management" not in err
+    assert setup.MAYBE_NO_API_AM in err
+    assert setup.NO_API_AM not in err
 
 
 @pytest.mark.parametrize(
@@ -1057,19 +1067,37 @@ def test_sub_resource_feature_off_gets_no_add_on_hint(config: Path, capsys) -> N
     [
         (["x"], ""),
         ("text", ""),
-        (None, ""),
         ({"errorCode": "E0000015", "errorCauses": None}, "E0000015"),
         ({"errorCode": "E0000015", "errorCauses": "x"}, "E0000015"),
         ({"errorCode": "E0000015", "errorCauses": ["x", 1]}, "E0000015"),
         ({"errorCode": "E0000015", "errorCauses": [{"errorSummary": "cause"}]}, "E0000015 cause"),
+        (
+            {
+                "errorCode": "E0000001",
+                "errorCauses": [{"errorSummary": None}, {}, {"errorSummary": "taken"}],
+            },
+            "E0000001 taken",
+        ),
         ({"errorCode": 15, "errorSummary": ["x"]}, ""),
+        # control characters (newlines, ANSI escapes) collapse to one space
+        (
+            {"errorCode": "E0000001", "errorSummary": "bad\nline\x1b[31m red"},
+            "E0000001 bad line [31m red",
+        ),
     ],
 )
 def test_malformed_error_bodies(config: Path, body: Any, detail: str, capsys) -> None:
-    _, http = failing(403, AS_PATH, body)
+    _, http = failing(403, at(AS_PATH), body)
     assert setup.run(["check", "--config", str(config)], http=http) == 2
     err = capsys.readouterr().err
     first = err.splitlines()[0]
     assert first.endswith(f"HTTP 403 {detail}".rstrip())
     # The note needs the code: it never appears without E0000015 in the message.
     assert ("API Access Management" in err) == ("E0000015" in first)
+
+
+@pytest.mark.parametrize("content", [b"", b"null", b"not json"])
+def test_error_bodies_that_are_not_objects(config: Path, content: bytes, capsys) -> None:
+    _, http = failing(403, at(AS_PATH), content=content)
+    assert setup.run(["check", "--config", str(config)], http=http) == 2
+    assert capsys.readouterr().err.splitlines()[0].endswith("HTTP 403")

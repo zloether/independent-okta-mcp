@@ -236,11 +236,11 @@ def public_jwk(pem: bytes) -> dict[str, str]:
     return {"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": jwk["n"], "e": jwk["e"]}
 
 
-# Okta's "feature not available" code. On the authorization-server endpoints it most likely
-# means the org lacks API Access Management, which creating a custom authorization server
-# needs (docs/okta-setup.md#prerequisites). Not seen live: matched on the code at 401 or 403
-# (Okta sends E0000015 with 401 elsewhere, e.g. group owners) on the list/create endpoint only,
-# since a sub-resource's E0000015 could be another feature.
+# Okta's "feature not available" code. On the authorization-server list/create endpoint it
+# most likely means the org lacks API Access Management, which creating a custom authorization
+# server needs (docs/okta-setup.md#prerequisites). Under an existing server (its claims,
+# policies) it could be that or another feature, so the note says so. Not seen live: matched on
+# the code at 401 or 403 (Okta sends E0000015 with 401 elsewhere, e.g. group owners).
 FEATURE_OFF = "E0000015"
 AUTHORIZATION_SERVERS = "/api/v1/authorizationServers"
 NO_API_AM = (
@@ -248,6 +248,16 @@ NO_API_AM = (
     "API Access Management add-on (Enterprise and One-App subscriptions include only the "
     "built-in 'default' server); see Prerequisites in docs/okta-setup.md"
 )
+MAYBE_NO_API_AM = (
+    "a feature this server needs is off for the org. If the org lacks Okta's API Access "
+    "Management add-on, that is the likely cause; see Prerequisites in docs/okta-setup.md"
+)
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+
+
+def _one_line(text: str) -> str:
+    """Okta's text with control characters (newlines, ANSI escapes) collapsed to a space."""
+    return " ".join(_CONTROL.sub(" ", text).split())
 
 
 def _error_detail(response: httpx2.Response) -> tuple[str | None, str]:
@@ -263,12 +273,19 @@ def _error_detail(response: httpx2.Response) -> tuple[str | None, str]:
     code = code if isinstance(code, str) else None
     summary = fields.get("errorSummary")
     causes = fields.get("errorCauses")
-    cause_text = "; ".join(
-        str(c.get("errorSummary", ""))
+    cause_summaries = [
+        c.get("errorSummary")
         for c in (causes if isinstance(causes, list) else [])
         if isinstance(c, dict)
+    ]
+    cause_text = "; ".join(
+        _one_line(s) for s in cause_summaries if isinstance(s, str) and s.strip()
     )
-    parts = [code, summary if isinstance(summary, str) else None, cause_text or None]
+    parts = [
+        _one_line(code) if code else None,
+        _one_line(summary) if isinstance(summary, str) else None,
+        cause_text,
+    ]
     return code, " ".join(p for p in parts if p)
 
 
@@ -283,12 +300,12 @@ class Okta:
         if response.status_code >= 400:
             code, detail = _error_detail(response)
             message = f"{method} {path} -> HTTP {response.status_code} {detail}".rstrip()
-            if (
-                code == FEATURE_OFF
-                and response.status_code in (401, 403)
-                and httpx2.URL(path).path.rstrip("/") == AUTHORIZATION_SERVERS
-            ):
-                message += f"\n{NO_API_AM}"
+            target = httpx2.URL(path).path.rstrip("/")
+            if code == FEATURE_OFF and response.status_code in (401, 403):
+                if target == AUTHORIZATION_SERVERS:
+                    message += f"\n{NO_API_AM}"
+                elif target.startswith(f"{AUTHORIZATION_SERVERS}/"):
+                    message += f"\n{MAYBE_NO_API_AM}"
             raise SetupError(message)
         return response
 
