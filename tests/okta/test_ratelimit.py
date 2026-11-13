@@ -336,3 +336,19 @@ async def test_share_wait_under_steady_load(caplog: pytest.LogCaptureFixture) ->
         ratelimit.principal.reset(token)
     assert share_waits(caplog) == 2  # at t=0 and t=60
     assert share._held == {}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_share_log_times_are_pruned_from_the_front() -> None:
+    clock = Clock()
+    share = InflightShare(1, clock)
+    due = share._log_due  # pyright: ignore[reportPrivateUsage]
+    assert due("a")
+    clock.t += 30
+    assert due("b")
+    assert not due("a")
+    clock.t += 31  # a expired, b not
+    assert due("c")
+    assert list(share._logged) == ["b", "c"]  # pyright: ignore[reportPrivateUsage]
+    clock.t += 60
+    assert due("b")
+    assert list(share._logged) == ["b"]  # pyright: ignore[reportPrivateUsage]

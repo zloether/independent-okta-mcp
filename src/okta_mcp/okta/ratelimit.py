@@ -217,12 +217,16 @@ class InflightShare:
                 del self._held[uid]
 
     def _log_due(self, uid: str) -> bool:
-        """Whether `uid`'s wait line is due, recording it if so. Pruned here, at most once a
-        minute per principal, so the map holds only principals logged in the minute before the
-        latest line."""
+        """Whether `uid`'s wait line is due, recording it if so. The map is in log-time order
+        (an entry is moved to the end when it is logged), so expired entries are popped from
+        the front: it holds only principals logged in the minute before the latest line."""
         now = self._clock()
         if now - self._logged.get(uid, -math.inf) < SHARE_LOG_EVERY:
             return False
-        self._logged = {u: t for u, t in self._logged.items() if now - t < SHARE_LOG_EVERY}
+        self._logged.pop(uid, None)
         self._logged[uid] = now
+        while (first := next(iter(self._logged))) != uid and (
+            now - self._logged[first] >= SHARE_LOG_EVERY
+        ):
+            del self._logged[first]
         return True

@@ -309,6 +309,37 @@ async def test_keep_fresh_backs_off_on_repeated_failures(key: rsa.RSAPrivateKey)
 
 
 @pytest.mark.anyio
+async def test_keep_fresh_survives_a_long_outage_and_recovers() -> None:
+    """2000 failures in a row (over 16 hours at 30 s) don't overflow the backoff or stop the
+    loop, and one success puts it back on the normal cycle."""
+
+    class Down(FakeTokenProvider):
+        up = False
+
+        async def token(self) -> ServiceToken:
+            self.calls += 1
+            if not self.up:
+                raise TokenError("token request failed: HTTP 503")
+            return ServiceToken("t", "Bearer")
+
+    p = Down()
+    slept: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        p.up = len(slept) >= 2000
+        if len(slept) == 2002:
+            raise anyio.get_cancelled_exc_class()
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await keep_fresh(p, sleep=sleep)
+    assert slept[:5] == [5, 10, 20, 30, 30]
+    assert set(slept[3:2000]) == {KEEP_FRESH_EVERY}
+    assert slept[2000:] == [KEEP_FRESH_EVERY, KEEP_FRESH_EVERY]
+    assert p.calls == 2002
+
+
+@pytest.mark.anyio
 async def test_keep_fresh_survives_an_unexpected_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

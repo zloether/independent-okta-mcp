@@ -709,3 +709,24 @@ async def test_a_retry_that_errors_is_logged(
         ("okta_rate_limited", {"retry": True, "wait_s": 0.0}),
         ("okta_rate_limited", {"retry": False, "reason": "retry_error"}),
     ]
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("no_jitter", "as_user")
+async def test_a_retry_refused_by_the_limiter_on_its_nonce_retry_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """429, then the retry gets a nonce challenge whose re-charge (the third request, over a
+    limit of 2) is refused: the give-up says `principal_limit`, not `retry_error`."""
+    okta = Okta(rate_limited(), nonce_401(), httpx2.Response(200, json=[]))
+    c = client(
+        okta, FakeTokenProvider(DPOP_TOKEN), dpop=DPoP(), on_request=RequestLimiter(2).charge
+    )
+    with pytest.raises(RateLimited, match="Too many Okta requests"):
+        await c.get(USERS)
+    logged = [e for r in caplog.records if (e := getattr(r, "okta_mcp_event", None))]
+    assert [e for e in logged if e[0] == "okta_rate_limited"] == [
+        ("okta_rate_limited", {"retry": True, "wait_s": 0.0}),
+        ("okta_rate_limited", {"retry": False, "reason": "principal_limit"}),
+    ]
+    assert ("limiter_rejected", {"limit_per_minute": 2}) in logged

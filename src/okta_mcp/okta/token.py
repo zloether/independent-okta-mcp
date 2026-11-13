@@ -98,20 +98,20 @@ async def keep_fresh(
     to `every`, so readiness returns soon after a short outage. Anything else (a bug) is
     logged and retried: this shares a task group with the server, so letting it out would stop
     the server rather than just leave it not ready."""
-    failures = 0
+    backoff = 0.0  # 0 while the last ask succeeded
     while True:
         try:
             await provider.token()
         except TokenError:
-            failures += 1
+            # Doubling from the backoff up to `every`: quick to notice Okta recovering, but a
+            # bad key on an idle server costs `every`'s rate, not 12 POSTs a minute. A running
+            # value, capped each time, so a long outage can't grow it without bound.
+            backoff = min(every, backoff * 2 if backoff else FAILURE_BACKOFF)
         except Exception as e:
             log_internal(log, "service token refresh", e)
         else:
-            failures = 0
-        # Doubling from the backoff after each failure, up to `every`: quick to notice Okta
-        # recovering, but a bad key on an idle server costs `every`'s rate, not 12 POSTs a min.
-        delay = every if failures == 0 else min(every, FAILURE_BACKOFF * 2 ** (failures - 1))
-        await sleep(delay)
+            backoff = 0.0
+        await sleep(backoff or every)
 
 
 def load_private_key(path: Path) -> rsa.RSAPrivateKey:

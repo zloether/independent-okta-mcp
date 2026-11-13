@@ -171,21 +171,28 @@ class OktaClient:
                 _log_give_up("principal_limit")
                 raise
             _log_retry(wait)
-            # One outcome per retry, whatever ends it: the `except` covers every exception
-            # (cancellation included) and the `else` every response.
+            # One outcome per retry, logged in one place. Anything that isn't an `Exception`
+            # (a cancellation by the deadline or shutdown, or an interpreter exit) keeps the
+            # default.
+            outcome: GiveUp | None = "cancelled"
             try:
                 await anyio.sleep(wait)
                 token, response = await self._attempt(target)
-            except BaseException as e:
-                cancelled = isinstance(e, anyio.get_cancelled_exc_class())
-                _log_give_up("cancelled" if cancelled else "retry_error")
-                raise
-            else:
                 if response.status_code == 429:
-                    _log_give_up("retry_failed")
+                    outcome = "retry_failed"
                     raise rate_limited(response, "retry_failed")
-                if not response.is_success:
-                    _log_give_up("retry_error")
+                outcome = None if response.is_success else "retry_error"
+            except OktaRateLimited:
+                raise
+            except RateLimited:
+                outcome = "principal_limit"  # the nonce retry's charge, inside `_attempt`
+                raise
+            except Exception:
+                outcome = "retry_error"
+                raise
+            finally:
+                if outcome is not None:
+                    _log_give_up(outcome)
         if response.is_success:
             return response
         # Only a nonce challenge (about the proof) and a disabled feature are known not to be
