@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from okta_mcp.auth.principal import Principal
-from okta_mcp.exec.output import ScrubRules, load_scrub, scrub
+from okta_mcp.exec.output import ScrubRules, load_scrub, render, scrub
 from okta_mcp.exec.params import build_request
 from okta_mcp.policy.engine import Engine, Verdict
 from okta_mcp.policy.expression import scrubbed
@@ -280,6 +280,13 @@ def test_schema_args(registry: Registry) -> None:
         validate_args(log, {"type": "syslog"})
     _, params = build_request(schemas["list-mappings"], {"source": APP}, ORG)
     assert params == {"sourceId": APP, "limit": "200"}
+
+
+def test_log_stream_schema_view_has_no_empty_column(registry: Registry) -> None:
+    # Live items carry `$id` and no `id` (2026-11-13 dev org; the spec example mixes both).
+    view = registry.domains["schemas"].commands["list-log-stream-schemas"].entry.view
+    item = {"$id": f"{ORG}/api/v1/meta/schemas/logStream/aws_eventbridge", "title": "AWS"}
+    assert None not in render(item, load_scrub(), links=False, cols=view)
 
 
 def test_realm_args(registry: Registry) -> None:
