@@ -1,0 +1,31 @@
+{
+  "source": "generated",
+  "operation": "getSession",
+  "body": {
+    "amr": [
+      "pwd"
+    ],
+    "createdAt": "2019-08-24T14:15:22Z",
+    "expiresAt": "2019-08-24T14:15:22Z",
+    "id": "l7FbDVqS8zHSy65uJD85",
+    "idp": {
+      "id": "01a2bcdef3GHIJKLMNOP",
+      "type": "ACTIVE_DIRECTORY"
+    },
+    "lastFactorVerification": "2019-08-24T14:15:22Z",
+    "lastPasswordVerification": "2019-08-24T14:15:22Z",
+    "login": "user@example.com",
+    "status": "ACTIVE",
+    "userId": "00u0abcdefGHIJKLMNOP",
+    "_links": {
+      "self": {
+        "hints": {
+          "allow": [
+            "DELETE"
+          ]
+        }
+      },
+      "href": "https://example.okta.com/api/v1/sessions/l7FbDVqS8zHSy65uJD85"
+    }
+  }
+}

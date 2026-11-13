@@ -1,0 +1,29 @@
+domain: security
+description: Read ThreatInsight, bot protection and security events provider settings (read-only).
+# All org configuration. Security events providers hold an issuer and a JWKS or well-known URL
+# (public endpoints), no secrets. Provider IDs' prefix isn't documented, so only the character
+# set is fixed. The SSF stream commands are excluded (docs/coverage/catalogue.yaml): Okta shows a
+# client only the streams it created, and the read-only service app creates none.
+commands:
+  get-threat-insight-config:
+    operation: getCurrentConfiguration
+    summary: ThreatInsight configuration
+    data_classes: [org-config]
+
+  get-bot-protection-config:
+    operation: getBotProtectionConfiguration
+    summary: Bot protection configuration
+    data_classes: [org-config]
+
+  list-event-providers:
+    operation: listSecurityEventsProviderInstances
+    summary: List security events providers
+    view: [id, name, type, status]
+    data_classes: [org-config]
+
+  get-event-provider:
+    operation: getSecurityEventsProviderInstance
+    summary: Get an events provider by ID
+    args:
+      provider: {path_param: securityEventProviderId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]

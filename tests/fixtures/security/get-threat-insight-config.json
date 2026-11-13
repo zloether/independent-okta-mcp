@@ -1,0 +1,21 @@
+{
+  "source": "generated",
+  "operation": "getCurrentConfiguration",
+  "body": {
+    "action": "none",
+    "excludeZones": [],
+    "created": "2020-08-05T22:18:30.629Z",
+    "lastUpdated": "2020-08-05T22:18:30.629Z",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/threats/configuration",
+        "hints": {
+          "allow": [
+            "GET",
+            "POST"
+          ]
+        }
+      }
+    }
+  }
+}

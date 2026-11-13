@@ -1,0 +1,24 @@
+{
+  "source": "generated",
+  "operation": "getBotProtectionConfiguration",
+  "body": {
+    "level": "LOW",
+    "mode": "LOG_ONLY",
+    "supportedFlows": [
+      "SIGN_IN",
+      "SSR",
+      "SSPR"
+    ],
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/bot-protection/configuration",
+        "hints": {
+          "allow": [
+            "GET",
+            "POST"
+          ]
+        }
+      }
+    }
+  }
+}

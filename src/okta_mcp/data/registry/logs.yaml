@@ -1,0 +1,22 @@
+domain: logs
+description: Query the Okta System Log (read-only).
+# Events name the actor and targets (pii), carry sign-in risk and behavior results (risk), and
+# record every admin and user action (audit-log). `target[].changeDetails` and
+# `debugContext.debugData` are free-form: scrub.yaml applies to them like any other key.
+# Not exposed: `q`, a keyword search whose matched fields Okta doesn't list, so it could match
+# a value scrub.yaml redacts and confirm it; `filter` covers the same ground with named
+# attributes the policy engine checks. `after` is the paging token, followed from the Link header.
+commands:
+  list:
+    operation: listLogEvents
+    summary: Query System Log events
+    args:
+      since: {query: since}
+      until: {query: until}
+      filter: {query: filter, arg_rule: {attribute_expression: true}}
+      sort_order: {query: sortOrder, allowed_values: [ASCENDING, DESCENDING]}
+    paginate: link
+    # Okta's default; events run to a few KB each, and a resume refetches the page it stopped in.
+    page_size: 100
+    view: [uuid, published, eventType, actor.alternateId, outcome.result, client.ipAddress, displayMessage]
+    data_classes: [audit-log, pii, risk]

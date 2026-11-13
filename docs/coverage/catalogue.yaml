@@ -724,22 +724,22 @@ domains:
       operations: [getCurrentConfiguration]
       kind: simple
       paginate: none
-    list-security-events-providers:
+    list-event-providers:
       operations: [listSecurityEventsProviderInstances]
       kind: simple
       paginate: none
-    get-security-events-provider:
+    get-event-provider:
       operations: [getSecurityEventsProviderInstance]
       kind: simple
       paginate: none
     get-ssf-streams:
       operations: [getSsfStreams]
-      kind: simple
-      paginate: none
+      kind: excluded
+      reason: Okta shows a client only the SSF streams it created; the read-only service app creates none
     get-ssf-stream-status:
       operations: [getSsfStreamStatus]
-      kind: simple
-      paginate: none
+      kind: excluded
+      reason: Okta shows a client only the SSF streams it created; the read-only service app creates none
     get-bot-protection-config:
       operations: [getBotProtectionConfiguration]
       kind: simple

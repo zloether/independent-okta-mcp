@@ -13,5 +13,6 @@ SAMPLES: dict[str | None, str] = {
     "^[A-Za-z0-9_-]{1,64}$": "kid_1emaKYZTWRYYRRTSK",
     "^[A-Za-z0-9_-]{1,100}$": "0oa1emaKYZTWRYYRRTSK",
     "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$": "v2mst.GldKV5VxTrifyeZmWSQguA",
+    "^[A-Za-z0-9_-]{20,128}$": "102GALFKlYFRGq_1TuolTsMjQ",
     None: "alice@example.com",  # an unpatterned path arg (`users get`)
 }

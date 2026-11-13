@@ -29,10 +29,10 @@ Example: `type eq "OKTA_GROUP" and lastUpdated gt "2025-01-01T00:00:00.000Z"`.
 
 ## Restrictions this server enforces
 
-For the arguments that can name any attribute (`search` and `sort_by` on the commands whose
-`okta_help` shows a `Search:` line), the server reads the
-expression before sending it, so it can tell which attributes it names. It accepts only this
-alphabet and refuses everything else:
+For the arguments that can name any attribute (`search` and `sort_by`, and `filter` on
+`okta_apps list` and `okta_logs list`: the commands whose `okta_help` shows a `Search:` line),
+the server reads the expression before sending it, so it can tell which attributes it names.
+It accepts only this alphabet and refuses everything else:
 
 - Attribute names are dotted segments of ASCII letters, digits and underscores, starting with a
   letter or underscore (`profile.name`, `profile.costCenter`). Non-ASCII attribute names are not
@@ -49,7 +49,7 @@ shorter piece of it with `sw`, `co` or `ew`.
 
 ## Which attributes you may name
 
-Naming an attribute in `search` or `sort_by` can reveal its value (matching on a value is a way
+Naming an attribute in one of these arguments can reveal its value (matching on a value is a way
 of reading it), so on commands whose `okta_help` shows a `Search:` line the server checks
 those attributes against your roles. Elsewhere `filter`, `q` and `search` work over a fixed set
 of fields the command returns anyway (a group rule's `search` matches its name), so they are not
