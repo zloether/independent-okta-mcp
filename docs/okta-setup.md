@@ -23,7 +23,7 @@ Okta answers a service-app request only when the token's scope **and** the app's
 
 | Scope | Narrowest standard role | Commands that need it |
 |---|---|---|
-| `okta.users.read` | `READ_ONLY_ADMIN` | Resolving a login to a user ID (any command with a `user` argument) |
+| `okta.users.read` | `READ_ONLY_ADMIN` | Resolving a login to a user ID (any command with a `user` argument); `org-settings list-yubikey-tokens`, `get-yubikey-token` (role unverified for these) |
 | `okta.groups.read` | `READ_ONLY_ADMIN` | `groups` |
 | `okta.networkZones.read` | `READ_ONLY_ADMIN` | `network-zones` |
 | `okta.roles.read` | `SUPER_ADMIN` | `groups list-roles`, `get-role`, `list-role-app-targets`, `list-role-group-targets`; `iam`; `oauth-client-roles` |

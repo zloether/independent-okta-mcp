@@ -154,16 +154,11 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     override = command.entry.response_override
     if override is not None and override.kind == "list" and not isinstance(value, list):
         value = [value]
-    if override is not None and override.kind == "wrapped" and isinstance(value, list):
-        value = {command.entry.items_key: value}
-    # A wrapped list whose spec example is the bare list (`listOktaSupportCases`): the schema
-    # wins, so the fixture is the wrapper.
-    if (
-        override is None
-        and command.operation.response.kind == "object"
-        and command.entry.items_key is not None
-        and isinstance(value, list)
-    ):
+    # A wrapped list: by override, or by a wrapper schema whose example is the bare list
+    # (`listOktaSupportCases`; the schema wins).
+    wrapped = override is not None and override.kind == "wrapped"
+    by_schema = override is None and command.operation.response.kind == "object"
+    if isinstance(value, list) and command.entry.items_key is not None and (wrapped or by_schema):
         value = {command.entry.items_key: value}
     return Neutralizer()(value)
 

@@ -667,12 +667,12 @@ domains:
       kind: simple
       paginate: link
   schemas:
-    list:
+    list-mappings:
       operations: [listProfileMappings]
       kind: simple
       paginate: link
-      notes: List omits `properties`; `get` shows the mappings
-    get:
+      notes: List omits `properties`; `get-mapping` shows the mappings
+    get-mapping:
       operations: [getProfileMapping]
       kind: simple
       paginate: none

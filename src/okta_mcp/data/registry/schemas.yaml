@@ -8,8 +8,8 @@ description: Read profile schemas, profile mappings, user types, linked objects 
 # types `oty`, user schemas `osc` or `default`), so only the character set is fixed;
 # `linkedobjects` is reserved after /meta/schemas/user/.
 commands:
-  # Items have no `properties`; `get` shows the mappings (catalogue note).
-  list:
+  # Items have no `properties`; `get-mapping` shows the expressions (catalogue note).
+  list-mappings:
     operation: listProfileMappings
     summary: Profile mappings
     args:
@@ -20,9 +20,9 @@ commands:
     view: [id, source.name, source.type, target.name, target.type]
     data_classes: [org-config]
 
-  get:
+  get-mapping:
     operation: getProfileMapping
-    summary: One profile mapping with its expressions
+    summary: One mapping with its expressions
     args:
       mapping: {path_param: mappingId, pattern: "^[A-Za-z0-9]{1,64}$"}
     data_classes: [org-config]

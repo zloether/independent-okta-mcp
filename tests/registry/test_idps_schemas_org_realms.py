@@ -58,8 +58,8 @@ def test_commands(registry: Registry) -> None:
         "get-yubikey-token": "getYubikeyOtpTokenById",
     }
     assert _commands(registry, "schemas") == {
-        "list": "listProfileMappings",
-        "get": "getProfileMapping",
+        "list-mappings": "listProfileMappings",
+        "get-mapping": "getProfileMapping",
         "get-user-schema": "getUserSchema",
         "get-group-schema": "getGroupSchema",
         "get-app-user-schema": "getApplicationUserSchema",
@@ -177,8 +177,8 @@ def test_scope_sets(registry: Registry) -> None:
         else:
             assert got == {"okta.orgs.read"}, name
     schema_scopes = {
-        "list": "okta.profileMappings.read",
-        "get": "okta.profileMappings.read",
+        "list-mappings": "okta.profileMappings.read",
+        "get-mapping": "okta.profileMappings.read",
         "get-user-schema": "okta.schemas.read",
         "get-group-schema": "okta.schemas.read",
         "get-app-user-schema": "okta.schemas.read",
@@ -278,7 +278,7 @@ def test_schema_args(registry: Registry) -> None:
     validate_args(log, {"type": "aws_eventbridge"})
     with pytest.raises(InvalidArguments, match="arg 'type'"):
         validate_args(log, {"type": "syslog"})
-    _, params = build_request(schemas["list"], {"source": APP}, ORG)
+    _, params = build_request(schemas["list-mappings"], {"source": APP}, ORG)
     assert params == {"sourceId": APP, "limit": "200"}
 
 
