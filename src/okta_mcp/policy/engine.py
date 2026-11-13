@@ -134,6 +134,9 @@ class Engine:
                     WILDCARD in allowed or allowed.issuperset(named)
                 ):
                     return Verdict.FORBIDDEN
+                # The registry's closed set, if any, holds for every role, `*` included.
+                if rule.attributes is not None and not set(rule.attributes).issuperset(named):
+                    return Verdict.FORBIDDEN
                 continue
             if rule.raises_sensitivity_to is None or grant not in effective.raised:
                 # `forbidden`, a raise the roles don't cover, or a rule form added later

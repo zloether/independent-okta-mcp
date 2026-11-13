@@ -724,3 +724,25 @@ def test_string_args_are_length_bounded(spec: SpecIndex) -> None:
                 arg = command.entry.args[name]
                 if arg.query and target.get("type") == "string" and "enum" not in target:
                     assert 0 < target["maxLength"] <= 4096, (command.name, name)
+
+
+def test_closed_attribute_set_loads(spec: SpecIndex) -> None:
+    attrs = ["status", "profile.login", "credentials.provider.type"]
+    cmd = _users({"attribute_expression": True, "attributes": attrs})
+    rule = _build(spec, list=cmd).domains["users"].commands["list"].entry.args["search"].arg_rule
+    assert rule is not None and rule.attributes == tuple(attrs)
+
+
+@pytest.mark.parametrize(
+    ("rule", "message"),
+    [
+        ({"attribute_expression": True, "attributes": ["profile.lgin", "nope"]}, "'nope'"),
+        ({"attribute_expression": True, "attributes": ["status", "a b"]}, "'a b'"),
+        ({"attribute_expression": True, "attributes": ["status", "status"]}, "duplicates"),
+        ({"attribute_expression": True, "attributes": []}, "at least 1"),
+        ({"reviewed": "x", "attributes": ["status"]}, "needs attribute_expression"),
+    ],
+)
+def test_closed_attribute_set_failures(spec: SpecIndex, rule: dict[str, Any], message: str) -> None:
+    with pytest.raises(RegistryError, match=message):
+        _build(spec, list=_users(rule, "q" if "reviewed" in rule else "search"))

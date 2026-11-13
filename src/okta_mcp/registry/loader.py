@@ -4,6 +4,7 @@ Every error is collected and reported at once; any error fails the load. Check 7
 guides) lands with the resources in step 3.4.
 """
 
+import re
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -29,6 +30,8 @@ _WIDENING = _FILTERS | {"expand", "discloseIdentifiers", "sortBy"}
 _EXPRESSIONS = frozenset({"filter", "search", "sortBy"})
 # Pagination and page size belong to the server (design §7.2), never to the caller.
 _RESERVED_QUERY = frozenset({"after", "limit"})
+# Dotted ASCII names, as `policy/expression.py` reads them.
+_ATTRIBUTE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 
 
 class RegistryError(Exception):
@@ -230,6 +233,14 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
                 f"arg {arg_name}: arg_rule attribute_expression is only for "
                 f"{', '.join(sorted(_EXPRESSIONS))}, not {arg.param}"
             )
+        if arg.arg_rule is not None and arg.arg_rule.attributes is not None:
+            for attr in arg.arg_rule.attributes:
+                # A response field, or a path under one (the spec's arrays, such as a log
+                # event's `target`, are leaves there), so a misspelt name fails the load.
+                segments = attr.split(".")
+                prefixes = {".".join(segments[:i]) for i in range(1, len(segments) + 1)}
+                if not _ATTRIBUTE.fullmatch(attr) or not prefixes & op.response.fields:
+                    errors.append(f"arg {arg_name}: arg_rule attributes: {attr!r} is not a field")
     for p in op.params.values():
         if p.required and p.name not in used and not (p.name == "limit" and entry.page_size):
             errors.append(f"required {p.location} param {p.name} has no arg")

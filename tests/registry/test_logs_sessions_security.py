@@ -5,21 +5,18 @@ from typing import Any
 import pytest
 
 from okta_mcp.auth.principal import Principal
+from okta_mcp.exec.executor import searchable
+from okta_mcp.exec.output import load_scrub
 from okta_mcp.exec.params import build_request
 from okta_mcp.policy.engine import Engine, Verdict
+from okta_mcp.policy.expression import scrubbed
 from okta_mcp.policy.loader import build_policy
-from okta_mcp.registry.loader import Registry, load_registry
+from okta_mcp.registry.loader import Registry
 from okta_mcp.registry.schema import InvalidArguments, validate_args
-from okta_mcp.registry.spec import load_spec
 
 ORG = "https://example.okta.com"
 SESSION = "102GALFKlYFRGq_1TuolTsMjQ"
 G1 = "00g1secanalyst000000"
-
-
-@pytest.fixture(scope="module")
-def registry() -> Registry:
-    return load_registry(load_spec())
 
 
 def _commands(registry: Registry, domain: str) -> dict[str, str]:
@@ -158,6 +155,63 @@ def test_logs_filter_never_names_a_redacted_attribute(registry: Registry) -> Non
     ):
         verdict = e.check(WHO, "logs", "list", {"filter": f'{attr} sw "a"'})
         assert verdict is Verdict.FORBIDDEN, attr
+
+
+def test_logs_filter_is_closed_to_plain_fields_whatever_the_role(registry: Registry) -> None:
+    # Naming a free-form object could match a redacted key inside it, which the redaction test
+    # (names only) can't see; `*` doesn't open them.
+    e = _engine(registry, {"allow": {"logs": ["list"]}, "search_attributes": ["*"]})
+    for attr in (
+        "debugContext.debugData",
+        "debugContext",
+        "debugContext.debugData.url",
+        "debugContext.debugData.requestUri",
+        "target.changeDetails.to",
+        "target.changeDetails",
+        "target",
+        "actor.detailEntry",
+        "transaction.detail",
+        "securityContext.risk",
+        "client",
+    ):
+        verdict = e.check(WHO, "logs", "list", {"filter": f'{attr} co "a"'})
+        assert verdict is Verdict.FORBIDDEN, attr
+    both = 'eventType eq "x" and debugContext.debugData co "a"'
+    assert e.check(WHO, "logs", "list", {"filter": both}) is Verdict.FORBIDDEN
+    # A role's own list is held to the closed set as well.
+    listed = _engine(
+        registry,
+        {"allow": {"logs": ["list"]}, "search_attributes": ["eventType", "debugContext.debugData"]},
+    )
+    assert listed.check(WHO, "logs", "list", {"filter": 'eventType eq "x"'}) is Verdict.ALLOWED
+    f = 'debugContext.debugData co "a"'
+    assert listed.check(WHO, "logs", "list", {"filter": f}) is Verdict.FORBIDDEN
+
+
+def test_logs_closed_set_is_plain_and_unredacted(registry: Registry) -> None:
+    rule = registry.domains["logs"].commands["list"].entry.args["filter"].arg_rule
+    assert rule is not None and rule.attributes is not None
+    free_form = ("debugContext", "changeDetails", "detailEntry", "transaction.detail")
+    for attr in rule.attributes:
+        assert not any(part in attr for part in free_form), attr
+        assert not scrubbed(attr, load_scrub()), attr
+
+
+def test_logs_help_lists_the_closed_set(registry: Registry) -> None:
+    cmd = registry.domains["logs"].commands["list"]
+    wildcard = _engine(registry, {"allow": {"logs": ["list"]}, "search_attributes": ["*"]})
+    line = searchable(wildcard, WHO, cmd)
+    assert line.startswith("expressions may name only: ") and "eventType" in line
+    assert "debugData" not in line and "(+19)" in line  # 39 attributes, 20 shown
+    narrow = _engine(
+        registry,
+        {"allow": {"logs": ["list"]}, "search_attributes": ["eventType", "debugContext.debugData"]},
+    )
+    assert searchable(narrow, WHO, cmd) == "expressions may name only: eventType"
+    outside = _engine(
+        registry, {"allow": {"logs": ["list"]}, "search_attributes": ["debugContext.debugData"]}
+    )
+    assert searchable(outside, WHO, cmd) == "your roles allow no filter on this command"
 
 
 def test_sensitive_commands_need_naming_or_include_sensitive(registry: Registry) -> None:

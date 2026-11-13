@@ -150,12 +150,24 @@ def searchable(engine: Engine, principal: Principal, command: Command) -> str:
     `okta_help`'s line for a command with expression args. Only those args are role-checked:
     a `reviewed` filter is not, so the message names the args it is about."""
     names = engine.search_attributes(principal, command.domain, command.name)
-    if not names:
+    # A registry closed set (`arg_rule.attributes`) narrows every role's list, `*` included.
+    # Only when every expression arg has one, so nothing is hidden that an arg would take.
+    # Shown in registry order, which puts the most useful first.
+    rules = [command.entry.args[a].arg_rule for a in expression_args(command)]
+    closed = (
+        list(dict.fromkeys(a for r in rules if r is not None for a in r.attributes or ()))
+        if rules and all(r is not None and r.attributes is not None for r in rules)
+        else None
+    )
+    if closed is not None and names:
+        shown = [a for a in closed if "*" in names or a in names]
+    elif "*" in names:
+        return "expressions may name any attribute that results don't redact"
+    else:
+        shown = sorted(names)
+    if not shown:
         args = " or ".join(expression_args(command)) or "an expression"
         return f"your roles allow no {args} on this command"
-    if "*" in names:
-        return "expressions may name any attribute that results don't redact"
-    shown = sorted(names)
     more = len(shown) - _ATTRIBUTES_SHOWN
     listed = ", ".join(shown[:_ATTRIBUTES_SHOWN]) + (f" (+{more})" if more > 0 else "")
     return f"expressions may name only: {listed}"

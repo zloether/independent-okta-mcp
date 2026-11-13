@@ -2,7 +2,8 @@ domain: logs
 description: Query the Okta System Log (read-only).
 # Events name the actor and targets (pii), carry sign-in risk and behavior results (risk), and
 # record every admin and user action (audit-log). `target[].changeDetails` and
-# `debugContext.debugData` are free-form: scrub.yaml applies to them like any other key.
+# `debugContext.debugData` are free-form: scrub.yaml applies to them like any other key, but it
+# matches key names, so a secret inside a string value (a URL's query) isn't caught.
 # Not exposed: `q`, a keyword search whose matched fields Okta doesn't list, so it could match
 # a value scrub.yaml redacts and confirm it; `filter` covers the same ground with named
 # attributes the policy engine checks. `after` is the paging token, followed from the Link header.
@@ -13,7 +14,29 @@ commands:
     args:
       since: {query: since}
       until: {query: until}
-      filter: {query: filter, arg_rule: {attribute_expression: true}}
+      # Closed to scalar fields: naming an object (`debugContext.debugData`,
+      # `target.changeDetails`, `*.detailEntry`, `transaction.detail`) could match a redacted key
+      # inside it, and debugData's string values (URLs) may carry tokens key-based scrubbing
+      # can't see. Roles narrow this further with `search_attributes`.
+      filter:
+        query: filter
+        arg_rule:
+          attribute_expression: true
+          # Most useful first: `okta_help` shows the first 20.
+          attributes:
+            [eventType, outcome.result, outcome.reason,
+             actor.id, actor.alternateId, actor.type, actor.displayName,
+             target.id, target.alternateId, target.type, target.displayName,
+             client.ipAddress, authenticationContext.externalSessionId,
+             published, severity, displayMessage, uuid, transaction.id,
+             client.zone, client.device, client.id, legacyEventType, transaction.type,
+             client.userAgent.browser, client.userAgent.os, client.userAgent.rawUserAgent,
+             client.geographicalContext.city, client.geographicalContext.state,
+             client.geographicalContext.country, client.geographicalContext.postalCode,
+             authenticationContext.credentialType, authenticationContext.credentialProvider,
+             authenticationContext.authenticationProvider, authenticationContext.interface,
+             securityContext.asNumber, securityContext.asOrg, securityContext.isp,
+             securityContext.domain, securityContext.isProxy]
       sort_order: {query: sortOrder, allowed_values: [ASCENDING, DESCENDING]}
     paginate: link
     # Okta's default; events run to a few KB each, and a resume refetches the page it stopped in.

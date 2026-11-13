@@ -388,7 +388,7 @@ commands:
     data_classes: [admin-roles]
 ```
 
-**Sensitivity is derived, not declared.** A reviewed table maps data classes to sensitivity: `pii`, `org-config` → `normal`; `mfa-state`, `credential-material`, `audit-log`, `admin-roles`, `session`, `risk` → `sensitive`. A command is `sensitive` if any of its classes is. `arg_rule: {raises_sensitivity_to: sensitive}` raises it for calls that pass that argument. An `arg_rule` has exactly one of four forms: `forbidden: true` (no caller may pass the argument), `raises_sensitivity_to: sensitive`, `reviewed: "<reason>"` (the argument leaves sensitivity as it is, and the reason says why), or `attribute_expression: true` (the value is a filter expression or an attribute name, and the policy engine checks the attributes it names, §9.3).
+**Sensitivity is derived, not declared.** A reviewed table maps data classes to sensitivity: `pii`, `org-config` → `normal`; `mfa-state`, `credential-material`, `audit-log`, `admin-roles`, `session`, `risk` → `sensitive`. A command is `sensitive` if any of its classes is. `arg_rule: {raises_sensitivity_to: sensitive}` raises it for calls that pass that argument. An `arg_rule` has exactly one of four forms: `forbidden: true` (no caller may pass the argument), `raises_sensitivity_to: sensitive`, `reviewed: "<reason>"` (the argument leaves sensitivity as it is, and the reason says why), or `attribute_expression: true` (the value is a filter expression or an attribute name, and the policy engine checks the attributes it names, §9.3). An `attribute_expression` rule may add `attributes: [...]`, a closed set the argument may name whatever the roles allow (`["*"]` included); the loader checks each is a response field or a path under one. It is for filters over schemas with free-form objects (System Log `debugContext.debugData`, `target.changeDetails`): the redaction test reads names, so naming the object could match a redacted key inside it, and string values there (URLs) can carry tokens no key-based rule sees (step 5.3).
 
 Load-time and CI checks (startup fails on any error):
 
@@ -623,6 +623,8 @@ roles:
       behaviors:         ["*"]
       sessions:          ["*"]
     include_sensitive: [logs, sessions]
+    # System Log filter attributes (`okta_logs list` takes only a closed set, §9.2).
+    search_attributes: [eventType, outcome.result, actor.id, actor.alternateId, target.id, client.ipAddress, authenticationContext.externalSessionId]
     deny:
       users: [get-factors]
 

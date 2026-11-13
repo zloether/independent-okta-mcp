@@ -29,9 +29,9 @@ Example: `type eq "OKTA_GROUP" and lastUpdated gt "2025-01-01T00:00:00.000Z"`.
 
 ## Restrictions this server enforces
 
-For the arguments that can name any attribute (`search` and `sort_by`, and `filter` on
-`okta_apps list` and `okta_logs list`: the commands whose `okta_help` shows a `Search:` line),
-the server reads the expression before sending it, so it can tell which attributes it names.
+For the arguments that can name any attribute (`search`, `sort_by` and some `filter`s: those
+on the commands whose `okta_help` shows a `Search:` line), the server reads the expression
+before sending it, so it can tell which attributes it names.
 It accepts only this alphabet and refuses everything else:
 
 - Attribute names are dotted segments of ASCII letters, digits and underscores, starting with a
