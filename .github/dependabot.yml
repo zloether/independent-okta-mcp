@@ -22,3 +22,11 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+
+  # Dockerfile base and uv image digests.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14

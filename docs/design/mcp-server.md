@@ -702,33 +702,17 @@ Group removal takes effect at next token issuance. Short access-token lifetimes 
 - `uv.lock` **committed**; CI runs `uv lock --check`.
 - Console script `okta-mcp = okta_mcp.__main__:main`.
 
-### 11.2 Dockerfile (sketch)
+### 11.2 Dockerfile
 
-```dockerfile
-# syntax=docker/dockerfile:1.7
-FROM python:3.12-slim AS build
-COPY --from=ghcr.io/astral-sh/uv:0.9.0 /uv /usr/local/bin/uv   # pin exact; never :latest
-WORKDIR /app
-ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
-COPY LICENSE README.md ./
-COPY src/ src/
-RUN uv sync --frozen --no-dev --no-editable
+The [`Dockerfile`](../../Dockerfile) at the repo root (plan 7.1). Two stages on the same `python:3.12-slim` digest (the venv's interpreter is a symlink into the base):
 
-FROM python:3.12-slim
-RUN useradd --system --uid 10001 --no-create-home mcp
-WORKDIR /app
-COPY --from=build /app/.venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 MCP_HOST=0.0.0.0 MCP_PORT=8080 MCP_ENV=production
-USER 10001
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
-  CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz').status==200 else 1)"]
-ENTRYPOINT ["okta-mcp"]
-```
+- **Build:** uv (`ghcr.io/astral-sh/uv`, the CI version, by digest; never `:latest`) runs `uv sync --frozen --no-dev --no-install-project` on `pyproject.toml uv.lock`, then copies `LICENSE README.md src/` and runs `uv sync --frozen --no-dev --no-editable`, so the package and its data files are installed into `/app/.venv` and the runtime needs no source tree.
+- **Runtime:** `apt-get upgrade` (Debian security fixes newer than the pinned digest), pip removed (the server installs nothing), setuid/setgid bits stripped, user and group `mcp` 10001 with no home or shell. Only `/app/.venv` is copied, root-owned. `ENV PATH=/app/.venv/bin:… PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 MCP_HOST=0.0.0.0 MCP_PORT=8080 MCP_ENV=production`, `USER 10001:10001`, `EXPOSE 8080`, `ENTRYPOINT ["okta-mcp"]`. `HEALTHCHECK` fetches `/healthz` on `MCP_PORT` with the image's Python (no curl in the image), every 30 s, polled every 2 s during a 10 s start period.
+- Base and uv digests are bumped by Dependabot (`docker` ecosystem, 14-day cooldown).
 
-`.dockerignore`: deny-all, then allow `pyproject.toml uv.lock LICENSE README.md src/`. Keeps `tests/`, `docs/`, `.git`, `.claude/`, keys and `.env*` out of the build context. CI checks the image runs as non-root and contains no tests/docs/keys.
+`.dockerignore`: deny-all, then allow `pyproject.toml uv.lock LICENSE README.md src/`, and inside `src/` deny bytecode caches, key files and `.env*`. Keeps `tests/`, `docs/`, `.git`, `.claude/`, keys and `.env*` out of the build context.
+
+CI's `container` job builds the image and runs `tests/container/` against it (`OKTA_MCP_IMAGE`): user 10001 and `MCP_ENV=production` in the image config; no private key, setuid file or repo tree (`tests`, `docs`, `src`, ...) readable in the image; the package installed non-editable with its data; no pip and nothing the server's user can write; startup errors exit 2; dev mode and SSWS refused; and, run as compose runs it (`--read-only`, `--cap-drop=ALL`, `no-new-privileges`) with **no network**, `/healthz` 200, `/readyz` 503, `/mcp` 503 with `Retry-After`, the Docker health status reaching `healthy`, and a clean exit 0 on SIGTERM. Then Trivy (pinned by digest, reading a saved tarball rather than the Docker socket) fails the job on any fixed HIGH or CRITICAL vulnerability.
 
 ### 11.3 Configuration reference
 
