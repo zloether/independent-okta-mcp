@@ -165,7 +165,7 @@ def test_public_jwk_rejects_private_key() -> None:
     ("old", "new"),
     [
         ("okta.groups.read]", "okta.groups.manage]"),
-        ("okta.groups.read]", "okta.apps.read]"),  # no admin role recorded for it
+        ("okta.groups.read]", "okta.sessions.read]"),  # no admin role recorded for it
         ("mcp-okta-readers", "readers"),
         (MCP_URL, "http://mcp.example.com/mcp"),
         (MCP_URL, "https://mcp.example.com"),
@@ -335,35 +335,13 @@ def test_terraform_prefix_matches_the_script() -> None:
 # (plans 5.1 to 5.6). The setup script refuses them, so their commands stay unavailable
 # until a live check adds each to SCOPE_ROLES and is removed from here.
 UNVERIFIED_SCOPES = {
-    "okta.apps.read",
-    "okta.appGrants.read",
-    "okta.apps.interclientTrust.read",
+    "okta.sessions.read",  # `sessions get` fails DPoP htu validation (2026-11-13)
+    # Not offered by the trial org used for the 2026-11-13 checks.
     "okta.userRisk.read",
-    "okta.policies.read",
-    "okta.authenticators.read",
-    "okta.behaviors.read",
-    "okta.orgs.read",
-    "okta.logs.read",
-    "okta.sessions.read",
-    "okta.threatInsights.read",
     "okta.botProtection.read",
-    "okta.securityEventsProviders.read",
-    "okta.apiTokens.read",
-    "okta.authorizationServers.read",
-    "okta.idps.read",
-    "okta.captchas.read",
-    "okta.profileMappings.read",
-    "okta.schemas.read",
-    "okta.logStreams.read",
-    "okta.linkedObjects.read",
-    "okta.userTypes.read",
-    "okta.uischemas.read",
     "okta.realms.read",
     "okta.realmAssignments.read",
-    "okta.devices.read",
-    "okta.deviceAssurance.read",
     "okta.deviceIntegrations.read",
-    "okta.devicePostureChecks.read",
 }
 
 
@@ -384,7 +362,7 @@ def test_scope_roles_cover_the_registry() -> None:
 
 def test_docs_table_matches_scope_roles() -> None:
     text = (SCRIPTS.parent / "docs" / "okta-setup.md").read_text()
-    rows = re.findall(r"^\| `(okta\.[A-Za-z]+\.read)` \| `([A-Z_]+)` \|", text, re.MULTILINE)
+    rows = re.findall(r"^\| `(okta\.[A-Za-z.]+\.read)` \| `([A-Z_]+)` \|", text, re.MULTILINE)
     assert dict(rows) == setup.SCOPE_ROLES
     assert len(rows) == len(setup.SCOPE_ROLES)
 
@@ -393,13 +371,14 @@ def test_terraform_scope_roles_match() -> None:
     text = (SCRIPTS.parent / "terraform" / "okta" / "main.tf").read_text()
     block = re.search(r"scope_roles = \{(.*?)\}", text, re.DOTALL)
     assert block
-    assert dict(re.findall(r'"(okta\.\w+\.read)"\s*=\s*"([A-Z_]+)"', block[1])) == setup.SCOPE_ROLES
+    found = re.findall(r'"(okta\.[\w.]+\.read)"\s*=\s*"([A-Z_]+)"', block[1])
+    assert dict(found) == setup.SCOPE_ROLES
 
 
 def test_scope_roles_are_ordered_as_terraform_assumes() -> None:
-    # main.tf picks SUPER_ADMIN if any scope needs it, else READ_ONLY_ADMIN: a third role
-    # must change both derivations.
-    assert setup.ROLE_ORDER == [setup.READ_ONLY_ADMIN, setup.SUPER_ADMIN]
+    # main.tf picks SUPER_ADMIN, then ORG_ADMIN, if any scope needs it, else READ_ONLY_ADMIN:
+    # another role must change both derivations.
+    assert setup.ROLE_ORDER == [setup.READ_ONLY_ADMIN, setup.ORG_ADMIN, setup.SUPER_ADMIN]
     assert set(setup.SCOPE_ROLES.values()) <= set(setup.ROLE_ORDER)
 
 
@@ -427,6 +406,35 @@ def test_roles_scope_needs_super_admin_which_apply_never_assigns(config: Path, c
     roles.append({"type": "SUPER_ADMIN"})
     assert run(okta, "check", config) == 0
     assert "OKTA_SCOPES=okta.users.read okta.groups.read okta.roles.read" in capsys.readouterr().out
+
+
+def test_schemas_scope_needs_org_admin_which_apply_never_assigns(config: Path, capsys) -> None:
+    use_scopes(config, "okta.users.read, okta.schemas.read")
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 1
+    service = okta.find("api", "v1", "apps", label="okta-mcp service")
+    roles = okta.items("oauth2", "v1", "clients", service["id"], "roles")
+    assert [r["type"] for r in roles] == ["READ_ONLY_ADMIN"]
+    assert "[manual] role ORG_ADMIN: okta.schemas.read needs it; assign it by hand" in (
+        capsys.readouterr().out
+    )
+
+    roles.append({"type": "ORG_ADMIN"})
+    assert run(okta, "check", config) == 0
+    # Super Admin is broader than these scopes need.
+    roles.append({"type": "SUPER_ADMIN"})
+    assert run(okta, "check", config) == 1
+    assert "remove ['SUPER_ADMIN']" in capsys.readouterr().out
+
+
+def test_super_admin_scope_outranks_org_admin_scope(config: Path, capsys) -> None:
+    use_scopes(config, "okta.users.read, okta.schemas.read, okta.orgs.read")
+    assert run(FakeOkta(), "check", config) == 1
+    assert "assign READ_ONLY_ADMIN (SUPER_ADMIN by hand)" in capsys.readouterr().out
+    # Until then the Org Admin scope's commands fail too, so the message names it.
+    assert run(FakeOkta(), "apply", config) == 1
+    out = capsys.readouterr().out
+    assert "role SUPER_ADMIN: okta.schemas.read, okta.orgs.read needs it" in out
 
 
 def test_narrower_role_than_the_scopes_need_is_reported(config: Path, capsys) -> None:

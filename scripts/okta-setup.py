@@ -64,6 +64,7 @@ GROUPS_CLAIM = "groups"
 POLICY_NAME = "okta-mcp clients"
 RULE_NAME = "okta-mcp groups"
 READ_ONLY_ADMIN = "READ_ONLY_ADMIN"
+ORG_ADMIN = "ORG_ADMIN"
 SUPER_ADMIN = "SUPER_ADMIN"
 CUSTOM_ROLE = "CUSTOM"
 # The narrowest standard admin role under which each scope's GET endpoints answer: Okta checks
@@ -74,9 +75,32 @@ SCOPE_ROLES = {
     "okta.users.read": READ_ONLY_ADMIN,
     "okta.groups.read": READ_ONLY_ADMIN,
     "okta.networkZones.read": READ_ONLY_ADMIN,
+    "okta.apps.read": READ_ONLY_ADMIN,
+    "okta.apps.interclientTrust.read": READ_ONLY_ADMIN,
+    "okta.policies.read": READ_ONLY_ADMIN,
+    "okta.authenticators.read": READ_ONLY_ADMIN,
+    "okta.behaviors.read": READ_ONLY_ADMIN,
+    "okta.logs.read": READ_ONLY_ADMIN,
+    "okta.threatInsights.read": READ_ONLY_ADMIN,
+    "okta.apiTokens.read": READ_ONLY_ADMIN,
+    "okta.authorizationServers.read": READ_ONLY_ADMIN,
+    "okta.idps.read": READ_ONLY_ADMIN,
+    "okta.captchas.read": READ_ONLY_ADMIN,
+    "okta.profileMappings.read": READ_ONLY_ADMIN,
+    "okta.userTypes.read": READ_ONLY_ADMIN,
+    "okta.uischemas.read": READ_ONLY_ADMIN,
+    "okta.devices.read": READ_ONLY_ADMIN,
+    "okta.deviceAssurance.read": READ_ONLY_ADMIN,
+    "okta.devicePostureChecks.read": READ_ONLY_ADMIN,
+    "okta.schemas.read": ORG_ADMIN,  # user and group schemas; app user schemas need less
+    "okta.linkedObjects.read": ORG_ADMIN,
+    "okta.orgs.read": SUPER_ADMIN,  # four org-settings commands; the rest need less
+    "okta.logStreams.read": SUPER_ADMIN,
+    "okta.appGrants.read": SUPER_ADMIN,
+    "okta.securityEventsProviders.read": SUPER_ADMIN,
     "okta.roles.read": SUPER_ADMIN,  # role assignments are visible to Super Admins only
 }
-ROLE_ORDER = [READ_ONLY_ADMIN, SUPER_ADMIN]
+ROLE_ORDER = [READ_ONLY_ADMIN, ORG_ADMIN, SUPER_ADMIN]
 DESCRIPTION = "Managed by okta-mcp scripts/okta-setup.py"
 # Claude Code requests offline_access; a rule without it fails sign-in with no_matching_policy.
 # Okta issues a refresh token only when the client app also has the refresh_token grant.
@@ -732,8 +756,8 @@ class Setup:
             )
             if app is None:
                 role = svc.role
-                if role == SUPER_ADMIN:
-                    role = f"{READ_ONLY_ADMIN} ({SUPER_ADMIN} by hand)"
+                if role != READ_ONLY_ADMIN:
+                    role = f"{READ_ONLY_ADMIN} ({role} by hand)"
                 self.pending(f"{what} access", f"grant {' '.join(svc.scopes)}; assign {role}")
                 return
             existing = None
@@ -856,8 +880,10 @@ class Setup:
         elif existing:
             self.problem(f"role {role}", f"{existing}; confirm it is yours, then assign it")
         else:
-            if role == SUPER_ADMIN:
-                needs = [s for s in self.cfg.service_app.scopes if SCOPE_ROLES[s] == SUPER_ADMIN]
+            if role != READ_ONLY_ADMIN:
+                needs = [
+                    s for s in self.cfg.service_app.scopes if SCOPE_ROLES[s] != READ_ONLY_ADMIN
+                ]
                 self.problem(
                     f"role {role}",
                     f"{', '.join(needs)} needs it; assign it by hand (this tool never assigns it)",

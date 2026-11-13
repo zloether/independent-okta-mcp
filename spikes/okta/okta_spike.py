@@ -253,7 +253,9 @@ def cmd_service(args: argparse.Namespace) -> None:
                     f" dpop-nonce-sent={new_nonce is not None}"
                     f" reused-token-nonce={nonce is not None and nonce == token.nonce}"
                 )
-                if not dpop_key or new_nonce is None or new_nonce == nonce:
+                if response.status_code == 200 or not dpop_key:
+                    break
+                if new_nonce is None or new_nonce == nonce:
                     break
                 nonce = new_nonce
             # Which resource answered, not what it holds: a list's length, an object's `id`,
@@ -264,6 +266,8 @@ def cmd_service(args: argparse.Namespace) -> None:
                 print(f"  list of {len(body)}")
             elif isinstance(body, dict) and "errorCode" in body:
                 print(f"  errorCode={body['errorCode']!r} {body.get('errorSummary')!r}")
+            elif isinstance(body, dict) and "error" in body:  # OAuth/DPoP error
+                print(f"  error={body['error']!r} {body.get('error_description')!r}")
             elif isinstance(body, dict):
                 print(f"  id={body.get('id')!r}")
 

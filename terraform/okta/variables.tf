@@ -139,7 +139,13 @@ variable "service_scopes" {
 }
 
 variable "allow_super_admin" {
-  description = "Assign SUPER_ADMIN to the service app when service_scopes need it (okta.roles.read); see docs/okta-setup.md."
+  description = "Assign SUPER_ADMIN to the service app when service_scopes need it; see docs/okta-setup.md."
+  type        = bool
+  default     = false
+}
+
+variable "allow_org_admin" {
+  description = "Assign ORG_ADMIN to the service app when service_scopes need it; see docs/okta-setup.md."
   type        = bool
   default     = false
 }

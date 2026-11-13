@@ -12,12 +12,36 @@ locals {
   # The narrowest standard admin role each scope needs (docs/okta-setup.md#service-app-scopes-and-admin-roles).
   # Keep in sync with SCOPE_ROLES in scripts/okta-setup.py (tested).
   scope_roles = {
-    "okta.users.read"        = "READ_ONLY_ADMIN"
-    "okta.groups.read"       = "READ_ONLY_ADMIN"
-    "okta.networkZones.read" = "READ_ONLY_ADMIN"
-    "okta.roles.read"        = "SUPER_ADMIN"
+    "okta.users.read"                   = "READ_ONLY_ADMIN"
+    "okta.groups.read"                  = "READ_ONLY_ADMIN"
+    "okta.networkZones.read"            = "READ_ONLY_ADMIN"
+    "okta.apps.read"                    = "READ_ONLY_ADMIN"
+    "okta.apps.interclientTrust.read"   = "READ_ONLY_ADMIN"
+    "okta.policies.read"                = "READ_ONLY_ADMIN"
+    "okta.authenticators.read"          = "READ_ONLY_ADMIN"
+    "okta.behaviors.read"               = "READ_ONLY_ADMIN"
+    "okta.logs.read"                    = "READ_ONLY_ADMIN"
+    "okta.threatInsights.read"          = "READ_ONLY_ADMIN"
+    "okta.apiTokens.read"               = "READ_ONLY_ADMIN"
+    "okta.authorizationServers.read"    = "READ_ONLY_ADMIN"
+    "okta.idps.read"                    = "READ_ONLY_ADMIN"
+    "okta.captchas.read"                = "READ_ONLY_ADMIN"
+    "okta.profileMappings.read"         = "READ_ONLY_ADMIN"
+    "okta.userTypes.read"               = "READ_ONLY_ADMIN"
+    "okta.uischemas.read"               = "READ_ONLY_ADMIN"
+    "okta.devices.read"                 = "READ_ONLY_ADMIN"
+    "okta.deviceAssurance.read"         = "READ_ONLY_ADMIN"
+    "okta.devicePostureChecks.read"     = "READ_ONLY_ADMIN"
+    "okta.schemas.read"                 = "ORG_ADMIN"
+    "okta.linkedObjects.read"           = "ORG_ADMIN"
+    "okta.orgs.read"                    = "SUPER_ADMIN"
+    "okta.logStreams.read"              = "SUPER_ADMIN"
+    "okta.appGrants.read"               = "SUPER_ADMIN"
+    "okta.securityEventsProviders.read" = "SUPER_ADMIN"
+    "okta.roles.read"                   = "SUPER_ADMIN"
   }
-  service_role = contains([for s in var.service_scopes : lookup(local.scope_roles, s, "")], "SUPER_ADMIN") ? "SUPER_ADMIN" : "READ_ONLY_ADMIN"
+  needed_roles = [for s in var.service_scopes : lookup(local.scope_roles, s, "")]
+  service_role = contains(local.needed_roles, "SUPER_ADMIN") ? "SUPER_ADMIN" : contains(local.needed_roles, "ORG_ADMIN") ? "ORG_ADMIN" : "READ_ONLY_ADMIN"
 }
 
 # --- Role groups ---------------------------------------------------------------
@@ -161,7 +185,11 @@ resource "okta_app_oauth_role_assignment" "service" {
     }
     precondition {
       condition     = local.service_role != "SUPER_ADMIN" || var.allow_super_admin
-      error_message = "service_scopes include okta.roles.read, which needs SUPER_ADMIN; set allow_super_admin = true to assign it."
+      error_message = "service_scopes include one that needs SUPER_ADMIN (docs/okta-setup.md); set allow_super_admin = true to assign it."
+    }
+    precondition {
+      condition     = local.service_role != "ORG_ADMIN" || var.allow_org_admin
+      error_message = "service_scopes include one that needs ORG_ADMIN (docs/okta-setup.md); set allow_org_admin = true to assign it."
     }
   }
 }

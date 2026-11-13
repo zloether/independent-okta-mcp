@@ -44,13 +44,38 @@ Okta answers a service-app request only when the token's scope **and** the app's
 | `okta.users.read` | `READ_ONLY_ADMIN` | Resolving a login to a user ID (any command with a `user` argument); `org-settings list-yubikey-tokens`, `get-yubikey-token` (role unverified for these) |
 | `okta.groups.read` | `READ_ONLY_ADMIN` | `groups` |
 | `okta.networkZones.read` | `READ_ONLY_ADMIN` | `network-zones` |
+| `okta.apps.read` | `READ_ONLY_ADMIN` | `apps`, except the grant and interclient commands |
+| `okta.apps.interclientTrust.read` | `READ_ONLY_ADMIN` | `apps list-interclient-allowed`, `list-interclient-targets` |
+| `okta.policies.read` | `READ_ONLY_ADMIN` | `policies` |
+| `okta.authenticators.read` | `READ_ONLY_ADMIN` | `authenticators` |
+| `okta.behaviors.read` | `READ_ONLY_ADMIN` | `behaviors` |
+| `okta.logs.read` | `READ_ONLY_ADMIN` | `logs` |
+| `okta.threatInsights.read` | `READ_ONLY_ADMIN` | `security get-threat-insight-config` |
+| `okta.apiTokens.read` | `READ_ONLY_ADMIN` | `api-tokens` |
+| `okta.authorizationServers.read` | `READ_ONLY_ADMIN` | `authorization-servers` |
+| `okta.idps.read` | `READ_ONLY_ADMIN` | `identity-providers` (role shown for `list` only) |
+| `okta.captchas.read` | `READ_ONLY_ADMIN` | `org-settings get-captcha-settings` |
+| `okta.profileMappings.read` | `READ_ONLY_ADMIN` | `schemas list-mappings`, `get-mapping` |
+| `okta.userTypes.read` | `READ_ONLY_ADMIN` | `schemas list-user-types`, `get-user-type` |
+| `okta.uischemas.read` | `READ_ONLY_ADMIN` | `schemas list-ui-schemas`, `get-ui-schema` |
+| `okta.devices.read` | `READ_ONLY_ADMIN` | `devices` |
+| `okta.deviceAssurance.read` | `READ_ONLY_ADMIN` | `device-assurance` |
+| `okta.devicePostureChecks.read` | `READ_ONLY_ADMIN` | `device-posture` |
+| `okta.schemas.read` | `ORG_ADMIN` | `schemas get-user-schema`, `get-group-schema` (`get-app-user-schema` needs only `READ_ONLY_ADMIN`) |
+| `okta.linkedObjects.read` | `ORG_ADMIN` | `schemas list-linked-objects`, `get-linked-object` |
+| `okta.orgs.read` | `SUPER_ADMIN` | `org-settings get-third-party-admin-setting`, `get-support-settings`, `get-admin-app-setting`, `get-client-privileges`; the rest of `org-settings` and `attack-protection` need only `READ_ONLY_ADMIN` |
+| `okta.logStreams.read` | `SUPER_ADMIN` | `schemas list-log-stream-schemas`, `get-log-stream-schema` |
+| `okta.appGrants.read` | `SUPER_ADMIN` | `apps list-grants`, `get-grant` |
+| `okta.securityEventsProviders.read` | `SUPER_ADMIN` | `security list-event-providers`, `get-event-provider` |
 | `okta.roles.read` | `SUPER_ADMIN` | `groups list-roles`, `get-role`, `list-role-app-targets`, `list-role-group-targets`; `iam`; `oauth-client-roles` |
 
-The service app needs the highest role in the table among its scopes, so each deployment picks its role by picking scopes. Under Read-only Administrator, the role commands get HTTP 403 from Okta, because only a Super Administrator can view admin role assignments. Their scope is all `.read`, so even a Super Administrator service app can't write, but a stolen service key can then read everything those scopes cover. To avoid that, leave `okta.roles.read` out: the role commands disappear from every user's tool list, and the app needs only Read-only Administrator.
+The table was found in a dev org (2026-11-13) by running each command under Read-only Administrator, then Org Administrator, then Super Administrator. A role is the one every command under the scope needs; where only some of a scope's commands need it, the last column says which.
 
-Some endpoints also need an Okta feature that not every org has. `groups get-owners` returns HTTP 401 (`E0000015`) on orgs without group owners, whatever the role.
+The service app needs the highest role in the table among its scopes, so each deployment picks its role by picking scopes. Okta allows a call only when the token's scopes and the app's role both do, and every scope here is `.read`, so even a Super Administrator service app can't write. A broader role still lets a stolen service key read more of what its scopes cover, and would let it write if someone later granted the app a `.manage` scope. To stay at Read-only Administrator, leave out the scopes that need more: their commands disappear from every user's tool list. Granting such a scope while keeping the narrower role isn't supported: `check` reports the missing role, Terraform fails the plan, and the commands the last column names get HTTP 403 from Okta.
 
-`check` accepts the role the table names for the configured scopes, any narrower standard role in the table, or a custom role. `apply` assigns Read-only Administrator but never Super Administrator: when the scopes need it, `apply` still assigns Read-only Administrator to an app it created, reports Super Administrator as `manual`, and you assign it in the admin console (Applications > the service app > Admin roles). Until then the role commands get 403. A scope not in the table is refused, and so is a role broader than the scopes need.
+Some endpoints also need an Okta feature that not every org has, whatever the role: `groups get-owners`, `apps list-cwo-connections` and `devices get-os-accounts` return HTTP 401 (`E0000015`) on orgs without it. `org-settings list-support-cases` returned 403 even under Super Administrator in the dev org.
+
+`check` accepts the role the table names for the configured scopes, any narrower standard role in the table, or a custom role. `apply` assigns Read-only Administrator and nothing broader: when the scopes need Org or Super Administrator, `apply` still assigns Read-only Administrator to an app it created, reports the broader role as `manual`, and you assign it in the admin console (Applications > the service app > Admin roles). Until then the commands that need it get 403. A scope not in the table is refused, and so is a role broader than the scopes need.
 
 ## Before you start
 
@@ -142,7 +167,7 @@ The rule must allow the authorization code grant only, so a rule that also lists
 
 ## Terraform
 
-`terraform/okta/` is a root module for the [okta/okta provider](https://registry.terraform.io/providers/okta/okta/latest) (`~> 7.1`) with the same objects, names and checks as the script: inputs that would widen access (group names without the prefix, scopes other than `okta.*.read`, access-token lifetimes over 30 minutes, refresh-token lifetimes over 24 hours, a private or short key) fail at `plan`. The service app gets the role [the table](#service-app-scopes-and-admin-roles) names for `service_scopes`; when that is Super Administrator, `plan` fails unless you set `allow_super_admin = true`. Set `refresh_tokens` for option B; leave it unset for A. Unlike the script, changing it or `group_prefix` later updates the apps, rule and claim in place.
+`terraform/okta/` is a root module for the [okta/okta provider](https://registry.terraform.io/providers/okta/okta/latest) (`~> 7.1`) with the same objects, names and checks as the script: inputs that would widen access (group names without the prefix, scopes other than `okta.*.read`, access-token lifetimes over 30 minutes, refresh-token lifetimes over 24 hours, a private or short key) fail at `plan`. The service app gets the role [the table](#service-app-scopes-and-admin-roles) names for `service_scopes`; when that is Org or Super Administrator, `plan` fails unless you set `allow_org_admin = true` or `allow_super_admin = true`. Set `refresh_tokens` for option B; leave it unset for A. Unlike the script, changing it or `group_prefix` later updates the apps, rule and claim in place.
 
 1. Create the key pair as above, then convert the public half to a JWK. Terraform cannot parse PEM, and needs only the public JWK:
 
@@ -167,4 +192,4 @@ Unlike the script, Terraform owns what it creates: `apply` reverts console chang
 ## Limits
 
 - Only native (loopback or custom-scheme redirect) public clients are created. Register other client types by hand, then add their client IDs to the access policy.
-- The script assigns only Read-only Administrator; Super Administrator is assigned by hand (or by Terraform with `allow_super_admin`). You can assign a narrower custom admin role by hand instead; the tool then accepts it and adds no standard role, but it does not check the custom role's permissions. In Terraform, replace `okta_app_oauth_role_assignment.service` with a `CUSTOM` assignment.
+- The script assigns only Read-only Administrator; Org and Super Administrator are assigned by hand (or by Terraform with `allow_org_admin` or `allow_super_admin`). You can assign a narrower custom admin role by hand instead; the tool then accepts it and adds no standard role, but it does not check the custom role's permissions. In Terraform, replace `okta_app_oauth_role_assignment.service` with a `CUSTOM` assignment.

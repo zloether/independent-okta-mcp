@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from okta_mcp.auth.principal import Principal
-from okta_mcp.exec.output import ScrubRules, load_scrub
+from okta_mcp.exec.output import ScrubRules, load_scrub, render
 from okta_mcp.exec.params import build_request
 from okta_mcp.policy.engine import Engine, Verdict
 from okta_mcp.policy.expression import scrubbed
@@ -77,6 +77,14 @@ def test_normal_commands_return_no_scrubbed_field(registry: Registry) -> None:
                 assert hits and all(h.startswith("user.credentials.") for h in hits), hits
                 continue
             assert not hits, (cmd.domain, cmd.name, hits)
+
+
+def test_default_posture_check_view_has_no_empty_column(registry: Registry) -> None:
+    # Built-in checks carry no `id` (2026-11-13 dev org).
+    view = registry.domains["device-posture"].commands["list-defaults"].entry.view
+    item = {"name": "Disk encryption", "platform": "MACOS", "type": "BUILTIN",
+            "variableName": "diskEncryption"}  # fmt: skip
+    assert None not in render(item, load_scrub(), links=False, cols=view)
 
 
 def test_scope_sets(registry: Registry) -> None:
