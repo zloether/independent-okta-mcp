@@ -1,0 +1,24 @@
+domain: device-posture
+description: Read device posture checks (read-only).
+# Checks Okta Verify runs on a device (custom OSQuery queries, or Okta's built-in ones) for
+# device assurance: org configuration. IDs `dch` + 17 (spec examples), which also keeps out
+# `default`, the reserved segment after /device-posture-checks/. Okta returns the lists unpaged.
+commands:
+  list:
+    operation: listDevicePostureChecks
+    summary: List custom device posture checks
+    view: [id, name, platform, type, variableName]
+    data_classes: [org-config]
+
+  get:
+    operation: getDevicePostureCheck
+    summary: Get a device posture check
+    args:
+      check: {path_param: postureCheckId, pattern: "^dch[A-Za-z0-9]{17}$"}
+    data_classes: [org-config]
+
+  list-defaults:
+    operation: listDefaultDevicePostureChecks
+    summary: Okta's built-in posture checks
+    view: [id, name, platform, type, variableName]
+    data_classes: [org-config]

@@ -1,0 +1,41 @@
+{
+  "source": "generated",
+  "operation": "getDeviceAssurancePolicy",
+  "body": {
+    "id": "dae3m8o4rWhwReDeM1c5",
+    "name": "Device assurance Android",
+    "lastUpdate": "2022-01-01T00:00:00.000Z",
+    "createdDate": "2022-01-01T00:00:00.000Z",
+    "lastUpdatedBy": "00u217pyf72CdUrBt1c5",
+    "createdBy": "00u217pyf72CdUrBt1c5",
+    "osVersion": {
+      "minimum": "12.4.5"
+    },
+    "diskEncryptionType": {
+      "include": [
+        "USER",
+        "FULL"
+      ]
+    },
+    "jailbreak": false,
+    "platform": "ANDROID",
+    "screenLockType": {
+      "include": [
+        "BIOMETRIC"
+      ]
+    },
+    "secureHardwarePresent": true,
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/device-assurances/dae3m8o4rWhwReDeM1c5",
+        "hints": {
+          "allow": [
+            "DELETE",
+            "GET",
+            "PUT"
+          ]
+        }
+      }
+    }
+  }
+}

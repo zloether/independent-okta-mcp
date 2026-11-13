@@ -218,7 +218,7 @@ def test_example_config_is_valid() -> None:
 
 
 # Scopes the registry uses whose narrowest admin role hasn't been checked against an org yet
-# (plans 5.1 to 5.5). The setup script refuses them, so their commands stay unavailable
+# (plans 5.1 to 5.6). The setup script refuses them, so their commands stay unavailable
 # until a live check adds each to SCOPE_ROLES and is removed from here.
 UNVERIFIED_SCOPES = {
     "okta.apps.read",
@@ -246,6 +246,10 @@ UNVERIFIED_SCOPES = {
     "okta.uischemas.read",
     "okta.realms.read",
     "okta.realmAssignments.read",
+    "okta.devices.read",
+    "okta.deviceAssurance.read",
+    "okta.deviceIntegrations.read",
+    "okta.devicePostureChecks.read",
 }
 
 

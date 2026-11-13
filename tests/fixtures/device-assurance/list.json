@@ -1,0 +1,33 @@
+{
+  "source": "generated",
+  "operation": "listDeviceAssurancePolicies",
+  "body": [
+    {
+      "createdBy": "createdBy",
+      "createdDate": "createdDate",
+      "displayRemediationMode": "SHOW",
+      "gracePeriod": {
+        "expiry": "2024-12-01T00:00:00Z",
+        "type": "BY_DATE_TIME"
+      },
+      "id": "00xRitvvwRbrVRSd5ktY",
+      "lastUpdate": "lastUpdate",
+      "lastUpdatedBy": "lastUpdatedBy",
+      "name": "name",
+      "platform": "ANDROID",
+      "_links": {
+        "self": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "source": "generated",
+  "operation": "getDevice",
+  "body": {
+    "id": "guo8jx5vVoxfvJeLb0w4",
+    "status": "ACTIVE",
+    "created": "2020-11-03T21:47:01.000Z",
+    "lastUpdated": "2020-11-03T23:46:27.000Z",
+    "profile": {
+      "displayName": "DESKTOP-EHAD3IE",
+      "platform": "WINDOWS",
+      "manufacturer": "International Corp",
+      "model": "VMware7,1",
+      "osVersion": "10.0.18362",
+      "serialNumber": "56 4d 4f 95 74 c5 d3 e7-fc 3a 57 9c c2 f8 5d ce",
+      "udid": "954F4D56-C574-E7D3-FC3A-579CC2F85DCE",
+      "sid": "S-1-5-21-3992267483-1860856704-2413701314-500",
+      "registered": true,
+      "secureHardwarePresent": false,
+      "diskEncryptionType": "NONE"
+    },
+    "resourceId": "guo8jx5vVoxfvJeLb0w4",
+    "resourceDisplayName": {
+      "value": "DESKTOP-EHAD3IE",
+      "sensitive": false
+    },
+    "resourceType": "UDDevice",
+    "resourceAlternateId": null,
+    "_links": {
+      "suspend": {
+        "href": "https://example.okta.com/api/v1/devices/guo8jx5vVoxfvJeLb0w4/lifecycle/suspend",
+        "hints": {
+          "allow": [
+            "POST"
+          ]
+        }
+      },
+      "self": {
+        "href": "https://example.okta.com/api/v1/devices/guo8jx5vVoxfvJeLb0w4",
+        "hints": {
+          "allow": [
+            "GET",
+            "PATCH",
+            "PUT"
+          ]
+        }
+      },
+      "users": {
+        "href": "https://example.okta.com/api/v1/devices/guo8jx5vVoxfvJeLb0w4/users",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      },
+      "deactivate": {
+        "href": "https://example.okta.com/api/v1/devices/guo8jx5vVoxfvJeLb0w4/lifecycle/deactivate",
+        "hints": {
+          "allow": [
+            "POST"
+          ]
+        }
+      }
+    }
+  }
+}

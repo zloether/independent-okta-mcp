@@ -16,6 +16,11 @@ SAMPLES: dict[str | None, str] = {
     "^[A-Za-z0-9_-]{20,128}$": "102GALFKlYFRGq_1TuolTsMjQ",
     "^00T[A-Za-z0-9]{17}$": "00T1emaKYZTWRYYRRTSK",
     "^(default|aus[A-Za-z0-9]{17})$": "aus1emaKYZTWRYYRRTSK",
+    "^guo[A-Za-z0-9]{17}$": "guo4a5u7JHHhjXrMK0g4",
+    "^dao[A-Za-z0-9]{17}$": "dao3qgkIEKjhNZudR0g4",
+    "^dae[A-Za-z0-9]{17}$": "dae3m8o4rWhwReDeM1c5",
+    "^din[A-Za-z0-9]{17}$": "dindyfy1f7Pv1eoVF0g4",
+    "^dch[A-Za-z0-9]{17}$": "dch3m8o4rWhwReDeM1c5",
     "^okta(\\.[A-Za-z]+){1,6}$": "okta.users.read",
     "^[A-Za-z0-9_]{1,64}$": "SUPER_ADMIN",
     None: "alice@example.com",  # an unpatterned path arg (`users get`)

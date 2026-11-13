@@ -1,0 +1,53 @@
+{
+  "source": "generated",
+  "operation": "listDeviceIntegrations",
+  "body": [
+    {
+      "displayName": "displayName",
+      "id": "00xMeXej8pVrQxUVrWcW",
+      "metadata": {
+        "type": "CHROME",
+        "serviceAccountName": "serviceAccountName",
+        "serviceAccountEmail": "serviceAccountEmail"
+      },
+      "name": "com.android.zero.trust",
+      "platform": "ANDROID",
+      "status": "ACTIVE",
+      "_links": {
+        "self": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        },
+        "activate": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        },
+        "deactivate": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        }
+      }
+    }
+  ]
+}

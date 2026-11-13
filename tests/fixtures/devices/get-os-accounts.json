@@ -1,0 +1,144 @@
+{
+  "source": "generated",
+  "operation": "listDeviceOSAccounts",
+  "body": [
+    {
+      "id": "dao3qgkIEKjhNZudR0g4",
+      "deviceId": "guo4a5u7JHHhjXrMK0g4",
+      "created": "2026-01-19T17:22:30.000Z",
+      "lastUpdated": "2026-01-19T17:22:30.000Z",
+      "platform": "WINDOWS",
+      "profile": {
+        "type": "WINDOWS",
+        "securityId": "S-1-5-21-1004336348-1177238915-682003330-512",
+        "GUID": "4ac29c85-d847-4492-96cb-46e337170c33",
+        "directoryJoinStatus": "AD",
+        "fullName": "Carmel Sonne",
+        "downLevelUsername": "okta\\carmel.sonne",
+        "upn": "user-1@example.com",
+        "qualifiedUsername": "okta\\carmel.sonne",
+        "managementStatus": "MANAGED",
+        "screenLockType": "PASSWORD"
+      },
+      "status": "ACTIVE",
+      "lastSeenAt": "2026-04-09T17:22:56.000Z",
+      "resourceAlternateId": null,
+      "resourceDisplayName": {
+        "value": "Carmel Sonne",
+        "sensitive": false
+      },
+      "resourceId": "dao3qgkIEKjhNZudR0g4",
+      "resourceType": "DOSAccount",
+      "_embedded": {
+        "users": [
+          {
+            "id": "00u1fxs5JcdX9jsfc0g5",
+            "status": "ACTIVE",
+            "created": "2025-11-04T18:02:44.000Z",
+            "activated": "2025-11-04T18:03:12.000Z",
+            "statusChanged": "2025-11-04T18:03:12.000Z",
+            "lastLogin": "2026-04-09T17:22:56.000Z",
+            "lastUpdated": "2026-01-19T17:22:30.000Z",
+            "passwordChanged": "2025-11-04T18:03:12.000Z",
+            "type": {
+              "id": "oty1fxs5JcdX9jsfc0g5"
+            },
+            "profile": {
+              "firstName": "Carmel",
+              "lastName": "Sonne",
+              "login": "user-1@example.com",
+              "email": "user-1@example.com"
+            },
+            "credentials": {
+              "provider": {
+                "type": "OKTA",
+                "name": "OKTA"
+              }
+            },
+            "_links": {
+              "self": {
+                "href": "https://example.okta.com/api/v1/users/00u1fxs5JcdX9jsfc0g5"
+              }
+            }
+          }
+        ],
+        "accountLinkedEnrollments": [
+          {
+            "id": "ukp1fxtdiJkUQiX220g5",
+            "type": "platform_sso",
+            "status": "ACTIVE",
+            "created": "2026-01-19T17:22:30.000Z",
+            "lastUpdated": "2026-01-19T17:22:30.000Z",
+            "profile": {
+              "authenticationMethod": "PASSWORD"
+            },
+            "_embedded": {
+              "lastAuthenticatedOn": "2026-04-09T17:22:56.000Z"
+            }
+          },
+          {
+            "id": "dme1fxtdiJkUQiX220g5",
+            "type": "desktop_mfa",
+            "status": "ACTIVE",
+            "created": "2026-01-19T17:22:30.000Z",
+            "lastUpdated": "2026-04-09T17:22:56.000Z",
+            "_embedded": {
+              "offlineFactors": [
+                {
+                  "id": "dmo1fxtdiJkUQiX220g5",
+                  "type": "TOTP",
+                  "displayName": "Okta Verify TOTP",
+                  "enrollDate": "2026-01-19T17:22:30.000Z",
+                  "profile": {}
+                },
+                {
+                  "id": "dmo2gytdiJkUQiX220g5",
+                  "type": "SECURITY_KEY",
+                  "displayName": "YubiKey 5C NFC",
+                  "enrollDate": "2026-02-03T11:47:59.000Z",
+                  "profile": {
+                    "serialNumber": "18274655"
+                  }
+                },
+                {
+                  "id": "dmo3hztdiJkUQiX220g5",
+                  "type": "BIO_FINGERPRINT",
+                  "displayName": "Windows Hello Fingerprint",
+                  "enrollDate": "2026-03-01T08:12:10.000Z",
+                  "profile": {}
+                }
+              ]
+            }
+          }
+        ],
+        "capabilities": [
+          {
+            "capability": "sensorMode",
+            "status": "NOT_READY",
+            "reasons": [
+              "E_DEVICE_NOT_REGISTERED"
+            ]
+          }
+        ]
+      },
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/devices/guo4a5u7JHHhjXrMK0g4/os-accounts/dao3qgkIEKjhNZudR0g4",
+          "hints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        },
+        "device": {
+          "href": "https://example.okta.com/api/v1/devices/guo4a5u7JHHhjXrMK0g4",
+          "hints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

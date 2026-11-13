@@ -1,0 +1,19 @@
+domain: device-integrations
+description: Read device integrations (read-only).
+# Device signal integrations (Windows Security Center, Chrome Device Trust, OSQuery, CrowdStrike,
+# Workspace ONE, a device posture IdP): org configuration. `metadata` holds an enrollment URL, an
+# IdP ID or a Google service account's name and email, no secrets. IDs `din` + 17 (spec
+# examples). Okta returns the list unpaged.
+commands:
+  list:
+    operation: listDeviceIntegrations
+    summary: List device integrations
+    view: [id, name, displayName, platform, status]
+    data_classes: [org-config]
+
+  get:
+    operation: getDeviceIntegration
+    summary: Get a device integration
+    args:
+      integration: {path_param: deviceIntegrationId, pattern: "^din[A-Za-z0-9]{17}$"}
+    data_classes: [org-config]
