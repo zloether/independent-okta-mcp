@@ -163,6 +163,36 @@ def test_array_schema_with_item_examples_is_wrapped(
     assert isinstance(body, list) and len(body) == 1 and body[0]["type"] == "nfc_pin"
 
 
+def test_array_schema_keeps_a_wrapper_example(raw: dict[str, Any], registry: Registry) -> None:
+    # An example that isn't shaped like an item stays as it is, for the fixture test to refuse.
+    command = registry.domains["authenticators"].commands["list-methods"]
+    op = raw["paths"][command.operation.path]["get"]
+    content = op["responses"]["200"]["content"]["application/json"]
+    patched = {
+        **raw,
+        "paths": {
+            **raw["paths"],
+            command.operation.path: {
+                "get": {
+                    **op,
+                    "responses": {
+                        "200": {
+                            "content": {
+                                "application/json": {
+                                    **content,
+                                    "examples": {"x": {"value": {"items": [1]}}},
+                                }
+                            }
+                        }
+                    },
+                }
+            },
+        },
+    }
+    body = gen.body(patched, command)
+    assert isinstance(body, dict) and body["items"] == [1]
+
+
 def test_view_path_missing_from_example_is_filled(raw: dict[str, Any], registry: Registry) -> None:
     # The pinned spec's listUserGroups example has no `type`; the schema gives one.
     command = registry.domains["users"].commands["get-groups"]

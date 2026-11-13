@@ -3,6 +3,7 @@
 import pytest
 
 from okta_mcp.exec.output import load_scrub, scrub
+from okta_mcp.exec.params import build_request
 from okta_mcp.registry.loader import Registry, load_registry
 from okta_mcp.registry.schema import InvalidArguments, validate_args
 from okta_mcp.registry.spec import load_spec
@@ -49,8 +50,8 @@ def test_commands(registry: Registry) -> None:
 
 
 def test_all_org_config_and_normal(registry: Registry) -> None:
-    # The security-analyst role in design §9.3 takes these domains with `["*"]` and no
-    # `include_sensitive`: every command must stay normal for that to mean anything.
+    # The security-analyst role in design §9.3 takes policies, behaviors and attack-protection
+    # with `["*"]` and no `include_sensitive`: they must stay normal for that to mean anything.
     for domain in DOMAINS:
         for cmd in registry.domains[domain].commands.values():
             assert cmd.entry.data_classes == ("org-config",), f"{domain} {cmd.name}"
@@ -110,6 +111,9 @@ def test_policy_id_refuses_sibling_endpoint(registry: Registry) -> None:
     # `/api/v1/policies/simulate` is another operation (design §6.4 item 5).
     cmd = registry.domains["policies"].commands["get"]
     assert "simulate" in cmd.operation.reserved["policyId"]
+    for bad in ("simulate", "SIMULATE", "simulate.json"):
+        with pytest.raises(InvalidArguments, match="arg 'policy'"):
+            build_request(cmd, {"policy": bad}, "https://example.okta.com")
     for bad in ("a/b", "..", "00p 1", f"{POLICY}\n"):
         with pytest.raises(InvalidArguments, match="arg 'policy'"):
             validate_args(cmd, {"policy": bad})
@@ -119,9 +123,9 @@ def test_unexposed_params(registry: Registry) -> None:
     cmd = registry.domains["policies"].commands["list"]
     assert "resourceId" in cmd.operation.params
     assert "resourceId" not in {a.param for a in cmd.entry.args.values()}
-    # Okta returns every rule; no page size is sent.
+    # No page size is sent, and a next link is followed if Okta sends one.
     rules = registry.domains["policies"].commands["get-rules"]
-    assert rules.entry.page_size is None and rules.entry.paginate == "none"
+    assert rules.entry.page_size is None and rules.entry.paginate == "link"
 
 
 def test_authenticator_id_shape(registry: Registry) -> None:

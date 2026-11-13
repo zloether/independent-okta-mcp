@@ -32,12 +32,14 @@ commands:
       expand: {query: expand, allowed_values: [rules]}
     data_classes: [org-config]
 
-  # Okta returns every rule of a policy without paging; `limit` isn't sent.
+  # Whether Okta pages rules is unverified. No `limit` is sent, and a next link is followed if
+  # Okta sends one, so either way no rule is dropped silently.
   get-rules:
     operation: listPolicyRules
     summary: Rules of a policy
     args:
       policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    paginate: link
     view: [id, name, type, status, priority, system]
     data_classes: [org-config]
 
@@ -49,7 +51,8 @@ commands:
       rule: {path_param: ruleId, pattern: "^[A-Za-z0-9]{1,64}$"}
     data_classes: [org-config]
 
-  # Items hold an ID and `_links` to the app and policy: pass `links: true` to see the app.
+  # Items hold an ID and `_links` to the app and policy: the app needs `links: true` and a
+  # `select` naming it (`id,_links.application.href`).
   list-mappings:
     operation: listPolicyMappings
     summary: Apps mapped to a policy

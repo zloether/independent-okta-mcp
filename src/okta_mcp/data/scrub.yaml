@@ -44,7 +44,7 @@ paths:
   - channel.config.headers.value
 strings:
   # Objects elsewhere: password policy `settings.password` and
-# `settings.recovery.factors.okta_email.properties.recoveryToken`, OIDC app
+  # `settings.recovery.factors.okta_email.properties.recoveryToken`, OIDC app
   # `settings.oauthClient.refresh_token` rotation settings, `{jti}` in token hook events.
   - password                                   # SMTP servers, app service accounts
   - token                                      # Org2Org app settings.app, app tokens

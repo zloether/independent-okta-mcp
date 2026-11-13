@@ -125,14 +125,25 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     examples = [synth.deref(e).get("value") for e in (content.get("examples") or {}).values()]
     examples += [content["example"]] if "example" in content else []
     if found := [e for e in examples if e]:
-        value = _fill_view(found[0], lambda: synth.value(content.get("schema")), command)
+        example = found[0]
+        # Only an example that looks like one item is wrapped: a wrapper or error object stays
+        # as it is, so the fixture test fails on it rather than taking it as a one-item list.
+        if command.operation.response.kind == "list" and _item_like(example, command):
+            example = [example]
+        value = _fill_view(example, lambda: synth.value(content.get("schema")), command)
     else:
         value = synth.value(content.get("schema"))
         value = None if value is _OMIT else value
-    spec_list = command.operation.response.kind == "list" and value is not None
-    if (command.entry.response_override is not None or spec_list) and not isinstance(value, list):
+    if command.entry.response_override is not None and not isinstance(value, list):
         value = [value]
     return Neutralizer()(value)
+
+
+def _item_like(value: Any, command: Command) -> bool:
+    if not isinstance(value, dict):
+        return False
+    tops = {f.split(".")[0] for f in command.operation.response.fields}
+    return bool(set(cast(dict[str, Any], value)) & tops)
 
 
 def _items(value: Any, command: Command) -> list[Any]:
