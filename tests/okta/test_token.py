@@ -311,7 +311,7 @@ async def test_keep_fresh_backs_off_on_repeated_failures(key: rsa.RSAPrivateKey)
 @pytest.mark.anyio
 async def test_keep_fresh_survives_a_long_outage_and_recovers() -> None:
     """2000 failures in a row (over 16 hours at 30 s) don't overflow the backoff or stop the
-    loop, and one success puts it back on the normal cycle."""
+    loop; a success puts it back on the normal cycle and resets the backoff."""
 
     class Down(FakeTokenProvider):
         up = False
@@ -327,16 +327,17 @@ async def test_keep_fresh_survives_a_long_outage_and_recovers() -> None:
 
     async def sleep(seconds: float) -> None:
         slept.append(seconds)
-        p.up = len(slept) >= 2000
-        if len(slept) == 2002:
+        p.up = 2000 <= len(slept) < 2002  # down again after two successes
+        if len(slept) == 2003:
             raise anyio.get_cancelled_exc_class()
 
     with pytest.raises(anyio.get_cancelled_exc_class()):
         await keep_fresh(p, sleep=sleep)
     assert slept[:5] == [5, 10, 20, 30, 30]
     assert set(slept[3:2000]) == {KEEP_FRESH_EVERY}
-    assert slept[2000:] == [KEEP_FRESH_EVERY, KEEP_FRESH_EVERY]
-    assert p.calls == 2002
+    # Recovery resets the backoff: the next failure waits 5 s again, not the cycle.
+    assert slept[2000:] == [KEEP_FRESH_EVERY, KEEP_FRESH_EVERY, FAILURE_BACKOFF]
+    assert p.calls == 2003
 
 
 @pytest.mark.anyio

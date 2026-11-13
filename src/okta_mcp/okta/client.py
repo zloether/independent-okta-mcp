@@ -182,10 +182,9 @@ class OktaClient:
                     outcome = "retry_failed"
                     raise rate_limited(response, "retry_failed")
                 outcome = None if response.is_success else "retry_error"
-            except OktaRateLimited:
-                raise
-            except RateLimited:
-                outcome = "principal_limit"  # the nonce retry's charge, inside `_attempt`
+            except RateLimited as e:
+                if not isinstance(e, OktaRateLimited):  # Okta's own: `retry_failed`, set above
+                    outcome = "principal_limit"  # the nonce retry's charge, inside `_attempt`
                 raise
             except Exception:
                 outcome = "retry_error"

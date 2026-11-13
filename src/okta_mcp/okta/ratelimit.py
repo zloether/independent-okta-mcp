@@ -54,8 +54,8 @@ GiveUp = Literal[
 ]
 """Why an Okta 429 wasn't retried (`over_max_wait`, `no_reset`, `deadline`,
 `principal_limit`), or how its retry ended without success: another 429 (`retry_failed`),
-any other error (`retry_error`), or a cancellation (`cancelled`: the call's deadline, or
-shutdown). The `okta_rate_limited` event's `reason`."""
+any other error (`retry_error`), or anything that isn't an `Exception` (`cancelled`: the
+call's deadline, shutdown, or an interpreter exit). The `okta_rate_limited` event's `reason`."""
 
 
 class RateLimited(Exception):
