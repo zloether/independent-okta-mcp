@@ -22,7 +22,7 @@ from okta_mcp.okta.client import (
     on_origin,
 )
 from okta_mcp.okta.dpop import DPoP
-from okta_mcp.okta.ratelimit import RateLimited, RequestLimiter
+from okta_mcp.okta.ratelimit import InflightShare, RateLimited, RequestLimiter, share_of
 from okta_mcp.okta.token import ServiceToken, TokenError
 
 ORG = "https://example.okta.com"
@@ -65,6 +65,7 @@ def client(
     max_inflight: int = 10,
     on_request: Any = None,
     on_sent: Any = None,
+    share: InflightShare | None = None,
 ) -> OktaClient:
     return OktaClient(
         new_http_client(httpx2.MockTransport(handler)),
@@ -75,6 +76,7 @@ def client(
         rate_limit_max_wait=10,
         on_request=on_request,
         on_sent=on_sent,
+        share=share,
     )
 
 
@@ -165,6 +167,55 @@ async def test_semaphore_caps_concurrency() -> None:
         for _ in range(10):
             tg.start_soon(c.get, USERS)
     assert peak == 3
+
+
+@pytest.mark.anyio
+async def test_one_principal_gets_its_share_of_the_slots() -> None:
+    """Plan 6.2: ten slow calls from one user hold at most half the slots; another user's
+    request is sent while they wait, not after them."""
+    inflight: dict[str, int] = {"00u1": 0, "00u2": 0}
+    peak: dict[str, int] = {"00u1": 0, "00u2": 0}
+    order: list[str] = []
+    release = anyio.Event()
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        uid = request.url.params["who"]
+        order.append(uid)
+        inflight[uid] += 1
+        peak[uid] = max(peak[uid], inflight[uid])
+        if uid == "00u1":
+            await release.wait()
+        inflight[uid] -= 1
+        return httpx2.Response(200, json=[])
+
+    c = client(handler, max_inflight=4, share=InflightShare(share_of(4)))
+
+    async def call(uid: str) -> None:
+        token = ratelimit.principal.set(uid)
+        try:
+            await c.get(USERS, {"who": uid})
+        finally:
+            ratelimit.principal.reset(token)
+
+    async with anyio.create_task_group() as tg:
+        for _ in range(10):
+            tg.start_soon(call, "00u1")
+        await anyio.wait_all_tasks_blocked()
+        tg.start_soon(call, "00u2")
+        await anyio.wait_all_tasks_blocked()
+        assert order == ["00u1", "00u1", "00u2"]
+        release.set()
+    assert peak == {"00u1": 2, "00u2": 1}
+    assert len(order) == 11
+
+
+@pytest.mark.anyio
+async def test_a_share_without_a_principal_sends_nothing() -> None:
+    okta = Okta()
+    c = client(okta, share=InflightShare(1))
+    with pytest.raises(RuntimeError, match="principal"):
+        await c.get(USERS)
+    assert okta.requests == []
 
 
 @pytest.mark.anyio

@@ -8,6 +8,7 @@ A cut resumable list carries `next_cursor`, which points at the last item delive
 """
 
 import json
+import logging
 import math
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import aclosing
@@ -16,9 +17,12 @@ from typing import Any, Literal
 import anyio
 
 from okta_mcp.exec.output import ScrubRules, render
+from okta_mcp.logs import event
 from okta_mcp.okta.client import UpstreamError
 from okta_mcp.okta.paginate import PaginationError
 from okta_mcp.okta.ratelimit import RateLimited
+
+log = logging.getLogger(__name__)
 
 Truncated = Literal["max_items", "max_bytes", "deadline", "non_resumable"]
 
@@ -161,4 +165,11 @@ async def list_result(
             truncated = "deadline"
     if cut_by_okta or (truncated is not None and not resumable):
         truncated = "non_resumable"
+    if truncated is not None:
+        log.info(
+            "list truncated (%s) after %d items",
+            truncated,
+            len(rows),
+            extra=event("result_truncated", reason=truncated, items=len(rows)),
+        )
     return _head(len(rows), cols) + ",".join(rows) + _tail(truncated, cursor, warnings)

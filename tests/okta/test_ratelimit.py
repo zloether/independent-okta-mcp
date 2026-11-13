@@ -6,7 +6,14 @@ import httpx2
 import pytest
 
 from okta_mcp.okta import ratelimit
-from okta_mcp.okta.ratelimit import RateLimited, RequestLimiter, rate_limited, retry_wait
+from okta_mcp.okta.ratelimit import (
+    InflightShare,
+    RateLimited,
+    RequestLimiter,
+    rate_limited,
+    retry_wait,
+    share_of,
+)
 
 SENT = 1_700_000_000
 real_jitter = ratelimit._jitter  # pyright: ignore[reportPrivateUsage]  # before no_jitter
@@ -179,3 +186,72 @@ def test_limiter_forgets_idle_principals() -> None:
     limiter.charge()  # 60 s since the last sweep: 00u1 is idle, 00u2 isn't
     ratelimit.principal.reset(token)
     assert set(limiter._sent) == {"00u2", "00u3"}  # pyright: ignore[reportPrivateUsage]
+
+
+# --- in-flight share ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("total", "share"), [(1, 1), (2, 1), (3, 2), (10, 5), (11, 6)])
+def test_share_is_half_rounded_up(total: int, share: int) -> None:
+    assert share_of(total) == share
+
+
+def test_share_must_be_positive() -> None:
+    with pytest.raises(ValueError):
+        InflightShare(0)
+
+
+@pytest.mark.anyio
+async def test_share_caps_one_principal_and_forgets_it() -> None:
+    share = InflightShare(2)
+    held = peak = 0
+    release = anyio.Event()
+
+    async def hold() -> None:
+        nonlocal held, peak
+        token = ratelimit.principal.set("00u1")
+        try:
+            async with share.slot():
+                held += 1
+                peak = max(peak, held)
+                await release.wait()
+                held -= 1
+        finally:
+            ratelimit.principal.reset(token)
+
+    async with anyio.create_task_group() as tg:
+        for _ in range(5):
+            tg.start_soon(hold)
+        await anyio.wait_all_tasks_blocked()
+        assert held == 2
+        assert set(share._held) == {"00u1"}  # pyright: ignore[reportPrivateUsage]
+        release.set()
+    assert peak == 2
+    assert share._held == {}  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_share_is_released_when_a_waiter_is_cancelled() -> None:
+    """The call deadline cancels a request still waiting for its share: the slot it waited
+    for isn't leaked and the principal's entry goes once nothing holds it."""
+    share = InflightShare(1)
+    token = ratelimit.principal.set("00u1")
+    try:
+        async with share.slot():
+            with anyio.move_on_after(0.01) as scope:
+                async with share.slot():
+                    pytest.fail("got a second slot")
+            assert scope.cancelled_caught
+        assert share._held == {}  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(1):
+            async with share.slot():
+                pass
+    finally:
+        ratelimit.principal.reset(token)
+
+
+@pytest.mark.anyio
+async def test_share_without_principal_fails() -> None:
+    with pytest.raises(RuntimeError):
+        async with InflightShare(1).slot():
+            pass

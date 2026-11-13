@@ -18,6 +18,7 @@ from pydantic import SecretStr
 from okta_mcp.config import ConfigError
 from okta_mcp.okta.dpop import DPoP
 from okta_mcp.okta.token import (
+    FAILURE_BACKOFF,
     KEEP_FRESH_EVERY,
     ClientCredentialsProvider,
     ServiceToken,
@@ -364,8 +365,9 @@ async def test_nonce_on_retry_response_is_kept(key: rsa.RSAPrivateKey) -> None:
 
 @pytest.mark.anyio
 async def test_queued_callers_share_a_failure(key: rsa.RSAPrivateKey) -> None:
+    clock = Clock()
     okta = Okta(httpx2.Response(503), ok(), delay=0.05)
-    p = provider(okta, key)
+    p = provider(okta, key, monotonic=clock)
     errors: list[str] = []
 
     async def call() -> None:
@@ -379,6 +381,7 @@ async def test_queued_callers_share_a_failure(key: rsa.RSAPrivateKey) -> None:
             tg.start_soon(call)
     assert len(okta.requests) == 1
     assert errors == ["token request failed: HTTP 503"] * 20
+    clock.now += FAILURE_BACKOFF
     assert (await p.token()).value == ACCESS_TOKEN
     assert len(okta.requests) == 2
 
@@ -402,11 +405,67 @@ async def test_valid_token_served_when_refresh_fails(
 
 @pytest.mark.anyio
 async def test_failure_is_not_cached(key: rsa.RSAPrivateKey) -> None:
+    clock = Clock()
     okta = Okta(httpx2.Response(503), ok())
-    p = provider(okta, key)
+    p = provider(okta, key, monotonic=clock)
     with pytest.raises(TokenError, match=r"HTTP 503$"):
         await p.token()
+    clock.now += FAILURE_BACKOFF
     assert (await p.token()).value == ACCESS_TOKEN
+
+
+@pytest.mark.anyio
+async def test_failure_backs_off(key: rsa.RSAPrivateKey) -> None:
+    """Plan 6.2: during an outage or with a bad key, calls within the backoff get the stored
+    error without a token request of their own; the first call after it sends one."""
+    clock = Clock()
+    okta = Okta(httpx2.Response(401, json={"error": "invalid_client"}), ok())
+    p = provider(okta, key, monotonic=clock)
+    for _ in range(5):
+        with pytest.raises(TokenError, match=r"HTTP 401 invalid_client"):
+            await p.token()
+        clock.now += FAILURE_BACKOFF / 10
+    assert len(okta.requests) == 1
+    assert not p.ready()
+    clock.now += FAILURE_BACKOFF
+    assert (await p.token()).value == ACCESS_TOKEN
+    assert len(okta.requests) == 2
+
+
+@pytest.mark.anyio
+async def test_backoff_restarts_after_each_failure(key: rsa.RSAPrivateKey) -> None:
+    clock = Clock()
+    okta = Okta(httpx2.Response(503), httpx2.Response(502), ok())
+    p = provider(okta, key, monotonic=clock)
+    with pytest.raises(TokenError, match=r"HTTP 503$"):
+        await p.token()
+    clock.now += FAILURE_BACKOFF
+    with pytest.raises(TokenError, match=r"HTTP 502$"):
+        await p.token()
+    clock.now += FAILURE_BACKOFF - 0.1
+    with pytest.raises(TokenError, match=r"HTTP 502$"):
+        await p.token()
+    assert len(okta.requests) == 2
+    clock.now += 0.1
+    assert (await p.token()).value == ACCESS_TOKEN
+
+
+@pytest.mark.anyio
+async def test_backoff_still_serves_a_valid_token(key: rsa.RSAPrivateKey) -> None:
+    """A refresh failure inside the margin doesn't stop the old token being served, and the
+    backoff keeps each call in it from sending its own refresh."""
+    clock = Clock()
+    okta = Okta(ok(expires_in=3600), httpx2.Response(503))
+    p = provider(okta, key, monotonic=clock)
+    await p.token()
+    clock.now += 3550
+    for _ in range(3):
+        assert (await p.token()).value == ACCESS_TOKEN
+    assert len(okta.requests) == 2
+
+
+def test_backoff_is_shorter_than_the_background_refresh() -> None:
+    assert FAILURE_BACKOFF < KEEP_FRESH_EVERY
 
 
 @pytest.mark.anyio

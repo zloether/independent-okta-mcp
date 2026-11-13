@@ -39,7 +39,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from okta_mcp.auth.principal import Principal, VerifiedToken
 from okta_mcp.config import Config
 from okta_mcp.exec.resolve import USER_ID
-from okta_mcp.logs import log_internal
+from okta_mcp.logs import event, log_internal
 from okta_mcp.okta.client import on_origin
 
 log = logging.getLogger(__name__)
@@ -200,14 +200,22 @@ class JWTVerifier:
             with anyio.fail_after(FETCH_TIMEOUT):
                 keys = await self._fetch_keys()
         except _FetchError as e:
-            log.warning("JWKS fetch from the issuer failed: %s", e)
+            log.warning(
+                "JWKS fetch from the issuer failed: %s", e, extra=event("jwks_fetch_failed")
+            )
             return False
         except TimeoutError:
-            log.warning("JWKS fetch from the issuer failed: timed out")
+            log.warning(
+                "JWKS fetch from the issuer failed: timed out", extra=event("jwks_fetch_failed")
+            )
             return False
         except httpx2.HTTPError as e:
             # Not chained or formatted: the exception text can hold the URL and headers.
-            log.warning("JWKS fetch from the issuer failed: %s", type(e).__name__)
+            log.warning(
+                "JWKS fetch from the issuer failed: %s",
+                type(e).__name__,
+                extra=event("jwks_fetch_failed"),
+            )
             return False
         except Exception as e:
             # A bug. Caught here, not in `run`: the unknown-kid path (any sender) comes here too,
@@ -287,10 +295,10 @@ class JWTVerifier:
         try:
             return await self._verify(token)
         except _Rejected as e:
-            log.debug("bearer token rejected: %s", e)
+            log.debug("bearer token rejected: %s", e, extra=event("token_rejected"))
             return None
         except jwt.PyJWTError as e:
-            log.debug("bearer token rejected: %s", type(e).__name__)
+            log.debug("bearer token rejected: %s", type(e).__name__, extra=event("token_rejected"))
             return None
 
     async def _verify(self, token: str) -> VerifiedToken:

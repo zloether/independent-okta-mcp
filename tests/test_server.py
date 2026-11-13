@@ -342,7 +342,7 @@ async def test_request_id_tags_log_lines_of_the_call(
     finally:
         logger.removeHandler(handler)
     rid = result.structured_content["error"]["request_id"]
-    assert [getattr(r, "request_id", None) for r in records] == [rid, "-"]
+    assert [getattr(r, "request_id", None) for r in records] == [rid, None]
 
 
 # --- resources ----------------------------------------------------------------------------

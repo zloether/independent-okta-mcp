@@ -39,7 +39,7 @@ from okta_mcp.exec.resolve import UserResolver
 from okta_mcp.logs import log_internal, request_id
 from okta_mcp.okta.client import OktaClient, new_http_client
 from okta_mcp.okta.dpop import DPoP
-from okta_mcp.okta.ratelimit import RequestLimiter
+from okta_mcp.okta.ratelimit import InflightShare, RequestLimiter, share_of
 from okta_mcp.okta.token import (
     ClientCredentialsProvider,
     RefreshableTokens,
@@ -127,6 +127,7 @@ def build_runtime(config: Config, http: httpx2.AsyncClient, *, stdio: bool = Fal
         rate_limit_max_wait=config.okta_rate_limit_max_wait,
         on_request=limiter.charge,
         on_sent=record_sent,
+        share=InflightShare(share_of(config.okta_max_inflight)),
     )
     executor = Executor(
         registry=registry,

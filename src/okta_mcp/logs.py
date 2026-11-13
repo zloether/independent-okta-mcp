@@ -1,5 +1,12 @@
-"""Operational logging (design §11): stderr, one line per record, each tagged with the request
-ID. JSON lines are step 6.2's.
+"""Operational logging (design §13): stderr, one JSON object per line, each with the request ID
+(`null` outside an MCP request, e.g. the HTTP auth layer or background refreshes).
+
+A line has `ts`, `level`, `logger`, `request_id` and `msg`; a record logged with
+`extra=event(name, **fields)` also has `event` and its fields, so 429s, retries, limiter
+rejections, truncations and JWKS failures can be counted without parsing `msg`. Fields are
+scalars we chose (counts, reasons, waits), never a value the caller or Okta sent: an event
+can't carry what the rest of this module keeps out. The principal isn't on a line; the
+audit log (§12.3) joins on `request_id`.
 
 What may not be logged (AGENTS.md: tokens, keys, Okta result bodies) is enforced here for code
 we don't own, and by `log_internal` for our own exceptions:
@@ -13,9 +20,12 @@ we don't own, and by `log_internal` for our own exceptions:
 """
 
 import contextvars
+import json
 import logging
 import sys
 import traceback
+from datetime import UTC, datetime
+from typing import cast
 
 PACKAGE = "okta_mcp"
 
@@ -32,9 +42,47 @@ def log_internal(logger: logging.Logger, where: str, e: BaseException) -> None:
     logger.error("internal error in %s: %s\n%s", where, type(e).__name__, frames)
 
 
+Field = str | int | float | bool | None
+
+_EVENT = "okta_mcp_event"
+_BASE = ("ts", "level", "logger", "request_id", "msg", "event")
+
+
+def event(name: str, **fields: Field) -> dict[str, object]:
+    """`extra=` for a structured event: `log.warning("...", extra=event("okta_rate_limited",
+    retry=False))`. A field named like a base key (`ts`, `msg`, ...) is a bug."""
+    if clash := set(fields) & set(_BASE):
+        raise ValueError(f"event field names a base key: {sorted(clash)}")
+    return {_EVENT: (name, fields)}
+
+
+class JsonFormatter(logging.Formatter):
+    """One compact JSON object per record. Runs after the filters, so a dependency's exception
+    text is already gone; our own code never attaches `exc_info` (`log_internal` formats frames
+    into the message)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        line: dict[str, object] = {
+            "ts": datetime.fromtimestamp(record.created, UTC).isoformat(timespec="milliseconds"),
+            "level": record.levelname,
+            "logger": record.name,
+            "request_id": getattr(record, "request_id", None),
+            "msg": record.getMessage(),
+        }
+        tagged = getattr(record, _EVENT, None)
+        if isinstance(tagged, tuple):
+            name, fields = cast(tuple[str, dict[str, Field]], tagged)
+            line["event"] = name
+            line.update(fields)
+        if record.exc_info and record.exc_info[1] is not None:
+            # Not expected (see above); kept as the type only, never the message.
+            line["exc_type"] = type(record.exc_info[1]).__name__
+        return json.dumps(line, ensure_ascii=True, default=str)
+
+
 class RequestIdFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = request_id.get() or "-"
+        record.request_id = request_id.get()
         return True
 
 
@@ -71,9 +119,7 @@ def configure_logging(level: str) -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.addFilter(DependencyExceptionFilter())
     handler.addFilter(RequestIdFilter())
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s")
-    )
+    handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
     root.handlers[:] = [handler]
     # `warnings` output (pydantic's can hold input values) goes through the filters above.

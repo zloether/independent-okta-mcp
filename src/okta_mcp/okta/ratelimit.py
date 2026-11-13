@@ -7,6 +7,11 @@ over `OKTA_RATE_LIMIT_MAX_WAIT`, or too close to the caller's deadline, is `Rate
 `RequestLimiter.charge` is the client's `on_request` hook: every request to Okta, retries
 included, counts against the principal in `principal` (`MCP_REQUESTS_PER_MINUTE` in any 60 s).
 The client charges before it takes a slot or a token, and charges a 429 retry before the wait.
+
+`InflightShare.slot` caps how many of the client's `MCP_OKTA_MAX_INFLIGHT` slots one principal
+holds at once (half, rounded up): the per-minute limit counts requests, not time, so a few slow
+System Log calls from one user could otherwise hold every slot. A request over its share waits
+for one of its own to finish, under the caller's deadline, before it queues for a global slot.
 """
 
 import logging
@@ -14,13 +19,16 @@ import math
 import random
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import UTC
 from email.utils import parsedate_to_datetime
 
 import anyio
 import httpx2
+
+from okta_mcp.logs import event
 
 log = logging.getLogger(__name__)
 
@@ -77,11 +85,18 @@ def retry_wait(
     the caller's cancel scope."""
     wait = _reset_wait(response, now)
     if wait is None or wait > max_wait:
-        raise rate_limited(response, now)
-    delay = wait + _jitter()
-    if anyio.current_time() + delay + _RETRY_HEADROOM > anyio.current_effective_deadline():
-        raise rate_limited(response, now)
-    return delay
+        reason = "no_reset" if wait is None else "over_max_wait"
+    else:
+        delay = wait + _jitter()
+        if anyio.current_time() + delay + _RETRY_HEADROOM <= anyio.current_effective_deadline():
+            return delay
+        reason = "deadline"
+    log.warning(
+        "Okta rate limit hit; not retrying (%s)",
+        reason,
+        extra=event("okta_rate_limited", retry=False, reason=reason),
+    )
+    raise rate_limited(response, now)
 
 
 class RequestLimiter:
@@ -106,7 +121,10 @@ class RequestLimiter:
         while sent and sent[0] <= now - _WINDOW:
             sent.popleft()
         if len(sent) >= self._limit:
-            log.warning("Per-principal Okta request limit reached")
+            log.warning(
+                "Per-principal Okta request limit reached",
+                extra=event("limiter_rejected", limit_per_minute=self._limit),
+            )
             raise RateLimited("Too many Okta requests; try again in a minute")
         sent.append(now)
 
@@ -115,3 +133,45 @@ class RequestLimiter:
         self._swept = now
         for uid in [u for u, sent in self._sent.items() if sent[-1] <= now - _WINDOW]:
             del self._sent[uid]
+
+
+def share_of(max_inflight: int) -> int:
+    """One principal's share of `max_inflight` slots: half, rounded up (all of 1)."""
+    return (max_inflight + 1) // 2
+
+
+class InflightShare:
+    """At most `per_principal` requests in flight per principal. Semaphores exist only while a
+    principal has a request holding or waiting for one, so idle principals hold no memory."""
+
+    def __init__(self, per_principal: int) -> None:
+        if per_principal < 1:
+            raise ValueError("per_principal must be at least 1")
+        self._limit = per_principal
+        self._held: dict[str, tuple[anyio.Semaphore, int]] = {}
+
+    @asynccontextmanager
+    async def slot(self) -> AsyncGenerator[None]:
+        """Hold one of the current principal's slots. No principal is a bug, as in
+        `RequestLimiter.charge`: fail rather than go unshared."""
+        uid = principal.get()
+        if uid is None:
+            raise RuntimeError("Okta request outside a principal's call")
+        semaphore, users = self._held.get(uid, (None, 0))
+        if semaphore is None:
+            semaphore = anyio.Semaphore(self._limit)
+        self._held[uid] = (semaphore, users + 1)
+        try:
+            if semaphore.value == 0:
+                log.info(
+                    "Per-principal share of in-flight Okta requests in use; waiting",
+                    extra=event("inflight_share_wait", share=self._limit),
+                )
+            async with semaphore:
+                yield
+        finally:
+            semaphore, users = self._held[uid]
+            if users == 1:
+                del self._held[uid]
+            else:
+                self._held[uid] = (semaphore, users - 1)

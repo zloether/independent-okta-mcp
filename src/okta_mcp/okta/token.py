@@ -6,8 +6,10 @@ A `TokenProvider` returns the `ServiceToken` whose `authorization` value goes in
 - `ClientCredentialsProvider`: client credentials with a `private_key_jwt` assertion at the org
   authorization server, with DPoP unless `OKTA_DPOP=false`. The token is cached in memory and
   fetched again under a lock when less than a minute remains, so concurrent callers share one
-  request. Its POST to the token endpoint is the only non-GET request the server sends to Okta,
-  and it goes only to that fixed URL.
+  request. After a failed request, callers get the same error for `FAILURE_BACKOFF` seconds
+  without a new one, so an outage or a bad key costs one POST per backoff, not one per tool call
+  (those aren't charged to the per-principal limiter). Its POST to the token endpoint is the
+  only non-GET request the server sends to Okta, and it goes only to that fixed URL.
 - `SSWSProvider`: `OKTA_API_TOKEN`, which `Config` accepts only in stdio dev mode (design §8.6).
 
 `TokenError` messages hold the HTTP status, the OAuth error code and a hint, never tokens,
@@ -15,6 +17,7 @@ assertions, keys or response bodies.
 """
 
 import logging
+import math
 import re
 import secrets
 import time
@@ -32,13 +35,16 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import SecretStr
 
 from okta_mcp.config import ConfigError
-from okta_mcp.logs import log_internal
+from okta_mcp.logs import event, log_internal
 from okta_mcp.okta.dpop import DPoP
 
 log = logging.getLogger(__name__)
 
 _ASSERTION_LIFETIME = 300
 _REFRESH_MARGIN = 60
+FAILURE_BACKOFF = 5.0
+"""Seconds after a failed token request during which the error is served without a new one.
+Well under `KEEP_FRESH_EVERY`, so the background refresh is never held off by it."""
 _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 _HINTS = {
     "invalid_client": "check OKTA_CLIENT_ID, OKTA_PRIVATE_KEY_FILE and OKTA_KEY_ID against the "
@@ -161,29 +167,40 @@ class ClientCredentialsProvider:
         self._expires_at = 0.0
         self._failures = 0
         self._error: str | None = None
+        self._failed_at = -math.inf
 
     async def token(self) -> ServiceToken:
-        """The cached token, or a new one. Callers queued behind a failed request don't send
-        their own: they get the still-valid old token if there is one, else the same error."""
+        """The cached token, or a new one. Callers queued behind a failed request, and callers
+        within `FAILURE_BACKOFF` of one, don't send their own: they get the still-valid old
+        token if there is one, else the same error."""
         if (token := self._cached()) is not None:
             return token
         failures = self._failures
         async with self._lock:
             if (token := self._cached()) is not None:
                 return token
-            if self._failures == failures:
+            if self._failures == failures and not self._backing_off():
                 try:
                     token, self._expires_at = await self._fetch()
                 except TokenError as e:
                     self._failures += 1
                     self._error = str(e)
-                    log.warning("service token request failed: %s", e)
+                    self._failed_at = self._monotonic()
+                    log.warning(
+                        "service token request failed: %s",
+                        e,
+                        extra=event("service_token_failed", backoff_s=FAILURE_BACKOFF),
+                    )
                 else:
                     self._token = token
+                    self._failed_at = -math.inf
                     return token
             if self._token is not None and self._monotonic() < self._expires_at:
                 return self._token
             raise TokenError(self._error)
+
+    def _backing_off(self) -> bool:
+        return self._error is not None and self._monotonic() - self._failed_at < FAILURE_BACKOFF
 
     def invalidate(self, token: ServiceToken) -> None:
         """Covers a token Okta expired before our clock did (e.g. `time.monotonic` stopped
