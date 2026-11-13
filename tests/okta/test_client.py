@@ -22,7 +22,13 @@ from okta_mcp.okta.client import (
     on_origin,
 )
 from okta_mcp.okta.dpop import DPoP
-from okta_mcp.okta.ratelimit import InflightShare, RateLimited, RequestLimiter, share_of
+from okta_mcp.okta.ratelimit import (
+    InflightShare,
+    OktaRateLimited,
+    RateLimited,
+    RequestLimiter,
+    share_of,
+)
 from okta_mcp.okta.token import ServiceToken, TokenError
 
 ORG = "https://example.okta.com"
@@ -442,7 +448,7 @@ async def test_429_retried_once() -> None:
 @pytest.mark.usefixtures("no_jitter")
 async def test_429_not_retried_twice(caplog: pytest.LogCaptureFixture) -> None:
     okta = Okta(rate_limited(), rate_limited(40))
-    with pytest.raises(RateLimited, match="try again in 40 s") as e:
+    with pytest.raises(OktaRateLimited, match="try again in 40 s") as e:
         await client(okta).get(USERS)
     assert len(okta.requests) == 2
     assert e.value.reason == "retry_failed"
@@ -524,7 +530,7 @@ async def test_limiter_rejects_before_slot_and_token() -> None:
 
 @pytest.mark.anyio
 @pytest.mark.usefixtures("as_user")
-async def test_limiter_charges_429_retry_before_wait() -> None:
+async def test_limiter_charges_429_retry_before_wait(caplog: pytest.LogCaptureFixture) -> None:
     okta = Okta(rate_limited(5))
     c = client(okta, on_request=RequestLimiter(1).charge)
     start = anyio.current_time()
@@ -532,6 +538,35 @@ async def test_limiter_charges_429_retry_before_wait() -> None:
         await c.get(USERS)
     assert anyio.current_time() - start < 1
     assert len(okta.requests) == 1
+    logged = [getattr(r, "okta_mcp_event", None) for r in caplog.records]
+    assert ("okta_rate_limited", {"retry": False, "reason": "principal_limit"}) in logged
+    assert ("okta_rate_limited", {"retry": True, "wait_s": 5.0}) not in logged
+
+
+@pytest.mark.anyio
+@pytest.mark.usefixtures("no_jitter")
+async def test_a_retry_cut_by_the_deadline_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """Every 429 ends in one give-up event or a successful retry: a deadline hit during the
+    retry logs `cancelled` after the `retry` line."""
+    calls = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return rate_limited(1)
+        await anyio.sleep_forever()
+        raise AssertionError
+
+    c = client(handler)
+    with anyio.move_on_after(2.5):  # leaves retry_wait's headroom; the retry never answers
+        await c.get(USERS)
+    logged = [getattr(r, "okta_mcp_event", None) for r in caplog.records]
+    assert logged == [
+        ("okta_rate_limited", {"retry": True, "wait_s": 1.0}),
+        ("okta_rate_limited", {"retry": False, "reason": "cancelled"}),
+    ]
+    assert calls == 2
 
 
 @pytest.mark.anyio

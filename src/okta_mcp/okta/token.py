@@ -44,9 +44,8 @@ _ASSERTION_LIFETIME = 300
 _REFRESH_MARGIN = 60
 FAILURE_BACKOFF = 5.0
 """Seconds after a failed token request during which the error is served without a new one.
-A background refresh (`keep_fresh`) that lands inside it sends nothing either, so after Okta
-recovers an idle server can stay not ready for up to one more `KEEP_FRESH_EVERY`; any tool call
-after the backoff fetches at once."""
+`keep_fresh` asks again this long after a failure, so an outage costs one POST per backoff and
+readiness returns within about two backoffs of Okta recovering."""
 _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 _HINTS = {
     "invalid_client": "check OKTA_CLIENT_ID, OKTA_PRIVATE_KEY_FILE and OKTA_KEY_ID against the "
@@ -94,17 +93,20 @@ async def keep_fresh(
 ) -> None:
     """Ask `provider` for a token every `every` seconds until cancelled, so `ready()` reflects
     a token obtained within the last refresh cycle without a probe ever fetching one (§11.4).
-    Served from the cache while it is fresh; a failure is the provider's to log. Anything
-    else (a bug) is logged and retried: this shares a task group with the server, so letting
-    it out would stop the server rather than just leave it not ready."""
+    Served from the cache while it is fresh; a failure is the provider's to log. After a
+    failure the next ask comes after `FAILURE_BACKOFF` (if shorter than `every`), so readiness
+    returns within a backoff of Okta recovering, not a whole cycle. Anything else (a bug) is
+    logged and retried: this shares a task group with the server, so letting it out would stop
+    the server rather than just leave it not ready."""
     while True:
+        delay = every
         try:
             await provider.token()
         except TokenError:
-            pass
+            delay = min(every, FAILURE_BACKOFF)
         except Exception as e:
             log_internal(log, "service token refresh", e)
-        await sleep(every)
+        await sleep(delay)
 
 
 def load_private_key(path: Path) -> rsa.RSAPrivateKey:

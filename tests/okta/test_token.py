@@ -267,6 +267,28 @@ async def test_keep_fresh_renews_before_expiry(key: rsa.RSAPrivateKey) -> None:
 
 
 @pytest.mark.anyio
+async def test_keep_fresh_asks_again_after_the_backoff(key: rsa.RSAPrivateKey) -> None:
+    """After a failure the background refresh comes back after the backoff, not a whole cycle,
+    so readiness returns soon after Okta does even on an idle server."""
+    clock = Clock()
+    okta = Okta(httpx2.Response(503), ok(expires_in=3600))
+    p = provider(okta, key, monotonic=clock)
+    slept: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        clock.now += seconds
+        if len(slept) == 3:
+            raise anyio.get_cancelled_exc_class()
+
+    with pytest.raises(anyio.get_cancelled_exc_class()):
+        await keep_fresh(p, sleep=sleep)
+    assert slept == [FAILURE_BACKOFF, KEEP_FRESH_EVERY, KEEP_FRESH_EVERY]
+    assert len(okta.requests) == 2
+    assert p.ready()
+
+
+@pytest.mark.anyio
 async def test_keep_fresh_survives_an_unexpected_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

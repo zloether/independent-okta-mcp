@@ -8,6 +8,7 @@ import pytest
 from okta_mcp.okta import ratelimit
 from okta_mcp.okta.ratelimit import (
     InflightShare,
+    OktaRateLimited,
     RateLimited,
     RequestLimiter,
     rate_limited,
@@ -67,7 +68,7 @@ def test_jitter_bounded() -> None:
 
 @pytest.mark.anyio
 async def test_wait_over_cap_raises() -> None:
-    with pytest.raises(RateLimited, match="try again in 11 s") as e:
+    with pytest.raises(OktaRateLimited, match="try again in 11 s") as e:
         retry_wait(at(SENT, SENT + 11), 10)
     assert e.value.reason == "over_max_wait"
 
@@ -91,7 +92,7 @@ async def test_zero_cap_retries_only_past_reset() -> None:
     ],
 )
 async def test_no_usable_reset_raises(headers: dict[str, str]) -> None:
-    with pytest.raises(RateLimited, match="try again later") as e:
+    with pytest.raises(OktaRateLimited, match="try again later") as e:
         retry_wait(response_429(headers), 10)
     assert e.value.reason == "no_reset"
 
@@ -100,7 +101,7 @@ async def test_no_usable_reset_raises(headers: dict[str, str]) -> None:
 async def test_wait_must_leave_headroom_before_deadline() -> None:
     with anyio.fail_after(3):
         assert retry_wait(at(SENT, SENT + 1), 10) == 1
-        with pytest.raises(RateLimited) as e:
+        with pytest.raises(OktaRateLimited) as e:
             retry_wait(at(SENT, SENT + 2), 10)  # ends 1 s before the deadline: too close
     assert e.value.reason == "deadline"
 
@@ -265,14 +266,20 @@ async def test_share_without_principal_fails() -> None:
             pass
 
 
+def share_waits(caplog: pytest.LogCaptureFixture) -> int:
+    return sum(
+        getattr(r, "okta_mcp_event", ("",))[0] == "inflight_share_wait" for r in caplog.records
+    )
+
+
 @pytest.mark.anyio
 async def test_share_wait_is_logged_once_per_episode(caplog: pytest.LogCaptureFixture) -> None:
-    """How many requests wait is up to the caller: one line when the first starts waiting,
-    another only after the principal's queue has drained."""
+    """How many requests wait is up to the caller: one line while the principal has any
+    request holding or waiting, another only after that has drained."""
+    caplog.set_level("INFO", "okta_mcp")
     share = InflightShare(1)
-    release = anyio.Event()
 
-    async def hold() -> None:
+    async def hold(release: anyio.Event) -> None:
         token = ratelimit.principal.set("00u1")
         try:
             async with share.slot():
@@ -280,16 +287,42 @@ async def test_share_wait_is_logged_once_per_episode(caplog: pytest.LogCaptureFi
         finally:
             ratelimit.principal.reset(token)
 
-    def waits() -> int:
-        return sum(getattr(r, "okta_mcp_event", ("",))[0] == "inflight_share_wait"
-                   for r in caplog.records)  # fmt: skip
-
-    caplog.set_level("INFO", "okta_mcp")
     for _ in range(2):
         release = anyio.Event()
         async with anyio.create_task_group() as tg:
             for _ in range(6):
-                tg.start_soon(hold)
+                tg.start_soon(hold, release)
             await anyio.wait_all_tasks_blocked()
             release.set()
-    assert waits() == 2
+    assert share_waits(caplog) == 2
+
+
+@pytest.mark.anyio
+async def test_share_wait_is_logged_once_under_steady_load(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One request over the share, all the time: a new request arrives each time the waiter
+    gets the slot (the 2026-11-13 re-review case). Still one line."""
+    caplog.set_level("INFO", "okta_mcp")
+    share = InflightShare(1)
+    token = ratelimit.principal.set("00u1")
+    try:
+        releases = [anyio.Event() for _ in range(10)]
+
+        async def hold(i: int) -> None:
+            async with share.slot():
+                await releases[i].wait()
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(hold, 0)
+            await anyio.wait_all_tasks_blocked()
+            for i in range(1, 10):
+                tg.start_soon(hold, i)  # waits behind i - 1
+                await anyio.wait_all_tasks_blocked()
+                releases[i - 1].set()  # the waiter gets the slot; nothing waits now
+                await anyio.wait_all_tasks_blocked()
+            releases[9].set()
+    finally:
+        ratelimit.principal.reset(token)
+    assert share_waits(caplog) == 1
+    assert share._held == {}  # pyright: ignore[reportPrivateUsage]
