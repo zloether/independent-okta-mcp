@@ -2,9 +2,8 @@
 
 import pytest
 
-from okta_mcp.registry.loader import Registry, load_registry
+from okta_mcp.registry.loader import Registry
 from okta_mcp.registry.schema import InvalidArguments, validate_args
-from okta_mcp.registry.spec import load_spec
 
 PILOTS = ("groups", "network-zones")
 # Path values §6.4 rejects; every pilot path param has an ID pattern, so the schema does too.
@@ -21,11 +20,6 @@ BAD_PATH_VALUES = [
     "00g1emaKYZTWRYYRRTSK\n",
     "A" * 10_000,
 ]
-
-
-@pytest.fixture(scope="module")
-def registry() -> Registry:
-    return load_registry(load_spec())
 
 
 def test_pilot_domains_cover_the_catalogue(registry: Registry) -> None:

@@ -4,18 +4,12 @@ import pytest
 
 from okta_mcp.exec.output import load_scrub, scrub
 from okta_mcp.exec.params import build_request
-from okta_mcp.registry.loader import Registry, load_registry
+from okta_mcp.registry.loader import Registry
 from okta_mcp.registry.schema import InvalidArguments, validate_args
-from okta_mcp.registry.spec import load_spec
 
 DOMAINS = ("policies", "authenticators", "behaviors", "attack-protection")
 AUT = "aut1emaKYZTWRYYRRTSK"
 POLICY = "00plrilJ7jZ66Gn0X0g3"
-
-
-@pytest.fixture(scope="module")
-def registry() -> Registry:
-    return load_registry(load_spec())
 
 
 def _commands(registry: Registry, domain: str) -> dict[str, str]:

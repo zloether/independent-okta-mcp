@@ -2,18 +2,12 @@
 
 import pytest
 
-from okta_mcp.registry.loader import Registry, load_registry
+from okta_mcp.registry.loader import Registry
 from okta_mcp.registry.schema import InvalidArguments, validate_args
-from okta_mcp.registry.spec import load_spec
 
 DOMAINS = ("users", "apps")
 USER = "00u1emaKYZTWRYYRRTSK"
 APP = "0oa1emaKYZTWRYYRRTSK"
-
-
-@pytest.fixture(scope="module")
-def registry() -> Registry:
-    return load_registry(load_spec())
 
 
 def _commands(registry: Registry, domain: str) -> dict[str, str]:

@@ -1,0 +1,14 @@
+domain: sessions
+description: Look up an Okta session by ID (read-only).
+# There is no list operation: session IDs come from the System Log
+# (`authenticationContext.externalSessionId`). The response names the user (pii) and says how
+# and when they last verified a password and a factor (session).
+commands:
+  get:
+    operation: getSession
+    summary: Get a session by ID
+    args:
+      # At least 20 characters (the spec's example has 20), which also keeps out `me`, Okta's
+      # alias for the caller's own session.
+      session: {path_param: sessionId, pattern: "^[A-Za-z0-9_-]{20,128}$"}
+    data_classes: [session, pii]

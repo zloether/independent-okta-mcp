@@ -14,7 +14,7 @@
 paths:
   # Named in design §9.2.
   - protocol.credentials.client.client_secret  # identity-providers list/get
-  - delivery.authorization_header              # security get-ssf-streams
+  - delivery.authorization_header              # SSF streams (not served, design §9.2)
   - credentials.oauthClient.client_secret      # apps, groups get-apps (spec: create/update only)
   # Secret-valued keys from the pinned spec's schemas.
   - client_secret

@@ -7,11 +7,11 @@ the registry and the pinned spec 2026.42.1. Do not edit; rerun the script.
 
 | Kind | Commands | Done |
 |---|---|---|
-| simple | 170 | 62 |
+| simple | 168 | 68 |
 | resolved | 30 | 29 |
 | composite (post-v1) | 4 | — |
-| excluded | 2 | — |
-| **total** | **206** | **91** |
+| excluded | 4 | — |
+| **total** | **206** | **97** |
 
 Gotcha endpoints (record a fixture): 5, 4 to do
 
@@ -32,15 +32,15 @@ Gotcha endpoints (record a fixture): 5, 4 to do
 | groups | 12 | 12 | 0 | 0 | 0 | 12 | 0 |
 | iam | 20 | 20 | 0 | 0 | 0 | 0 | 20 |
 | identity-providers | 12 | 12 | 0 | 0 | 0 | 0 | 12 |
-| logs | 4 | 1 | 0 | 3 | 0 | 0 | 1 |
+| logs | 4 | 1 | 0 | 3 | 0 | 1 | 0 |
 | network-zones | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
 | oauth-client-roles | 4 | 4 | 0 | 0 | 0 | 0 | 4 |
 | org-settings | 14 | 13 | 0 | 0 | 1 | 0 | 13 |
 | policies | 6 | 6 | 0 | 0 | 0 | 6 | 0 |
 | realms | 5 | 5 | 0 | 0 | 0 | 0 | 5 |
 | schemas | 13 | 13 | 0 | 0 | 0 | 0 | 13 |
-| security | 6 | 6 | 0 | 0 | 0 | 0 | 6 |
-| sessions | 1 | 1 | 0 | 0 | 0 | 0 | 1 |
+| security | 6 | 4 | 0 | 0 | 2 | 4 | 0 |
+| sessions | 1 | 1 | 0 | 0 | 0 | 1 | 0 |
 | users | 34 | 3 | 30 | 0 | 1 | 32 | 1 |
 
 ## To do
@@ -54,13 +54,10 @@ Gotcha endpoints (record a fixture): 5, 4 to do
 - **devices**: list, get, get-users, get-os-accounts, get-os-account
 - **iam**: list, get, list-permissions, get-permission, list-assignees, list-resource-sets, get-resource-set, list-bindings, get-binding, list-binding-members, get-binding-member, list-resources, get-resource, list-bundles, get-bundle, list-bundle-entitlements, list-bundle-entitlement-values, get-opt-in-status, list-role-subscriptions, get-role-subscription
 - **identity-providers**: list, get, list-keys, get-key, list-csrs, get-csr, list-signing-keys, get-active-signing-key, get-signing-key, list-users, get-user, list-tokens
-- **logs**: list
 - **oauth-client-roles**: list, get, list-app-targets, list-group-targets
 - **org-settings**: get, list-contact-types, get-contact, get-captcha-settings, get-third-party-admin-setting, get-preferences, get-communication-settings, get-support-settings, list-support-cases, get-auto-assign-admin-app-setting, get-client-privileges-setting, list-yubikey-tokens, get-yubikey-token
 - **realms**: list-realms, get-realm, list-realm-assignments, get-realm-assignment, list-realm-assignment-operations
 - **schemas**: list, get, get-app-user-schema, get-group-schema, list-log-stream-schemas, get-log-stream-schema, list-linked-objects, get-linked-object, get-user-schema, list-user-types, get-user-type, list-ui-schemas, get-ui-schema
-- **security**: get-threat-insight-config, list-security-events-providers, get-security-events-provider, get-ssf-streams, get-ssf-stream-status, get-bot-protection-config
-- **sessions**: get
 - **users**: get-linked-objects
 
 ## Registry commands outside the catalogue

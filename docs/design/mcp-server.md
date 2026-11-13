@@ -388,7 +388,7 @@ commands:
     data_classes: [admin-roles]
 ```
 
-**Sensitivity is derived, not declared.** A reviewed table maps data classes to sensitivity: `pii`, `org-config` → `normal`; `mfa-state`, `credential-material`, `audit-log`, `admin-roles`, `session`, `risk` → `sensitive`. A command is `sensitive` if any of its classes is. `arg_rule: {raises_sensitivity_to: sensitive}` raises it for calls that pass that argument. An `arg_rule` has exactly one of four forms: `forbidden: true` (no caller may pass the argument), `raises_sensitivity_to: sensitive`, `reviewed: "<reason>"` (the argument leaves sensitivity as it is, and the reason says why), or `attribute_expression: true` (the value is a filter expression or an attribute name, and the policy engine checks the attributes it names, §9.3).
+**Sensitivity is derived, not declared.** A reviewed table maps data classes to sensitivity: `pii`, `org-config` → `normal`; `mfa-state`, `credential-material`, `audit-log`, `admin-roles`, `session`, `risk` → `sensitive`. A command is `sensitive` if any of its classes is. `arg_rule: {raises_sensitivity_to: sensitive}` raises it for calls that pass that argument. An `arg_rule` has exactly one of four forms: `forbidden: true` (no caller may pass the argument), `raises_sensitivity_to: sensitive`, `reviewed: "<reason>"` (the argument leaves sensitivity as it is, and the reason says why), or `attribute_expression: true` (the value is a filter expression or an attribute name, and the policy engine checks the attributes it names, §9.3). An `attribute_expression` rule may add `attributes: [...]`, a closed set the argument may name whatever the roles allow (`["*"]` included); the loader checks each is a response field without declared children or a path under one (a free-form object or an array of objects declares none, so registry tests name those), and that a command's expression args share one closed set or none. `okta_help`'s `Search:` line shows the closed set whole, narrowed by the caller's roles: it is public and fixed, so the 20-item cap on option lists doesn't apply. It is for filters over schemas with free-form objects (System Log `debugContext.debugData`, `target.changeDetails`): the redaction test reads names, so naming the object could match a redacted key inside it, and string values there (URLs) can carry tokens no key-based rule sees (step 5.3).
 
 Load-time and CI checks (startup fails on any error):
 
@@ -587,7 +587,7 @@ Okta group(s) ──(groups claim: IDs)──► role(s) ──► allow/deny of
 ### 9.2 Sensitivity, data classes, argument rules, scrubbing
 
 - A command is `sensitive` if any of its `data_classes` maps to `sensitive` (§6.2): MFA factors/enrollments, risk, API token metadata, app secrets/keys/JWKs/CSRs, IdP keys/CSRs, AS signing keys, System Log queries, role/permission assignments, session lookups, org contacts/support cases.
-- Known secret-bearing "normal-looking" endpoints get `credential-material` until confirmed otherwise (V14): `identity-providers list/get` (`protocol.credentials.client.client_secret`), `security get-ssf-streams` (`delivery.authorization_header`).
+- Known secret-bearing "normal-looking" endpoints get `credential-material` until confirmed otherwise (V14): `identity-providers list/get` (`protocol.credentials.client.client_secret`). `security get-ssf-streams` (`delivery.authorization_header`) is not served (step 5.3): Okta shows a client only the SSF streams it created, and the read-only service app creates none; `scrub.yaml` keeps the path in case it returns.
 - **Per-argument rules** (`forbidden`, `raises_sensitivity_to`, `reviewed`, `allowed_values`) for `expand`, `discloseIdentifiers`, free-form `filter`/`search`/`q` (§6.2 check 6). An argument counts as passed when its key is present, whatever its value. Unknown `expand` values rejected.
 - **Secret scrubbing** (defence in depth): `scrub.yaml` lists field paths (`protocol.credentials.client.client_secret`, `delivery.authorization_header`, `credentials.oauthClient.client_secret`, `privateKey`, `secret`, `sharedSecret`, …) whose values are replaced with `"[redacted]"` in every result regardless of role. A path is a chain of keys matched at any depth (inside `_embedded` and arrays), case-insensitively, so a single key matches everywhere; no wildcards. A second list, `strings`, redacts only string values, for keys that hold a secret as a string but name config objects elsewhere (`password`, `token`, `refresh_token`). Secrets in `{key, value}` pairs (hook headers) are covered by a chain to `value`. A missing, malformed or empty file stops the server. Fixture tests cover each path.
 - **Wildcards match only `normal` commands**; sensitive commands need an explicit name or `include_sensitive`.
@@ -623,6 +623,8 @@ roles:
       behaviors:         ["*"]
       sessions:          ["*"]
     include_sensitive: [logs, sessions]
+    # System Log filter attributes (`okta_logs list` takes only a closed set, §6.2).
+    search_attributes: [eventType, outcome.result, actor.id, actor.alternateId, target.id, client.ipAddress, authenticationContext.externalSessionId]
     deny:
       users: [get-factors]
 

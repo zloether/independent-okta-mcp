@@ -87,6 +87,11 @@ class ArgRule(_Model):
     """The value is an Okta filter expression (`search`, `filter`) or one attribute name
     (`sortBy`). The policy engine reads the attributes it names: none may be one results
     redact, and each must be in the caller's roles' `search_attributes` (design §9.3)."""
+    attributes: tuple[str, ...] | None = Field(default=None, min_length=1)
+    """With `attribute_expression` only: the closed set of attributes the argument may name,
+    whatever the roles allow (`["*"]` included). For filters over a schema with free-form
+    objects (System Log `debugContext.debugData`): naming the object itself could match a
+    redacted key inside it, which the redaction test, reading names only, can't see."""
 
     @model_validator(mode="after")
     def _exactly_one(self) -> Self:
@@ -101,6 +106,11 @@ class ArgRule(_Model):
                 "arg_rule must set exactly one of forbidden, raises_sensitivity_to, reviewed "
                 "or attribute_expression"
             )
+        if self.attributes is not None:
+            if not self.attribute_expression:
+                raise ValueError("arg_rule attributes needs attribute_expression")
+            if len(set(self.attributes)) != len(self.attributes):
+                raise ValueError("arg_rule attributes has duplicates")
         return self
 
 

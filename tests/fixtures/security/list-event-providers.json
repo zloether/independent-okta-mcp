@@ -1,0 +1,67 @@
+{
+  "source": "generated",
+  "operation": "listSecurityEventsProviderInstances",
+  "body": [
+    {
+      "id": "sse1qg25RpusjUP6m0g5",
+      "name": "Security events provider with well-known URL",
+      "type": "okta",
+      "status": "ACTIVE",
+      "settings": {
+        "well_known_url": "https://example.okta.com/.well-known/ssf-configuration",
+        "issuer": "Issuer",
+        "jwks_url": "https://example.okta.com/jwks/path"
+      },
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/security-events-providers/sse1qg25RpusjUP6m0g5",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT",
+              "DELETE"
+            ]
+          }
+        },
+        "deactivate": {
+          "href": "https://example.okta.com/api/v1/security-events-providers/sse1qg25RpusjUP6m0g5/lifecycle/deactivate",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "sse1qu4fUtsoD12iF0g5",
+      "name": "Security events provider with an issuer and a JWKS URL",
+      "type": "okta",
+      "status": "ACTIVE",
+      "settings": {
+        "issuer": "Issuer",
+        "jwks_url": "https://example.okta.com/jwks/path"
+      },
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/security-events-providers/sse1qu4fUtsoD12iF0g5",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT",
+              "DELETE"
+            ]
+          }
+        },
+        "deactivate": {
+          "href": "https://example.okta.com/api/v1/security-events-providers/sse1qu4fUtsoD12iF0g5/lifecycle/deactivate",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

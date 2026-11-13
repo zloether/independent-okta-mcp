@@ -4,6 +4,7 @@ Every error is collected and reported at once; any error fails the load. Check 7
 guides) lands with the resources in step 3.4.
 """
 
+import re
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -29,6 +30,9 @@ _WIDENING = _FILTERS | {"expand", "discloseIdentifiers", "sortBy"}
 _EXPRESSIONS = frozenset({"filter", "search", "sortBy"})
 # Pagination and page size belong to the server (design §7.2), never to the caller.
 _RESERVED_QUERY = frozenset({"after", "limit"})
+# Dotted ASCII names: `policy/expression.ATTRIBUTE`, which can't be imported here (circular via
+# `exec.output`); a test holds the two equal.
+_ATTRIBUTE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 
 
 class RegistryError(Exception):
@@ -230,6 +234,37 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
                 f"arg {arg_name}: arg_rule attribute_expression is only for "
                 f"{', '.join(sorted(_EXPRESSIONS))}, not {arg.param}"
             )
+        if arg.arg_rule is not None and arg.arg_rule.attributes is not None:
+            fields = op.response.fields
+            parents = {f.rsplit(".", 1)[0] for f in fields if "." in f}
+            for attr in arg.arg_rule.attributes:
+                # A field without declared children, or a path under one (the spec's arrays,
+                # such as a log event's `target`, are leaves there). An object with declared
+                # children fails, and so does a misspelt name under one. A free-form object or
+                # an array of objects declares none, so it passes here: the registry's tests
+                # name those.
+                segments = attr.split(".")
+                under_leaf = any(
+                    (p := ".".join(segments[:i])) in fields and p not in parents
+                    for i in range(1, len(segments))
+                )
+                leaf = attr in fields and attr not in parents
+                if not _ATTRIBUTE.fullmatch(attr) or not (leaf or under_leaf):
+                    errors.append(
+                        f"arg {arg_name}: arg_rule attributes: {attr!r} is not a field "
+                        "without declared children, or a path under one"
+                    )
+    # `searchable` and the help text describe one closed set per command, so it's all or none.
+    closed = {
+        a.arg_rule.attributes and frozenset(a.arg_rule.attributes)
+        for a in entry.args.values()
+        if a.arg_rule is not None and a.arg_rule.attribute_expression
+    }
+    if len(closed) > 1:
+        errors.append(
+            "arg_rule attributes: every attribute_expression arg needs the same closed set, "
+            "or none has one"
+        )
     for p in op.params.values():
         if p.required and p.name not in used and not (p.name == "limit" and entry.page_size):
             errors.append(f"required {p.location} param {p.name} has no arg")
