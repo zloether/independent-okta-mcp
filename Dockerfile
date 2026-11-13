@@ -4,7 +4,7 @@
 # uv stage. Keep uv's version equal to setup-uv's in .github/workflows/ci.yml.
 # HEALTHCHECK --start-interval needs Docker Engine 25 or later.
 
-FROM ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a AS uv
 
 FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS build
 COPY --from=uv /uv /usr/local/bin/uv
