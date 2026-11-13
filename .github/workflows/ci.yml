@@ -35,3 +35,30 @@ jobs:
       - run: uv run pyright
       - run: uv run pytest
       - run: uv run pip-audit --skip-editable
+
+  container:
+    # Plan 7.1: build the image, check how it runs (tests/container), scan it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.5"
+          python-version: "3.12"
+      - run: docker build -t okta-mcp:ci .
+      - run: uv sync --frozen
+      - run: uv run pytest tests/container
+        env:
+          OKTA_MCP_IMAGE: okta-mcp:ci
+      # Trivy pinned by digest (Dependabot doesn't track images in run steps: bump by hand).
+      # It reads a saved tarball, so it never gets the Docker socket.
+      - name: Scan image
+        run: |
+          docker save okta-mcp:ci -o "$RUNNER_TEMP/image.tar"
+          docker run --rm -v "$RUNNER_TEMP/image.tar:/image.tar:ro" \
+            aquasec/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222 \
+            image --input /image.tar --scanners vuln --ignore-unfixed \
+            --severity HIGH,CRITICAL --exit-code 1 --no-progress --skip-version-check

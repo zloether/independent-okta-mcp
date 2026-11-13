@@ -22,3 +22,19 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+
+  # Dockerfile base and uv image digests. A Python minor (3.12 -> 3.13) is a deliberate change
+  # with CI's matrix, not a digest bump; a uv bump must also move setup-uv in ci.yml.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    ignore:
+      - dependency-name: python
+        update-types: [version-update:semver-major, version-update:semver-minor]
+      # uv's version must equal setup-uv's in ci.yml, which no ecosystem tracks: digest
+      # and patch bumps only; move both by hand for a minor.
+      - dependency-name: "*astral-sh/uv" # with or without the ghcr.io prefix
+        update-types: [version-update:semver-major, version-update:semver-minor]

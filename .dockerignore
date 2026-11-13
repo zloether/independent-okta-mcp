@@ -1,0 +1,16 @@
+# Allow-list (design §11.2): only what the build copies. Keeps tests, docs, .git, .claude,
+# keys, .env files, Terraform state and spike output out of the build context.
+*
+!pyproject.toml
+!uv.lock
+!LICENSE
+!README.md
+!src/
+# Inside src/: never bytecode caches or key material, even if a developer left some there.
+**/__pycache__
+**/*.py[cod]
+**/*.pem
+**/*.key
+**/*.jwk
+**/*.p12
+**/.env*
