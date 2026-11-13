@@ -151,16 +151,20 @@ def searchable(engine: Engine, principal: Principal, command: Command) -> str:
     a `reviewed` filter is not, so the message names the args it is about."""
     names = engine.search_attributes(principal, command.domain, command.name)
     # A registry closed set (`arg_rule.attributes`) narrows every role's list, `*` included.
-    # Only when every expression arg has one, so nothing is hidden that an arg would take.
-    # Shown in registry order, which puts the most useful first.
-    rules = [command.entry.args[a].arg_rule for a in expression_args(command)]
-    closed = (
-        list(dict.fromkeys(a for r in rules if r is not None for a in r.attributes or ()))
-        if rules and all(r is not None and r.attributes is not None for r in rules)
-        else None
+    # The loader gives a command's expression args one set or none. Shown in full and in
+    # registry order: it is public and fixed, and lists the most useful first.
+    closed = next(
+        (
+            r.attributes
+            for a in expression_args(command)
+            if (r := command.entry.args[a].arg_rule) is not None and r.attributes is not None
+        ),
+        None,
     )
     if closed is not None and names:
         shown = [a for a in closed if "*" in names or a in names]
+        if shown:
+            return f"expressions may name only: {', '.join(shown)}"
     elif "*" in names:
         return "expressions may name any attribute that results don't redact"
     else:

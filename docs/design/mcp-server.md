@@ -623,7 +623,7 @@ roles:
       behaviors:         ["*"]
       sessions:          ["*"]
     include_sensitive: [logs, sessions]
-    # System Log filter attributes (`okta_logs list` takes only a closed set, §9.2).
+    # System Log filter attributes (`okta_logs list` takes only a closed set, §6.2).
     search_attributes: [eventType, outcome.result, actor.id, actor.alternateId, target.id, client.ipAddress, authenticationContext.externalSessionId]
     deny:
       users: [get-factors]

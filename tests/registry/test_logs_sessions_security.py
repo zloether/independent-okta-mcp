@@ -191,6 +191,7 @@ def test_logs_filter_is_closed_to_plain_fields_whatever_the_role(registry: Regis
 def test_logs_closed_set_is_plain_and_unredacted(registry: Registry) -> None:
     rule = registry.domains["logs"].commands["list"].entry.args["filter"].arg_rule
     assert rule is not None and rule.attributes is not None
+    # Free-form objects in the LogEvent schema: the loader can't tell them from scalars.
     free_form = ("debugContext", "changeDetails", "detailEntry", "transaction.detail")
     for attr in rule.attributes:
         assert not any(part in attr for part in free_form), attr
@@ -201,8 +202,10 @@ def test_logs_help_lists_the_closed_set(registry: Registry) -> None:
     cmd = registry.domains["logs"].commands["list"]
     wildcard = _engine(registry, {"allow": {"logs": ["list"]}, "search_attributes": ["*"]})
     line = searchable(wildcard, WHO, cmd)
-    assert line.startswith("expressions may name only: ") and "eventType" in line
-    assert "debugData" not in line and "(+19)" in line  # 39 attributes, 20 shown
+    # The whole closed set, in registry order: it is public, so nothing is cut.
+    attrs = cmd.entry.args["filter"].arg_rule.attributes  # pyright: ignore[reportOptionalMemberAccess]
+    assert line == f"expressions may name only: {', '.join(attrs or ())}"
+    assert "debugData" not in line and "(+" not in line
     narrow = _engine(
         registry,
         {"allow": {"logs": ["list"]}, "search_attributes": ["eventType", "debugContext.debugData"]},

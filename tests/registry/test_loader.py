@@ -736,7 +736,12 @@ def test_closed_attribute_set_loads(spec: SpecIndex) -> None:
 @pytest.mark.parametrize(
     ("rule", "message"),
     [
-        ({"attribute_expression": True, "attributes": ["profile.lgin", "nope"]}, "'nope'"),
+        ({"attribute_expression": True, "attributes": ["status", "nope"]}, "'nope'"),
+        # A misspelt name under an object with declared children.
+        ({"attribute_expression": True, "attributes": ["profile.lgin"]}, "'profile.lgin'"),
+        # An object with declared children could match a redacted key inside it.
+        ({"attribute_expression": True, "attributes": ["profile"]}, "'profile'"),
+        ({"attribute_expression": True, "attributes": ["credentials"]}, "'credentials'"),
         ({"attribute_expression": True, "attributes": ["status", "a b"]}, "'a b'"),
         ({"attribute_expression": True, "attributes": ["status", "status"]}, "duplicates"),
         ({"attribute_expression": True, "attributes": []}, "at least 1"),
@@ -746,3 +751,22 @@ def test_closed_attribute_set_loads(spec: SpecIndex) -> None:
 def test_closed_attribute_set_failures(spec: SpecIndex, rule: dict[str, Any], message: str) -> None:
     with pytest.raises(RegistryError, match=message):
         _build(spec, list=_users(rule, "q" if "reviewed" in rule else "search"))
+
+
+def test_closed_attribute_sets_are_one_per_command(spec: SpecIndex) -> None:
+    cmd = _users({"attribute_expression": True, "attributes": ["status"]})
+    cmd["args"]["sortby"] = {"query": "sortBy", "arg_rule": {"attribute_expression": True}}
+    with pytest.raises(RegistryError, match="needs the same closed set"):
+        _build(spec, list=cmd)
+    cmd["args"]["sortby"]["arg_rule"]["attributes"] = ["status", "profile.login"]
+    with pytest.raises(RegistryError, match="needs the same closed set"):
+        _build(spec, list=cmd)
+    cmd["args"]["sortby"]["arg_rule"]["attributes"] = ["status"]
+    _build(spec, list=cmd)
+
+
+def test_attribute_pattern_matches_the_tokenizer() -> None:
+    from okta_mcp.policy.expression import ATTRIBUTE
+    from okta_mcp.registry.loader import _ATTRIBUTE  # pyright: ignore[reportPrivateUsage]
+
+    assert _ATTRIBUTE.pattern == ATTRIBUTE.pattern
