@@ -436,6 +436,7 @@ Verify: `docker compose -f docker/compose.example.yaml config` validates; bring-
 Design: §11.4, Appendix C · Depends: 7.2, 0.5
 - [ ] `docs/runbook.md`: Okta setup (from spike findings), exposure decision (only the proxy reaches the port; check with a request from another host before turning on `MCP_TRUST_PROXY`), deploy, policy changes (restart), key rotation, kill switch, audit log handling
 - [ ] Okta-side controls the server can't check (design §8.2, §10, R7): who can manage membership of each role group (resource sets, group rules) with a System Log alert on `group.user_membership.add` for the role-group IDs; an MFA authentication policy on the client apps; the service app's rate-limit share (V16)
+- [ ] Audit log handling (6.1): restrict read access (the file is created 0600), retention, SIEM shipping; rotate a file sink with `copytruncate`, since the server doesn't reopen it
 - [ ] Refresh tokens and user removal (spike 0.6): choosing A or B (link [`okta-setup.md`](okta-setup.md#refresh-tokens-option-a-or-b)); removing a user is group removal under A, plus clearing sessions with `oauthTokens=true` (or deactivating the user) under B; under B the Global Session Policy doesn't bound refresh chains, so `lifetime_minutes` is the re-sign-in and MFA interval; failed refreshes have no `User` target in the System Log, so find them by client ID
 
 Verify: someone (or a fresh Claude session) follows the runbook on a clean machine to a working `/readyz`.
