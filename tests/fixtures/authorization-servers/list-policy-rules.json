@@ -1,0 +1,73 @@
+{
+  "source": "generated",
+  "operation": "listAuthorizationServerPolicyRules",
+  "body": [
+    {
+      "type": "RESOURCE_ACCESS",
+      "id": "0prbsjfyl01zfSZ9K0h7",
+      "status": "ACTIVE",
+      "name": "Default Policy Rule",
+      "priority": 1,
+      "created": "2017-08-25T16:57:02.000Z",
+      "lastUpdated": "2017-08-30T14:51:05.000Z",
+      "system": false,
+      "conditions": {
+        "people": {
+          "users": {
+            "include": [],
+            "exclude": []
+          },
+          "groups": {
+            "include": [
+              "EVERYONE"
+            ],
+            "exclude": []
+          }
+        },
+        "grantTypes": {
+          "include": [
+            "implicit",
+            "client_credentials",
+            "authorization_code",
+            "password"
+          ]
+        },
+        "scopes": {
+          "include": [
+            "*"
+          ]
+        }
+      },
+      "actions": {
+        "token": {
+          "accessTokenLifetimeMinutes": 60,
+          "refreshTokenLifetimeMinutes": 0,
+          "refreshTokenWindowMinutes": 10080,
+          "inlineHook": {
+            "id": "cal4egvp1mbMldrYN0g7"
+          }
+        }
+      },
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/authorizationServers/{authServerId}/policies/{policyId}/rules/0prbsjfyl01zfSZ9K0h7",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT",
+              "DELETE"
+            ]
+          },
+          "deactivate": {
+            "href": "https://example.okta.com/api/v1/authorizationServers/{authServerId}/policies/{policyId}/rules/0prbsjfyl01zfSZ9K0h7/lifecycle/deactivate",
+            "hints": {
+              "allow": [
+                "POST"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

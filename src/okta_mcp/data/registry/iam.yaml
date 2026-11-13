@@ -1,0 +1,188 @@
+domain: iam
+description: Read custom admin roles, resource sets, bindings and governance bundles (read-only).
+# Custom roles, their permissions, resource sets and the bindings that tie them to admins decide
+# who can administer what: admin-roles. The governance opt-in flag and role notification
+# subscriptions are settings, not grants: org-config.
+#
+# IDs: custom roles `cr0` + 17, resource sets `iam` + 17 or more, binding members `irb`,
+# resources `ire`, bundles `enb`, entitlements `esp`; lengths vary in the spec's examples, so
+# only the character set is fixed. Roles and resource sets also take their `label`; the
+# pattern keeps labels to letters, digits, `.`, `_` and `-` (design §6.4 refuses spaces anyway).
+# Lists are wrapped (`items_key`) and page by Link header or body `_links.next`.
+commands:
+  list:
+    operation: listRoles
+    summary: List custom admin roles
+    paginate: link_or_body
+    items_key: roles
+    view: [id, label, description]
+    data_classes: [admin-roles]
+
+  get:
+    operation: getRole
+    summary: Get a custom role
+    args:
+      role: {path_param: roleIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+    data_classes: [admin-roles]
+
+  list-permissions:
+    operation: listRolePermissions
+    summary: Permissions of a custom role
+    args:
+      role: {path_param: roleIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+    items_key: permissions
+    view: [label, created, lastUpdated]
+    data_classes: [admin-roles]
+
+  get-permission:
+    operation: getRolePermission
+    summary: One permission of a role
+    args:
+      role: {path_param: roleIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      # Okta permission names: `okta.users.read`, `okta.users.userprofile.manage`, …
+      permission: {path_param: permissionType, pattern: "^okta(\\.[A-Za-z]+){1,6}$"}
+    data_classes: [admin-roles]
+
+  list-assignees:
+    operation: listUsersWithRoleAssignments
+    summary: Users with admin role assignments
+    paginate: link_or_body
+    page_size: 100
+    items_key: value
+    view: [id, orn]
+    data_classes: [admin-roles]
+
+  list-resource-sets:
+    operation: listResourceSets
+    summary: List resource sets
+    paginate: link_or_body
+    items_key: resource-sets
+    view: [id, label, description]
+    data_classes: [admin-roles]
+
+  get-resource-set:
+    operation: getResourceSet
+    summary: Get a resource set
+    args:
+      set: {path_param: resourceSetIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+    data_classes: [admin-roles]
+
+  list-resources:
+    operation: listResourceSetResources
+    summary: Resources in a resource set
+    args:
+      set: {path_param: resourceSetIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+    paginate: link_or_body
+    page_size: 100
+    items_key: resources
+    view: [id, orn, created]
+    data_classes: [admin-roles]
+
+  get-resource:
+    operation: getResourceSetResource
+    summary: One resource of a set
+    args:
+      set: {path_param: resourceSetIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      resource: {path_param: resourceId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [admin-roles]
+
+  list-bindings:
+    operation: listBindings
+    summary: Role bindings of a set
+    args:
+      set: {path_param: resourceSetIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+    paginate: link_or_body
+    items_key: roles
+    view: [id]
+    data_classes: [admin-roles]
+
+  get-binding:
+    operation: getBinding
+    summary: One role binding
+    args:
+      set: {path_param: resourceSetIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      role: {path_param: roleIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+    data_classes: [admin-roles]
+
+  list-members:
+    operation: listMembersOfBinding
+    summary: Members of a binding
+    args:
+      set: {path_param: resourceSetIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      role: {path_param: roleIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+    paginate: link_or_body
+    items_key: members
+    view: [id, created, lastUpdated]
+    data_classes: [admin-roles]
+
+  # A member is a user or a group; its `_links.self` says which.
+  get-member:
+    operation: getMemberOfBinding
+    summary: One binding member
+    args:
+      set: {path_param: resourceSetIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      role: {path_param: roleIdOrLabel, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+      member: {path_param: memberId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [admin-roles]
+
+  list-bundles:
+    operation: listGovernanceBundles
+    summary: List governance bundles
+    paginate: link_or_body
+    # Okta's default; the spec gives no maximum.
+    page_size: 20
+    items_key: bundles
+    view: [id, name, status, description]
+    data_classes: [admin-roles]
+
+  get-bundle:
+    operation: getGovernanceBundle
+    summary: Get a governance bundle by ID
+    args:
+      bundle: {path_param: bundleId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [admin-roles]
+
+  list-entitlements:
+    operation: listBundleEntitlements
+    summary: Entitlements of a bundle
+    args:
+      bundle: {path_param: bundleId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    paginate: link_or_body
+    page_size: 20
+    items_key: entitlements
+    view: [id, name, role, description]
+    data_classes: [admin-roles]
+
+  list-entitlement-values:
+    operation: listBundleEntitlementValues
+    summary: Values
+    args:
+      bundle: {path_param: bundleId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      entitlement: {path_param: entitlementId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    paginate: link_or_body
+    page_size: 20
+    items_key: entitlementValues
+    view: [id, name, value]
+    data_classes: [admin-roles]
+
+  get-opt-in-status:
+    operation: getOptInStatus
+    summary: Governance opt-in status
+    data_classes: [org-config]
+
+  # `role` is a standard role type (`SUPER_ADMIN`) or a custom role ID.
+  list-subscriptions:
+    operation: listSubscriptionsRole
+    summary: Role notification subscriptions
+    args:
+      role: {path_param: roleRef, pattern: "^[A-Za-z0-9_]{1,64}$"}
+    view: [notificationType, status, channels]
+    data_classes: [org-config]
+
+  get-subscription:
+    operation: getSubscriptionsNotificationTypeRole
+    summary: One role subscription
+    args:
+      role: {path_param: roleRef, pattern: "^[A-Za-z0-9_]{1,64}$"}
+      type: {path_param: notificationType}
+    data_classes: [org-config]

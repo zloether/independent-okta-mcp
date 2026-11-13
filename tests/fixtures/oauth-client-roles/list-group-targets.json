@@ -1,0 +1,93 @@
+{
+  "source": "generated",
+  "operation": "listGroupTargetRoleForClient",
+  "body": [
+    {
+      "created": "2026-01-01T00:00:00.000Z",
+      "id": "0gabcd1234",
+      "lastMembershipUpdated": "2026-01-01T00:00:00.000Z",
+      "lastUpdated": "2026-01-01T00:00:00.000Z",
+      "objectClass": [
+        "objectClass"
+      ],
+      "profile": {
+        "description": "All users West of The Rockies",
+        "name": "West Coast users"
+      },
+      "type": "APP_GROUP",
+      "_embedded": {
+        "stats": {
+          "usersCount": 0,
+          "appsCount": 0,
+          "groupPushMappingsCount": 0,
+          "hasAdminPrivlege": false
+        },
+        "app": {
+          "id": "00xOaFsas61nZB9fz6fj",
+          "name": "name",
+          "label": "label",
+          "signOnMode": "SAML_1_1"
+        }
+      },
+      "_links": {
+        "self": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        },
+        "apps": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        },
+        "logo": [
+          {
+            "hints": {
+              "allow": [
+                "DELETE"
+              ]
+            },
+            "href": "https://example.okta.com/",
+            "name": "name",
+            "templated": false,
+            "type": "type"
+          }
+        ],
+        "source": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        },
+        "users": {
+          "hints": {
+            "allow": [
+              "DELETE"
+            ]
+          },
+          "href": "https://example.okta.com/",
+          "name": "name",
+          "templated": false,
+          "type": "type"
+        }
+      }
+    }
+  ]
+}

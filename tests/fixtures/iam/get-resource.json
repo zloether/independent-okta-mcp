@@ -1,0 +1,26 @@
+{
+  "source": "generated",
+  "operation": "getResourceSetResource",
+  "body": {
+    "id": "ire106sQKoHoXXsAe0g4",
+    "orn": "orn:okta:idp:00o5rb5mt2H3d1TJd0h7:apps",
+    "conditions": {
+      "Exclude": {
+        "okta:ORN": [
+          "orn:okta:idp:00o5rb5mt2H3d1TJd0h7:apps:0oa1014FmyZ2H0oRY0g4",
+          "orn:okta:idp:00o5rb5mt2H3d1TJd0h7:apps:slack"
+        ]
+      }
+    },
+    "created": "2021-02-06T16:20:57.000Z",
+    "lastUpdated": "2021-02-06T16:20:57.000Z",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/apps"
+      },
+      "resource": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/resources/ire2snv2xSY7a4iSe0g1"
+      }
+    }
+  }
+}

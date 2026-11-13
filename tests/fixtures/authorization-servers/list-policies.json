@@ -1,0 +1,52 @@
+{
+  "source": "generated",
+  "operation": "listAuthorizationServerPolicies",
+  "body": [
+    {
+      "type": "OAUTH_AUTHORIZATION_POLICY",
+      "id": "00palyaappA22DPkj0h7",
+      "status": "ACTIVE",
+      "name": "Vendor2 Policy",
+      "description": "Vendor2 policy description",
+      "priority": 1,
+      "system": false,
+      "conditions": {
+        "clients": {
+          "include": [
+            "ALL_CLIENTS"
+          ]
+        }
+      },
+      "created": "2017-05-26T19:43:53.000Z",
+      "lastUpdated": "2017-06-07T15:28:17.000Z",
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/policies/00palyaappA22DPkj0h7",
+          "hints": {
+            "allow": [
+              "GET",
+              "PUT",
+              "DELETE"
+            ]
+          }
+        },
+        "deactivate": {
+          "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/policies/00palyaappA22DPkj0h7/lifecycle/deactivate",
+          "hints": {
+            "allow": [
+              "POST"
+            ]
+          }
+        },
+        "rules": {
+          "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/policies/00palyaappA22DPkj0h7/rules",
+          "hints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

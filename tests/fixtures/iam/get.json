@@ -1,0 +1,19 @@
+{
+  "source": "generated",
+  "operation": "getRole",
+  "body": {
+    "id": "cr0Yq6IJxGIr0ouum0g3",
+    "label": "UserCreator",
+    "description": "Create users",
+    "created": "2021-02-06T16:20:57.000Z",
+    "lastUpdated": "2021-02-06T16:20:57.000Z",
+    "_links": {
+      "permissions": {
+        "href": "https://example.okta.com/api/v1/iam/roles/cr0Yq6IJxGIr0ouum0g3/permissions"
+      },
+      "self": {
+        "href": "https://example.okta.com/api/v1/iam/roles/cr0Yq6IJxGIr0ouum0g3"
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "source": "generated",
+  "operation": "listUsersWithRoleAssignments",
+  "body": {
+    "value": [
+      {
+        "id": "00u118oQYT4TBGuay0g4",
+        "orn": "orn:okta:00o5rb5mt2H3d1TJd0h7:users:00u118oQYT4TBGuay0g4",
+        "_links": {
+          "self": {
+            "href": "http://example.okta.com/api/v1/users/00u118oQYT4TBGuay0g4"
+          },
+          "roles": {
+            "href": "http://example.okta.com/api/v1/users/00u118oQYT4TBGuay0g4/roles"
+          }
+        }
+      }
+    ],
+    "_links": {
+      "next": {
+        "href": "http://example.okta.com/api/v1/iam/assignees/users?after=00u118oQYT4TBGuay0g4&limit=1"
+      }
+    }
+  }
+}

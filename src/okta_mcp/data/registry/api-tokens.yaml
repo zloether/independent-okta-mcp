@@ -1,0 +1,19 @@
+domain: api-tokens
+description: Read Okta API token metadata (read-only).
+# Metadata only: Okta never returns a token's value after it is created. Who holds a token, its
+# client, network restrictions and expiry still describe a credential (design §9.2), so both
+# commands are credential-material. API token IDs are `00T` + 17, which also keeps out `current`,
+# the spec's literal for the calling token.
+commands:
+  list:
+    operation: listApiTokens
+    summary: List API tokens
+    view: [id, name, userId, clientName, expiresAt]
+    data_classes: [credential-material]
+
+  get:
+    operation: getApiToken
+    summary: Get an API token's metadata
+    args:
+      token: {path_param: apiTokenId, pattern: "^00T[A-Za-z0-9]{17}$"}
+    data_classes: [credential-material]

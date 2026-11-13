@@ -1,0 +1,33 @@
+{
+  "source": "generated",
+  "operation": "getOAuth2Claim",
+  "body": {
+    "id": "{claimId}",
+    "name": "Support",
+    "status": "ACTIVE",
+    "claimType": "IDENTITY",
+    "valueType": "GROUPS",
+    "value": "Support",
+    "conditions": {
+      "scopes": [
+        "profile"
+      ]
+    },
+    "system": false,
+    "alwaysIncludeInToken": true,
+    "apiResourceId": null,
+    "group_filter_type": "CONTAINS",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/claims/{claimId}",
+        "hints": {
+          "allow": [
+            "GET",
+            "PUT",
+            "DELETE"
+          ]
+        }
+      }
+    }
+  }
+}

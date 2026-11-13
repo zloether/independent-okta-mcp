@@ -1,0 +1,28 @@
+{
+  "source": "generated",
+  "operation": "listBundleEntitlements",
+  "body": {
+    "entitlements": [
+      {
+        "id": "espfxqCAJWWGELFTYASJ",
+        "role": "GROUP_MEMBERSHIP_ADMIN",
+        "name": "Group Membership Admin",
+        "description": "Perform all admin activities for groups in the org",
+        "_links": {
+          "values": "http://example.okta.com/api/v1/iam/governance/bundles/0bbfxqCAJWWGELFTYAAA/entitlements/espfxqCAJWWGELFTYASJ/values"
+        }
+      }
+    ],
+    "_links": {
+      "self": {
+        "href": "http://example.okta.com/api/v1/iam/governance/bundles?limit=2&after=10"
+      },
+      "next": {
+        "href": "http://example.okta.com/api/v1/iam/governance/bundles?after=bundleId12"
+      },
+      "bundle": {
+        "href": "http://example.okta.com/api/v1/iam/governance/bundles/0bbfxqCAJWWGELFTYAAA"
+      }
+    }
+  }
+}

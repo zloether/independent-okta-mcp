@@ -1,0 +1,50 @@
+{
+  "source": "generated",
+  "operation": "listOAuth2ResourceServerJsonWebKeys",
+  "body": {
+    "keys": [
+      {
+        "status": "ACTIVE",
+        "id": "apk40n33xfjbPaf6D0g5",
+        "e": "AQAB",
+        "n": "g0MirhrysJMPm_wK45jvMbbyanfhl-jmTBv0o69GeifPaISaXGv8LKn3-CyJvUJcjjeHE17KtumJWVxUDRzFqtIMZ1ctCZyIAuWO0n LKilg7_EIDXJrS8k14biqkPO1lXGFwtjo3zLHeFSLw6sWf-CEN9zv6Ff3IAXb-RMYpfh-bVrxIgWsWCxjLW-UKI3la-gs0nWHH2PJr5HLJuI JIOL5HLJuIJIOLWahqTnm_r1LSCSYr6N4C-fh--w2_BW8DzTHalBYe76bNr0d7AqtR4tGazmrvrc79Wa2bjyxmhhN1u9jSaZQqq-3VZEod8q3, WHH2PJ5v1LoXniJQ4a2W8nDVqb6h4E8MUKYOpljTfQ",
+        "kid": "RQ8DuhdxCczyMvy7GNJb4Ka3lQ99vrSo3oFBUiZjzzc",
+        "kty": "RSA",
+        "use": "enc",
+        "created": "2023-04-06T21:32:33.000Z",
+        "lastUpdated": "2023-04-06T21:32:33.000Z",
+        "_links": {
+          "self": {
+            "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/resourceservercredentials/keys/RQ8DuhdxCczyMvy7GNJb4Ka3lQ99vrSo3oFBUiZjzzc",
+            "hints": {
+              "allow": [
+                "GET"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "status": "INACTIVE",
+        "id": "apk33a45xfjbDfg6D0g5",
+        "e": "AQAB",
+        "n": "l1hZ_g2sgBE3oHvu34T-5XP18FYJWgtul_nRNg-5xra5ySkaXEOJUDRERUG0HrR42uqf9jYrUTwg9fp-SqqNIdHRaN8EwRSDRsKAwK 3 HIJ2NJfgmrrO2ABkeyUq6rzHxAumiKv1iLFpSawSIiTEBJERtUCDcjbbqyHVFuivIFgH8L37 - XDIDb0XG - R8DOoOHLJPTpsgH - rJe M5w96VIRZInsGC5OGWkFdtgk6OkbvVd7_TXcxLCpWeg1vlbmX - 0 TmG5yjSj7ek05txcpxIqYu - 7 FIGT0KKvXge_BOSEUlJpBhLKU28 OtsOnmc3NLIGXB - GeDiUZiBYQdPR - myB4ZoQ",
+        "kid": "Y3vBOdYT-l-I0j-gRQ26XjutSX00TeWiSguuDhW3ngo",
+        "kty": "RSA",
+        "use": "enc",
+        "created": "2023-04-06T21:32:33.000Z",
+        "lastUpdated": "2023-04-06T21:32:33.000Z",
+        "_links": {
+          "self": {
+            "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/resourceservercredentials/keys/Y3vBOdYT-l-I0j-gRQ26XjutSX00TeWiSguuDhW3ngo",
+            "hints": {
+              "allow": [
+                "GET"
+              ]
+            }
+          }
+        }
+      }
+    ]
+  }
+}

@@ -342,3 +342,21 @@ def test_spec_error_while_planning_exits_2(
 
 def test_unknown_domain(tmp_path: Path) -> None:
     assert gen.main(["--domain", "nope"], root=tmp_path) == 2
+
+
+def test_one_item_list_example_under_object_schema_is_unwrapped(
+    raw: dict[str, Any], registry: Registry
+) -> None:
+    # getOAuth2Claim's 200 example is the list operation's: one claim in an array.
+    command = registry.domains["authorization-servers"].commands["get-claim"]
+    body = gen.body(raw, command)
+    assert isinstance(body, dict) and body["claimType"] == "IDENTITY"
+
+
+def test_wrapped_override_puts_the_list_under_items_key(
+    raw: dict[str, Any], registry: Registry
+) -> None:
+    command = registry.domains["authorization-servers"].commands["list-resource-server-keys"]
+    body = gen.body(raw, command)
+    assert isinstance(body, dict) and set(body) == {"keys"}
+    assert isinstance(body["keys"], list) and body["keys"][0]["kty"] == "RSA"

@@ -1,0 +1,179 @@
+domain: authorization-servers
+description: Read custom authorization servers, their claims, scopes, policies, keys and refresh tokens (read-only).
+# Servers, claims, scopes, clients and access policies are org configuration. A server's own
+# `jwks` and `credentials.signing.kid` are public halves (Okta publishes them at the server's
+# keys endpoint). The keys commands are credential material all the same (design §9.2: AS
+# signing keys). Refresh tokens are users' grants: who holds one, for which client and scopes,
+# until when; metadata only (Okta never returns the token value here), classed like a session.
+#
+# Server IDs are `aus` + 17, or `default` for the org's default custom server. Other IDs vary
+# (claims `ocl`, scopes `scp`, policies `00p`, rules `0pr`, tokens `oar`), so only the
+# character set is fixed. `client` is a `client_id` (oauth-client-roles.yaml).
+commands:
+  list:
+    operation: listAuthorizationServers
+    summary: List or search authorization servers
+    args:
+      q: {query: q, arg_rule: {reviewed: "matches the server name and audiences, both returned"}}
+    paginate: link
+    page_size: 200
+    view: [id, name, status, issuer, audiences]
+    data_classes: [org-config]
+
+  get:
+    operation: getAuthorizationServer
+    summary: Get an authorization server
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+    data_classes: [org-config]
+
+  list-associated:
+    operation: listAssociatedServersByTrustedType
+    summary: Associated servers
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      trusted: {query: trusted}
+      q: {query: q, arg_rule: {reviewed: "matches the server name and audiences, both returned"}}
+    paginate: link
+    page_size: 200
+    view: [id, name, status, issuer, audiences]
+    data_classes: [org-config]
+
+  list-claims:
+    operation: listOAuth2Claims
+    summary: Custom token claims
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+    view: [id, name, claimType, valueType, status]
+    data_classes: [org-config]
+
+  get-claim:
+    operation: getOAuth2Claim
+    summary: One claim
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      claim: {path_param: claimId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]
+
+  list-clients:
+    operation: listOAuth2ClientsForAuthorizationServer
+    summary: Clients holding tokens from a server
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+    view: [client_id, client_name]
+    data_classes: [org-config]
+
+  # Okta answers `[]` both when there are no tokens and when the service app may not see them
+  # (catalogue gotcha); the guide says so.
+  list-tokens:
+    operation: listRefreshTokensForAuthorizationServerAndClient
+    summary: Refresh tokens
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
+      # Embeds the scope objects named in `scopes`: server configuration, as `get-scope` returns.
+      expand: {query: expand, allowed_values: [scope]}
+    paginate: link
+    page_size: 200
+    view: [id, status, userId, created, expiresAt]
+    data_classes: [session, pii]
+
+  get-token:
+    operation: getRefreshTokenForAuthorizationServerAndClient
+    summary: One token
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
+      token: {path_param: tokenId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      expand: {query: expand, allowed_values: [scope]}
+    data_classes: [session, pii]
+
+  list-keys:
+    operation: listAuthorizationServerKeys
+    summary: Signing keys
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+    view: [kid, status, alg, use]
+    data_classes: [credential-material]
+
+  get-key:
+    operation: getAuthorizationServerKey
+    summary: One signing key
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      key: {path_param: keyId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [credential-material]
+
+  list-policies:
+    operation: listAuthorizationServerPolicies
+    summary: Access policies
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+    view: [id, name, status, priority, type]
+    data_classes: [org-config]
+
+  get-policy:
+    operation: getAuthorizationServerPolicy
+    summary: One access policy
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]
+
+  list-policy-rules:
+    operation: listAuthorizationServerPolicyRules
+    summary: Policy rules
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    view: [id, name, status, priority]
+    data_classes: [org-config]
+
+  get-policy-rule:
+    operation: getAuthorizationServerPolicyRule
+    summary: One policy rule
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
+      rule: {path_param: ruleId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]
+
+  # Public keys the server uses to encrypt the tokens it mints (spec tag description).
+  list-resource-server-keys:
+    operation: listOAuth2ResourceServerJsonWebKeys
+    summary: Resource server JWKs
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+    items_key: keys
+    response_override: {kind: wrapped, reason: 'Okta returns {"keys": [...]}; the spec declares a bare array (V8)'}
+    view: [id, kid, status]
+    data_classes: [credential-material]
+
+  get-resource-server-key:
+    operation: getOAuth2ResourceServerJsonWebKey
+    summary: One JWK
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      key: {path_param: keyId, pattern: "^[A-Za-z0-9_-]{1,64}$"}
+    data_classes: [credential-material]
+
+  # `filter` is not exposed: `q` covers the name, and Okta doesn't document what the scope
+  # filter can name.
+  list-scopes:
+    operation: listOAuth2Scopes
+    summary: Custom scopes
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      q: {query: q, arg_rule: {reviewed: "matches the scope name, which is returned"}}
+    paginate: link
+    page_size: 200
+    view: [id, name, displayName, system, consent]
+    data_classes: [org-config]
+
+  get-scope:
+    operation: getOAuth2Scope
+    summary: One custom scope
+    args:
+      server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
+      scope: {path_param: scopeId, pattern: "^[A-Za-z0-9]{1,64}$"}
+    data_classes: [org-config]

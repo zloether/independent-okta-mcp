@@ -1,0 +1,26 @@
+{
+  "source": "generated",
+  "operation": "getOAuth2ResourceServerJsonWebKey",
+  "body": {
+    "id": "apk2f4zrZbs8nUa7p0g4",
+    "kid": "ASHJHGasa782333-Sla3x3POBiIxDreBCdZuFs5B",
+    "kty": "RSA",
+    "alg": "RS256",
+    "use": "enc",
+    "e": "AQAB",
+    "n": "AJncrzOrouIUCSMlRL0HU.....Kuine49_CEVR4GPn=",
+    "status": "INACTIVE",
+    "created": "2023-04-06T21:32:33.000Z",
+    "lastUpdated": "2023-04-06T21:32:33.000Z",
+    "_links": {
+      "delete": {
+        "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/resourceservercredentials/keys/RQ8DuhdxCczyMvy7GNJb4Ka3lQ99vrSo3oFBUiZjzzc/lifecycle/delete",
+        "hints": {
+          "allow": [
+            "DELETE"
+          ]
+        }
+      }
+    }
+  }
+}

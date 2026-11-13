@@ -1,0 +1,75 @@
+{
+  "source": "generated",
+  "operation": "getRefreshTokenForAuthorizationServerAndClient",
+  "body": {
+    "id": "{refreshTokenId}",
+    "status": "ACTIVE",
+    "created": "2023-09-21T19:59:56.000Z",
+    "lastUpdated": "2023-09-21T20:00:38.000Z",
+    "expiresAt": "2023-09-28T20:00:38.000Z",
+    "issuer": "https://example.okta.com/oauth2/{authorizationServerId}",
+    "client_id": "{clientId}",
+    "userId": "{userId}",
+    "scopes": [
+      "offline_access",
+      "openid"
+    ],
+    "_embedded": {
+      "scopes": [
+        {
+          "id": "{scopeID}",
+          "name": "offline_access",
+          "displayName": "Keep you signed in to the app",
+          "description": "This keeps you signed in to the app, even when you aren't using it.",
+          "_links": {
+            "scope": {
+              "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/scopes/{scopeId}",
+              "title": "Keep you signed in to the app"
+            }
+          }
+        },
+        {
+          "id": "{scopeId}",
+          "name": "openid",
+          "displayName": "openid",
+          "description": "Signals that a request is an OpenID request",
+          "_links": {
+            "scope": {
+              "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/scopes/{scopeId}",
+              "title": "openid"
+            }
+          }
+        }
+      ]
+    },
+    "_links": {
+      "app": {
+        "href": "https://example.okta.com/api/v1/apps/{appId}",
+        "title": "My Web App"
+      },
+      "authorizationServer": {
+        "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}",
+        "title": "Authorization Server name"
+      },
+      "self": {
+        "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/clients/{clientId}/tokens/{tokenId}"
+      },
+      "revoke": {
+        "href": "https://example.okta.com/api/v1/authorizationServers/{authorizationServerId}/clients/{clientId}/tokens/{tokenId}",
+        "hints": {
+          "allow": [
+            "DELETE"
+          ]
+        }
+      },
+      "client": {
+        "href": "https://example.okta.com/oauth2/v1/clients/{clientId}",
+        "title": "My Web App"
+      },
+      "user": {
+        "href": "https://example.okta.com/api/v1/users/{userId}",
+        "title": "Joe User"
+      }
+    }
+  }
+}

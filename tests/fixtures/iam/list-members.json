@@ -1,0 +1,36 @@
+{
+  "source": "generated",
+  "operation": "listMembersOfBinding",
+  "body": {
+    "members": [
+      {
+        "id": "irb1qe6PGuMc7Oh8N0g4",
+        "created": "2024-12-19T00:00:00.000Z",
+        "lastUpdated": "2024-12-19T00:00:00.000Z",
+        "_links": {
+          "self": {
+            "href": "https://example.okta.com/api/v1/users/00uuk41Hjga5qGfQ30g3"
+          }
+        }
+      },
+      {
+        "id": "irb1q92TFAHzySt3x0g4",
+        "created": "2024-12-19T00:00:00.000Z",
+        "lastUpdated": "2024-12-19T00:00:00.000Z",
+        "_links": {
+          "self": {
+            "href": "https://example.okta.com/api/v1/groups/00guaxWZ0AOa5NFAj0g3"
+          }
+        }
+      }
+    ],
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/bindings/cr0Yq6IJxGIr0ouum0g3/members"
+      },
+      "binding": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/bindings/cr0Yq6IJxGIr0ouum0g3"
+      }
+    }
+  }
+}

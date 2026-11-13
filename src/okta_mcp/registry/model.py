@@ -157,9 +157,11 @@ class ScopesOverride(_Model):
 
 
 class ResponseOverride(_Model):
-    """For operations whose spec declares a single object but return a list of it (V8)."""
+    """Where Okta's response doesn't have the spec's shape (V8). `list`: the spec declares one
+    object, Okta returns a list of them. `wrapped`: the spec declares a list, Okta returns it
+    inside an object, under the command's `items_key` (`{"keys": [...]}`)."""
 
-    kind: Literal["list"]
+    kind: Literal["list", "wrapped"]
     reason: str = Field(min_length=1)
 
 

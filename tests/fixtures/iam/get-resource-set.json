@@ -1,0 +1,22 @@
+{
+  "source": "generated",
+  "operation": "getResourceSet",
+  "body": {
+    "id": "iamoJDFKaJxGIr0oamd9g",
+    "label": "SF-IT-People",
+    "description": "People in the IT department of San Francisco",
+    "created": "2021-02-06T16:20:57.000Z",
+    "lastUpdated": "2021-02-06T16:20:57.000Z",
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g"
+      },
+      "resources": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/resources"
+      },
+      "bindings": {
+        "href": "https://example.okta.com/api/v1/iam/resource-sets/iamoJDFKaJxGIr0oamd9g/bindings"
+      }
+    }
+  }
+}

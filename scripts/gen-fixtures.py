@@ -115,8 +115,11 @@ def raw_spec() -> dict[str, Any]:
 
 def body(spec: Mapping[str, Any], command: Command) -> Any:
     """The fixture body: the first spec example of the 200 response, else a synthesized one;
-    wrapped in a list when the registry reads the response as one (`response_override`) or the
-    spec's schema is an array whose examples show one item (`listAuthenticatorMethods`)."""
+    wrapped in a list when the registry reads the response as one (`response_override` list) or
+    the spec's schema is an array whose examples show one item (`listAuthenticatorMethods`);
+    unwrapped from a one-item list under an object schema (`getOAuth2Claim`); and a list in an
+    object under `items_key` for `response_override` wrapped
+    (`listOAuth2ResourceServerJsonWebKeys`)."""
     synth = Synth(spec, f"{command.domain}.{command.name}")
     op = cast(dict[str, Any], spec["paths"][command.operation.path]["get"])
     ok = synth.deref(op.get("responses", {}).get("200", {}))
@@ -135,10 +138,23 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     spec_list = command.operation.response.kind == "list"
     if spec_list and not isinstance(value, list) and _item_like(value, command):
         value = [value]
+    # And the reverse: under an object schema, a one-item list of an object is that object
+    # (`getOAuth2Claim`'s example is the list example). Longer lists stay, and fail the test.
+    one = cast(list[Any], value) if isinstance(value, list) else []
+    if (
+        command.operation.response.kind == "object"
+        and command.entry.response_override is None
+        and len(one) == 1
+        and _item_like(one[0], command)
+    ):
+        value = one[0]
     if found and not (spec_list and not isinstance(value, list)):
         value = _fill_view(value, lambda: synth.value(content.get("schema")), command)
-    if command.entry.response_override is not None and not isinstance(value, list):
+    override = command.entry.response_override
+    if override is not None and override.kind == "list" and not isinstance(value, list):
         value = [value]
+    if override is not None and override.kind == "wrapped" and isinstance(value, list):
+        value = {command.entry.items_key: value}
     return Neutralizer()(value)
 
 
