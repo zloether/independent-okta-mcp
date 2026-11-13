@@ -174,7 +174,7 @@ def test_visibility_follows_roles(shipped: Resources) -> None:
     # The pilot policy's admin role allows every domain, but without `include_sensitive` for
     # logs, sessions, api-tokens and oauth-client-roles, whose commands are all sensitive:
     # their guides stay hidden. iam, authorization-servers, identity-providers (linked users)
-    # and org-settings have normal commands.
+    # and org-settings have normal commands; every device domain is normal.
     assert uris(_who(ADMINS)) == [
         *refs,
         "okta://guide/apps",
@@ -182,6 +182,10 @@ def test_visibility_follows_roles(shipped: Resources) -> None:
         "okta://guide/authenticators",
         "okta://guide/authorization-servers",
         "okta://guide/behaviors",
+        "okta://guide/device-assurance",
+        "okta://guide/device-integrations",
+        "okta://guide/device-posture",
+        "okta://guide/devices",
         "okta://guide/groups",
         "okta://guide/iam",
         "okta://guide/identity-providers",

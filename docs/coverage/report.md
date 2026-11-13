@@ -7,11 +7,11 @@ the registry and the pinned spec 2026.42.1. Do not edit; rerun the script.
 
 | Kind | Commands | Done |
 |---|---|---|
-| simple | 168 | 155 |
+| simple | 168 | 167 |
 | resolved | 30 | 29 |
 | composite (post-v1) | 4 | — |
 | excluded | 4 | — |
-| **total** | **206** | **184** |
+| **total** | **206** | **196** |
 
 Gotcha endpoints (record a fixture): 6, 1 to do
 
@@ -25,10 +25,10 @@ Gotcha endpoints (record a fixture): 6, 1 to do
 | authenticators | 6 | 6 | 0 | 0 | 0 | 6 | 0 |
 | authorization-servers | 18 | 18 | 0 | 0 | 0 | 18 | 0 |
 | behaviors | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
-| device-assurance | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
-| device-integrations | 2 | 2 | 0 | 0 | 0 | 0 | 2 |
-| device-posture | 3 | 3 | 0 | 0 | 0 | 0 | 3 |
-| devices | 5 | 5 | 0 | 0 | 0 | 0 | 5 |
+| device-assurance | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
+| device-integrations | 2 | 2 | 0 | 0 | 0 | 2 | 0 |
+| device-posture | 3 | 3 | 0 | 0 | 0 | 3 | 0 |
+| devices | 5 | 5 | 0 | 0 | 0 | 5 | 0 |
 | groups | 12 | 12 | 0 | 0 | 0 | 12 | 0 |
 | iam | 20 | 20 | 0 | 0 | 0 | 20 | 0 |
 | identity-providers | 12 | 12 | 0 | 0 | 0 | 12 | 0 |
@@ -46,10 +46,6 @@ Gotcha endpoints (record a fixture): 6, 1 to do
 ## To do
 
 - **apps**: list-jwks
-- **device-assurance**: list, get
-- **device-integrations**: list, get
-- **device-posture**: list, get, list-defaults
-- **devices**: list, get, get-users, get-os-accounts, get-os-account
 - **users**: get-linked-objects
 
 ## Registry commands outside the catalogue

@@ -1,0 +1,63 @@
+domain: devices
+description: Read devices, their users and OS accounts (read-only).
+# A device is a user's: its profile holds the name the user gave it and hardware identifiers
+# (serial number, IMEI, MEID, UDID, Windows SID), so every command is pii, as `users
+# get-devices` is. No declared field is a secret: `registrationGrants` items hold IDs and
+# status, `profile.tpmPublicKeyHash` is a public key's hash. `get-users` returns Okta users
+# (scrub.yaml redacts their credentials, as everywhere).
+#
+# IDs follow the spec's examples: devices `guo` + 17, OS accounts `dao` + 17. No spec path has a
+# literal sibling of `{deviceId}` or `{osAccountId}`. The spec declares no paging for `get-users`
+# or `get-os-accounts` (unverified live, plan 5.6).
+commands:
+  # `search` names device properties (`profile.*`, `id`, `status`, `lastUpdated`): the engine
+  # checks the attributes named (design §9.2). `expand` closed to the user embeds the list schema
+  # declares (`_embedded.users`, pii like the device); `capabilities` has no declared shape, so it is not offered.
+  # `fields` is not exposed (`select` does that, after scrubbing).
+  list:
+    operation: listDevices
+    summary: List or search devices
+    args:
+      search: {query: search, arg_rule: {attribute_expression: true}}
+      expand: {query: expand, allowed_values: [user, userSummary]}
+    paginate: link
+    page_size: 200
+    view: [id, status, profile.displayName, profile.platform, profile.osVersion, profile.managed]
+    data_classes: [pii]
+
+  get:
+    operation: getDevice
+    summary: Get a device
+    args:
+      device: {path_param: deviceId, pattern: "^guo[A-Za-z0-9]{17}$"}
+    data_classes: [pii]
+
+  get-users:
+    operation: listDeviceUsers
+    summary: Users of a device
+    args:
+      device: {path_param: deviceId, pattern: "^guo[A-Za-z0-9]{17}$"}
+    view: [user.id, user.profile.login, managementStatus, screenLockType, created]
+    data_classes: [pii]
+
+  # `expand` can embed the OS account's linked enrollments (Platform SSO, Desktop MFA) and their
+  # offline factors (types, security-key serial numbers): MFA state. One query param takes all
+  # three values, so passing it at all raises the call to sensitive; `get-users` gives a
+  # device's users without it.
+  get-os-accounts:
+    operation: listDeviceOSAccounts
+    summary: OS accounts on a device
+    args:
+      device: {path_param: deviceId, pattern: "^guo[A-Za-z0-9]{17}$"}
+      expand: {query: expand, arg_rule: {raises_sensitivity_to: sensitive}}
+    view: [id, platform, status, profile.fullName, profile.type, lastSeenAt]
+    data_classes: [pii]
+
+  get-os-account:
+    operation: getDeviceOSAccount
+    summary: One OS account
+    args:
+      device: {path_param: deviceId, pattern: "^guo[A-Za-z0-9]{17}$"}
+      account: {path_param: osAccountId, pattern: "^dao[A-Za-z0-9]{17}$"}
+      expand: {query: expand, arg_rule: {raises_sensitivity_to: sensitive}}
+    data_classes: [pii]

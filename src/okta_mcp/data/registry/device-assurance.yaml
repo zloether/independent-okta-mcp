@@ -1,0 +1,18 @@
+domain: device-assurance
+description: Read device assurance policies (read-only).
+# Policies of OS version, encryption, screen lock and third-party signal requirements: org
+# configuration, no secrets. IDs `dae` + 17 (spec examples). The spec
+# declares no paging for the list (unverified live, plan 5.6).
+commands:
+  list:
+    operation: listDeviceAssurancePolicies
+    summary: List device assurance policies
+    view: [id, name, platform]
+    data_classes: [org-config]
+
+  get:
+    operation: getDeviceAssurancePolicy
+    summary: Get a device assurance policy
+    args:
+      policy: {path_param: deviceAssuranceId, pattern: "^dae[A-Za-z0-9]{17}$"}
+    data_classes: [org-config]

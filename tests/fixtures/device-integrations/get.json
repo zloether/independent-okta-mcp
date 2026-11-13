@@ -1,0 +1,33 @@
+{
+  "source": "generated",
+  "operation": "getDeviceIntegration",
+  "body": {
+    "id": "dindyfy1f7Pv1eoVF0g4",
+    "name": "com.okta.deviceidp",
+    "displayName": "Device Posture Provider",
+    "status": "DEACTIVATED",
+    "platform": "IOS",
+    "metadata": {
+      "type": "DEVICE_IDP",
+      "idpId": "0oa2owlGX5l74kjr60g4"
+    },
+    "_links": {
+      "self": {
+        "href": "https://example.okta.com/api/v1/device-integrations/dindyfy1f7Pv1eoVF0g4",
+        "hints": {
+          "allow": [
+            "GET"
+          ]
+        }
+      },
+      "activate": {
+        "href": "https://example.okta.com/api/v1/device-integrations/dindyfy1f7Pv1eoVF0g4/lifecycle/activate",
+        "hints": {
+          "allow": [
+            "POST"
+          ]
+        }
+      }
+    }
+  }
+}
