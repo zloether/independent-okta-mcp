@@ -213,3 +213,13 @@ async def test_wrapped_override_refuses_other_shapes(body: Any) -> None:
     # The spec's bare array, or another wrapper, is not the recorded shape: fail, don't guess.
     out = await _run_rs_keys(body)
     assert isinstance(out, Failure) and "not the expected list" in out.message
+
+
+@pytest.mark.anyio
+async def test_null_list_fails_on_other_wrapped_commands() -> None:
+    # Only `response_override: wrapped` reads a null list as empty; iam lists must have one.
+    command = REGISTRY.domains["iam"].commands["list"]
+    okta = Okta([(_template(command), {"roles": None})])
+    executor, principal = _executor(okta)
+    out = await executor.execute(Call(principal, "iam", "list", args={}))
+    assert isinstance(out, Failure) and "not the expected list" in out.message

@@ -42,13 +42,13 @@ def _raw_path(url: httpx2.URL) -> str:
     return url.raw_path.decode("ascii")
 
 
-def _items(body: Any, items_key: str | None) -> list[Any]:
+def _items(body: Any, items_key: str | None, null_items: bool) -> list[Any]:
     if items_key is not None:
-        # A wrapper with the key set to null has no items (okta-skills saw `{"keys": null}`).
-        # A wrapper without the key is not the expected shape: a wrong `items_key` must fail,
-        # not read as an empty list forever.
         wrapper = cast(dict[str, Any], body) if isinstance(body, dict) else {}
-        if items_key in wrapper and wrapper[items_key] is None:
+        # Only where the registry says so (`response_override: wrapped`; okta-skills saw
+        # `{"keys": null}`) is a null list empty. A missing key always fails: a wrong
+        # `items_key` must not read as an empty list forever.
+        if null_items and items_key in wrapper and wrapper[items_key] is None:
             return []
         body = wrapper.get(items_key)
     if not isinstance(body, list):
@@ -77,10 +77,12 @@ async def paginate(
     *,
     mode: Mode,
     items_key: str | None = None,
+    null_items: bool = False,
 ) -> AsyncGenerator[tuple[Any, str, int]]:
     """Yield `(item, page, index_in_page)` from `url` with `params` and, by `mode`, the pages
     after it. `page` is the relative path and query that fetched the item's page. Stops at the
-    first page with no items or no next link. Raises `PaginationError`, and whatever
+    first page with no items or no next link. With `null_items`, a wrapper whose `items_key`
+    is null is a page with no items. Raises `PaginationError`, and whatever
     `OktaClient.get` raises."""
     response = await client.get(url, params)
     first = response.url
@@ -90,7 +92,7 @@ async def paginate(
             body = response.json()
         except (ValueError, UnicodeDecodeError):
             body = None
-        items = _items(body, items_key)
+        items = _items(body, items_key, null_items)
         page = _raw_path(response.url)
         for i, item in enumerate(items):
             yield item, page, i

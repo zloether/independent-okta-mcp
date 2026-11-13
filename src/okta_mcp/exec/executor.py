@@ -424,6 +424,11 @@ class Executor:
         cut_by_okta = False
         unpaged = any(a in args for a in entry.unpaged_args)
         resume = options.resume
+        # `response_override: wrapped` (V8): Okta may send the wrapper's list as null.
+        null_items = (
+            entry.response_override is not None and entry.response_override.kind == "wrapped"
+        )
+        key = entry.items_key
         # Before the resolver and any page: a `select` long enough to fill `max_bytes` with the
         # envelope alone fails without an Okta request. Reserved at the most warnings it can get.
         list_budget(
@@ -436,7 +441,9 @@ class Executor:
             # No resolver: the cursor's path params are the resolved ones.
             url = resume_url(command, resume, self._org_url)
             items = after(
-                paginate(self._client, url, mode=entry.paginate, items_key=entry.items_key),
+                paginate(
+                    self._client, url, mode=entry.paginate, items_key=key, null_items=null_items
+                ),
                 resume.skip,
             )
             bound: Mapping[str, str] = resume.path_params
@@ -450,14 +457,16 @@ class Executor:
                 page = [
                     x
                     async for x in paginate(
-                        self._client, url, params, mode="none", items_key=entry.items_key
+                        self._client, url, params, mode="none", items_key=key, null_items=null_items
                     )
                 ]
                 cut_by_okta = len(page) >= cast(int, entry.page_size)
                 items = _replay(page)
             else:
                 mode: Mode = entry.paginate
-                items = paginate(self._client, url, params, mode=mode, items_key=entry.items_key)
+                items = paginate(
+                    self._client, url, params, mode=mode, items_key=key, null_items=null_items
+                )
             bound = path_params(command, resolved)
             warnings = ()
         issue = (

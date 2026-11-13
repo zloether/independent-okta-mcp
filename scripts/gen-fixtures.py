@@ -140,14 +140,14 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
         value = [value]
     # And the reverse: under an object schema, a one-item list of an object is that object
     # (`getOAuth2Claim`'s example is the list example). Longer lists stay, and fail the test.
+    one = cast(list[Any], value) if isinstance(value, list) else []
     if (
         command.operation.response.kind == "object"
         and command.entry.response_override is None
-        and isinstance(value, list)
-        and len(cast(list[Any], value)) == 1
-        and _item_like(cast(list[Any], value)[0], command)
+        and len(one) == 1
+        and _item_like(one[0], command)
     ):
-        value = cast(list[Any], value)[0]
+        value = one[0]
     if found and not (spec_list and not isinstance(value, list)):
         value = _fill_view(value, lambda: synth.value(content.get("schema")), command)
     override = command.entry.response_override

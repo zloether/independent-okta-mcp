@@ -51,7 +51,8 @@ needs them by name or through `include_sensitive`.
 
 ## Gotchas
 
-- Lists are wrapped by Okta and paged by the server. A cursor in the result continues the list.
+- Every list except `list-permissions` and `list-subscriptions` may span pages: when a result
+  says more exist, its cursor continues the list. Those two come back whole.
 - `role` and `set` take an ID or a label. A label with spaces or characters other than
   letters, digits, `.`, `_` and `-` is refused: give the ID instead.
 - `list` shows custom roles only. Standard roles such as `SUPER_ADMIN` are not in it.
