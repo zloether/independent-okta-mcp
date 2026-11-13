@@ -101,7 +101,8 @@ class OktaClient:
         to Okta, nonce and 429 retries included: before the slot and the token are taken, and
         for a 429 retry before the wait. What it raises propagates. `on_sent`
         (`audit.record_sent`) runs once per request actually sent, with the response's status
-        or None for a transport error."""
+        or None for a transport error or a cancellation: a request attempted, which may not
+        have reached Okta."""
         self._http = http
         self._origin = httpx2.URL(org_url)
         self._tokens = tokens

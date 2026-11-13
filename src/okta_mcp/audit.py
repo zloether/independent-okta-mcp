@@ -23,6 +23,7 @@ import contextvars
 import hashlib
 import hmac
 import json
+import logging
 import os
 import sys
 import time
@@ -38,6 +39,8 @@ from okta_mcp.exec.executor import Code, Failure, Success, tool_name
 from okta_mcp.exec.output import REDACTED, ScrubRules
 from okta_mcp.policy.engine import Engine
 from okta_mcp.registry.loader import Registry
+
+log = logging.getLogger(__name__)
 
 NAME_MAX = 64
 """Characters of a caller-sent tool or command name a line carries."""
@@ -115,8 +118,11 @@ def open_sink(target: str, *, stdio: bool) -> Sink:
         return sys.stderr
     if target == "stdout":
         return sys.stdout
-    # Owner-only when created: full-mode args are PII (§12.3). An existing file keeps its mode.
+    # Owner-only when created: full-mode args are PII (§12.3). An existing file keeps its mode,
+    # which is the operator's choice; one others can read is warned about.
     fd = os.open(Path(target), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    if os.fstat(fd).st_mode & 0o077:
+        log.warning("MCP_AUDIT_LOG: the file is readable or writable by others than its owner")
     return os.fdopen(fd, "a", encoding="utf-8", buffering=1)
 
 
@@ -259,10 +265,10 @@ class AuditLog:
         if options:
             line["options"] = options
 
-    def _commands(self, domain: str | None) -> frozenset[str]:
+    def _commands(self, domain: str | None) -> Collection[str]:
         if domain is None:
-            return frozenset()
-        return frozenset(self._registry.domains[domain].commands)
+            return ()
+        return self._registry.domains[domain].commands.keys()
 
     def _caller_name(self, value: object, known: Collection[str]) -> str | None:
         """A tool or command name, or `select`, as the caller sent it: as is if it is one of
@@ -273,7 +279,8 @@ class AuditLog:
         if value in known:
             return value
         if self._mode == "hash":
-            return self._hash(value)
+            # Hashed as an arg value is (its JSON), so the same text matches wherever it was sent.
+            return self._hash(json.dumps(value, sort_keys=True, separators=(",", ":")))
         return _name(value)
 
     def _hash(self, text: str) -> str:

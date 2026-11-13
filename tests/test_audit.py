@@ -327,6 +327,9 @@ def test_hash_mode_hashes_caller_free_text(registry: Registry, engine: Engine) -
     got = line(log, out, "okta_groups", {"command": email}, DENIED)
     assert got["tool"] == "okta_groups" and got["command"].startswith("hmac:")
     log, out = audit(registry, engine, mode="hash")
+    as_arg = line(log, out, "okta_groups", {"command": "list", "args": {"q": email}}, DENIED)
+    assert as_arg["args"]["q"] == got["command"]  # one value, one hash, wherever it was sent
+    log, out = audit(registry, engine, mode="hash")
     got = line(log, out, email, {}, DENIED)
     assert got["tool"].startswith("hmac:")
     log, out = audit(registry, engine, mode="hash")
@@ -376,6 +379,17 @@ def test_open_sink(tmp_path: Path) -> None:
     created = tmp_path / "new.log"
     open_sink(str(created), stdio=False)
     assert created.stat().st_mode & 0o777 == 0o600  # owner-only: args are PII
+
+
+def test_open_sink_warns_on_a_shared_file(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    path = tmp_path / "audit.log"
+    path.touch()
+    path.chmod(0o600)
+    open_sink(str(path), stdio=False)
+    assert "readable or writable by others" not in caplog.text
+    path.chmod(0o644)
+    open_sink(str(path), stdio=False)
+    assert "MCP_AUDIT_LOG: the file is readable or writable by others" in caplog.text
 
 
 def test_collect_counts_only_inside() -> None:
