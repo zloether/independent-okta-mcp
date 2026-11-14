@@ -7,6 +7,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server for the O
 - [Design](docs/design/mcp-server.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [Okta setup](docs/okta-setup.md)
+- [Runbook](docs/runbook.md): deploy, operate, rotate, kill switch
 
 ## Local dev mode (stdio)
 

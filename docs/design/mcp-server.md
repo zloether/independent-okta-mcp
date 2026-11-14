@@ -968,7 +968,7 @@ The `groups` claim carries IDs of Okta-mastered `mcp-okta-*` groups (§8.2; the 
 
 ## Appendix C — Okta setup runbook (outline; verify against current Okta docs)
 
-Steps 1–4 are automated by `scripts/okta-setup.py` or the `terraform/okta/` module ([guide](../okta-setup.md)).
+Steps 1–4 are automated by `scripts/okta-setup.py` or the `terraform/okta/` module ([guide](../okta-setup.md)). The operator's version, with deploy, rotation and kill-switch steps, is [`docs/runbook.md`](../runbook.md).
 
 1. **Dedicated custom AS** (creating one needs the API Access Management add-on in production orgs; [prerequisites](../okta-setup.md#prerequisites)): audience `MCP_PUBLIC_URL`; scope `okta-mcp`; `groups` claim on the access token emitting **IDs** of Okta-mastered `mcp-okta-*` groups (V13; prefix configurable); access-token lifetime ≤30 min; rule scopes include `offline_access`; refresh tokens off (A) or rotating with bounded lifetimes (B, §8.3); access policy limiting clients/users.
 2. **Groups:** create role groups; copy their IDs into the policy (names as comments); keep them out of delegated admins' resource sets and out of group rules, and alert on membership changes (§8.2).
