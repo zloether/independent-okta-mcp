@@ -22,5 +22,6 @@ SAMPLES: dict[str | None, str] = {
     "^din[A-Za-z0-9]{17}$": "dindyfy1f7Pv1eoVF0g4",
     "^okta(\\.[A-Za-z]+){1,6}$": "okta.users.read",
     "^[A-Za-z0-9_]{1,64}$": "SUPER_ADMIN",
+    "^[A-Za-z_][A-Za-z0-9_]{0,255}$": "manager",
     None: "alice@example.com",  # an unpatterned path arg (`users get`)
 }

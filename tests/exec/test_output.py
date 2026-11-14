@@ -213,7 +213,30 @@ def test_links_kept_when_asked() -> None:
     assert render(item, RULES, links=True, cols=("_links.self.href",)) == [
         "https://example.okta.com/x"
     ]
-    assert render(item, RULES, links=False, cols=("_links.self.href",)) == [None]
+    assert render(item, RULES, links=False, cols=("_links.self",)) == [None]
+
+
+def test_a_link_href_column_is_kept_without_links() -> None:
+    # 5.1: a column naming one link's `href` is an explicit ask (a view or `select`), so
+    # `links: false` doesn't blank it; only whole link objects are dropped.
+    item = {
+        "id": "00u1",
+        "_links": {"self": {"href": "https://example.okta.com/api/v1/users/00u2", "hints": {}}},
+    }
+    cols = ("id", "_links.self.href", "_links.self", "_links.manager.href", "_links")
+    assert render(item, RULES, links=False, cols=cols) == [
+        "00u1",
+        "https://example.okta.com/api/v1/users/00u2",
+        None,
+        None,
+        None,
+    ]
+
+
+def test_a_link_href_column_is_scrubbed() -> None:
+    item = {"_links": {"qrcode": {"href": "https://example.okta.com/api/v1/users/00u1/qr?t=x"}}}
+    assert render(item, RULES, links=False, cols=("_links.qrcode.href",)) == [None]
+    assert render(item, RULES, links=True, cols=("_links.qrcode.href",)) == [None]
 
 
 def test_prune() -> None:

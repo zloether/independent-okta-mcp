@@ -87,6 +87,13 @@ def test_default_posture_check_view_has_no_empty_column(registry: Registry) -> N
     assert None not in render(item, load_scrub(), links=False, cols=view)
 
 
+def test_default_posture_checks_follow_next_links(registry: Registry) -> None:
+    # The dev org pages `list-defaults` at 50 though the spec declares no paging (2026-11-13);
+    # the spec has no `limit`, so none is sent and Okta picks the page size.
+    entry = registry.domains["device-posture"].commands["list-defaults"].entry
+    assert (entry.paginate, entry.page_size) == ("link", None)
+
+
 def test_scope_sets(registry: Registry) -> None:
     want = {
         "devices": "okta.devices.read",

@@ -58,7 +58,8 @@ commands:
     summary: Apps mapped to a policy
     args:
       policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
-    view: [id]
+    # Items are an id plus `_links`; the application link is the mapped app.
+    view: [id, _links.application.href]
     data_classes: [org-config]
 
   get-mapping:

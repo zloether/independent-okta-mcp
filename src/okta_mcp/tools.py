@@ -137,7 +137,13 @@ class Tools:
                         'default view, "*" for whole objects.'
                     ),
                 },
-                "links": {"type": "boolean", "description": "Keep _links (default false)."},
+                "links": {
+                    "type": "boolean",
+                    "description": (
+                        "Keep whole _links objects (default false). A select of one link's "
+                        "href (_links.self.href) returns it either way."
+                    ),
+                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,

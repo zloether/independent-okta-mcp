@@ -12,7 +12,7 @@ from typing import Annotated, Any, cast
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from okta_mcp.registry.loader import UniqueKeyLoader
+from okta_mcp.registry.loader import UniqueKeyLoader, link_href
 from okta_mcp.registry.schema import InvalidArguments
 
 SCRUB = files("okta_mcp") / "data" / "scrub.yaml"
@@ -154,10 +154,11 @@ def _pick(value: Any, keys: list[str]) -> Any:
 
 def render(item: Any, rules: ScrubRules, *, links: bool, cols: tuple[str, ...] | None) -> Any:
     """`item` as output: a row of `cols` values (cells keep `null`, so columns never shift), or
-    with `cols` `None` the pruned whole object."""
+    with `cols` `None` the pruned whole object. A `link_href` column is read from the scrubbed
+    item whatever `links` says: it is an explicit ask for one URL, which `links: true` would
+    show anyway (users get-linked-objects returns nothing else)."""
     item = scrub(item, rules)
-    if not links:
-        item = strip_links(item)
+    stripped = item if links else strip_links(item)
     if cols is None:
-        return prune(item)
-    return [pick(item, c) for c in cols]
+        return prune(stripped)
+    return [pick(item if link_href(c) else stripped, c) for c in cols]

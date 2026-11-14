@@ -601,7 +601,18 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
     # T1 D5 views
     "list-without-view": (_with(GET_GROUPS, view=None), "list commands need a view"),
     "view-path-not-in-schema": (_with(GET_GROUPS, view=["id", "nope"]), "view path nope"),
-    "view-path-in-links": (_with(GET, view=["_links.self"]), "_links are never in a view"),
+    "view-path-in-links": (
+        _with(GET, view=["_links.self"]),
+        "the only _links paths in a view are _links.<rel>.href",
+    ),
+    "view-path-nested-link-href": (
+        _with(GET, view=["_links.self.hints.href"]),
+        "the only _links paths in a view are _links.<rel>.href",
+    ),
+    "view-link-href-not-in-schema": (
+        _with(GET, view=["_links.nope.href"]),
+        "view path _links.nope.href is not in",
+    ),
     "view-duplicate-path": (_with(GET_GROUPS, view=["id", "id"]), "duplicate paths"),
     # Model shape
     "handler": (_with(GET, handler="okta_mcp.handlers.x"), "post-v1"),

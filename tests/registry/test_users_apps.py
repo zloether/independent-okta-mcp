@@ -15,9 +15,8 @@ def _commands(registry: Registry, domain: str) -> dict[str, str]:
 
 
 def test_users_commands(registry: Registry) -> None:
-    # Catalogue `search` is `list` with `q`/`search` (T1 D3). Left out, recorded in the plan:
-    # `get-linked-objects` (items hold only `_links`, which no view can name) and
-    # `get-factors-questions` (excluded: SSWS only).
+    # Catalogue `search` is `list` with `q`/`search` (T1 D3). Left out: `get-factors-questions`
+    # (excluded: SSWS only).
     assert set(_commands(registry, "users")) == {
         "list",
         "get",
@@ -25,6 +24,7 @@ def test_users_commands(registry: Registry) -> None:
         "get-apps",
         "get-blocks",
         "get-idps",
+        "get-linked-objects",
         "get-factors",
         "get-factor",
         "get-factor-transaction",
@@ -237,3 +237,14 @@ def test_factor_transaction_id_shape(registry: Registry) -> None:
     for bad in (".", "..", ".x", "a/b"):
         with pytest.raises(InvalidArguments, match="arg 'txn'"):
             validate_args(cmd, {**args, "txn": bad})
+
+
+def test_linked_objects_view_is_the_user_link(registry: Registry) -> None:
+    # 5.1: items are only `_links.self` (the spec's `ResponseLinks`), so the view names its href.
+    cmd = registry.domains["users"].commands["get-linked-objects"]
+    assert cmd.entry.view == ("_links.self.href",)
+    assert cmd.operation.reserved["userIdOrLogin"] == frozenset({"me"})
+    for bad in ("1manager", "manager-x", "a" * 257, "me/x"):
+        with pytest.raises(InvalidArguments, match="arg 'relationship'"):
+            validate_args(cmd, {"user": "00u1emaKYZTWRYYRRTSK", "relationship": bad})
+    validate_args(cmd, {"user": "00u1emaKYZTWRYYRRTSK", "relationship": "manager"})
