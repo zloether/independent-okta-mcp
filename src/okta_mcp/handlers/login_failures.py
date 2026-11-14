@@ -285,6 +285,10 @@ def _cause(e: _Event) -> str | None:
         return None
     if t.startswith("app.oauth2.") and reason in _BENIGN_REASONS:
         return None
+    if t.startswith("app.oauth2."):
+        # Before the reason-text causes: the actor is the client (or whoever asked), so the
+        # event's IP mustn't land in a cause that shows IPs (security review, 9.1).
+        return "oauth_token_error"
     if t.startswith(_LOCK) or "LOCKED_OUT" in reason:
         return "locked_out"
     if "PASSWORD_EXPIRED" in reason or "password expired" in low:
@@ -305,8 +309,6 @@ def _cause(e: _Event) -> str | None:
         return "idp_failure"
     if "abandoned" in low or "unanswered" in low:
         return "mfa_abandoned"
-    if t.startswith("app.oauth2."):
-        return "oauth_token_error"
     credential = _str(_at(e.raw, "authenticationContext.credentialType")).upper()
     if t == "user.authentication.auth_via_mfa" or (
         t == "user.authentication.verify" and credential not in ("", "PASSWORD")
@@ -526,7 +528,7 @@ def _behaviors(events: list[_Event]) -> dict[str, int]:
 def _clients(events: list[_Event]) -> list[dict[str, Any]]:
     counts: Counter[tuple[str, str]] = Counter()
     for e in events:
-        if e.event_type.startswith("app.oauth2."):
+        if e.event_type.startswith("app.oauth2.") and _at(e.raw, "actor.type") != "User":
             key = (_cap(_str(_at(e.raw, "actor.id"))), _cap(_str(_at(e.raw, "actor.displayName"))))
             if any(key):
                 counts[key] += 1

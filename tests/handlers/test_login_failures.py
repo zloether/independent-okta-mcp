@@ -628,6 +628,8 @@ async def test_token_failures_count_but_the_dpop_handshake_does_not(ex: Executor
         event("app.oauth2.token.grant", reason="use_dpop_nonce", actor=client, targets=user),
         event("app.oauth2.token.grant", reason="invalid_grant", actor=client, targets=user),
     ]
+    for e in org.events:
+        e["actor"]["type"] = "PublicClientApp"
     out = await diagnose(ex)
     tokens = cause(out, "oauth_token_error")
     assert tokens["count"] == 1 and tokens["reasons"] == {"invalid_grant": 1}
@@ -869,3 +871,16 @@ async def test_many_distinct_rules_are_capped(ex: Executor, org: Org) -> None:
     policies = cause(out, "sign_on_policy_deny")["policies"]
     assert len(policies) == 10
     assert all(len(p["rule_name"]) == 200 for p in policies)
+
+
+@pytest.mark.anyio
+async def test_a_token_event_never_shows_the_requester_s_ip(ex: Executor, org: Org) -> None:
+    user = [{"id": UID, "type": "User"}]
+    org.events = [
+        event(
+            "app.oauth2.token.grant", reason="request blocked by threat", actor=OTHER, targets=user
+        ),
+    ]
+    out = await diagnose(ex)
+    tokens = cause(out, "oauth_token_error")
+    assert "ips" not in tokens and "clients" not in tokens  # a User actor isn't a client
