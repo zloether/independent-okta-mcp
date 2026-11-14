@@ -37,7 +37,8 @@ jobs:
       - run: uv run pip-audit --skip-editable
 
   container:
-    # Plan 7.1: build the image, check how it runs (tests/container), scan it.
+    # Plans 7.1, 7.2: build the image, check how it runs, alone and from
+    # docker/compose.example.yaml (tests/container), scan it.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

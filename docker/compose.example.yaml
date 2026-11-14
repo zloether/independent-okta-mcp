@@ -1,0 +1,102 @@
+# Example deployment (design §11.4, plan 7.2). Until an image is published this builds from
+# the repo checkout, so run it from this directory of the checkout: fill in the values marked
+# CHANGE, copy policy.example.yaml to policy.yaml and edit it, put the secrets in ./secrets/
+# (policy.yaml and secrets/ are git-ignored here), then:
+#
+#   docker compose -f compose.example.yaml up -d
+#   curl -s http://127.0.0.1:8080/readyz
+#
+# `pull_policy: build` rebuilds on every `up`, so a `git pull` takes effect. With a published
+# image, delete `build:` and `pull_policy:`; then the directory can live anywhere.
+#
+# TLS terminates at a reverse proxy in front of this port (Caddy, nginx, a load balancer); the
+# container speaks plain HTTP and must never be reachable by anything but that proxy.
+#
+# The secret files and policy.yaml must be readable by the container's user, uid 10001:
+# Compose bind-mounts each as it is on the host, owner and mode included, and ignores
+# `uid`/`gid`/`mode` for a file secret. For example
+#   sudo chown 10001:10001 secrets/* policy.yaml && sudo chmod 0400 secrets/* policy.yaml
+# The server checks only that it can read them. Rotation = replace the file, then restart.
+
+name: okta-mcp
+
+services:
+  okta-mcp:
+    # CHANGE: pin a released tag and digest (image:tag@sha256:...) once one is published; until
+    # then build from the repo checkout. Never :latest.
+    image: okta-mcp:local
+    build:
+      context: ..
+    pull_policy: build
+    restart: unless-stopped
+
+    # Runtime privileges. The image already runs as uid 10001 with no setuid binaries; these
+    # take away what is left: a read-only root filesystem (the server writes nothing; the audit
+    # log goes to stdout), no Linux capabilities, no privilege gain through exec.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    user: "10001:10001"
+
+    # Network exposure (design §11.4). Published on loopback only: Docker's published ports
+    # skip host firewalls such as ufw, so "0.0.0.0:8080" or a bare "8080:8080" would put the
+    # unencrypted port on every interface. The proxy runs on this host and connects to
+    # 127.0.0.1:8080.
+    ports:
+      - "127.0.0.1:8080:8080"
+    # Alternative: run the proxy as a container on a shared network and publish nothing.
+    # Delete `ports:` above and uncomment these, and the `networks:` section at the end.
+    # networks: [proxy]
+
+    environment:
+      # CHANGE: your values. Full reference: design §11.3.
+      MCP_PUBLIC_URL: https://mcp.example.com/mcp           # what clients connect to, via the proxy
+      MCP_ISSUER: https://example.okta.com/oauth2/aus1example000000000
+      MCP_ALLOWED_CLIENT_IDS: 0oa1client0000000000          # comma list of MCP client app IDs
+      OKTA_ORG_URL: https://example.okta.com
+      OKTA_CLIENT_ID: 0oa1service000000000                  # the service app
+      OKTA_KEY_ID: example-kid                              # the kid scripts/okta-setup.py printed
+      OKTA_SCOPES: okta.users.read okta.groups.read         # exactly what the service app was granted
+
+      # Fixed by this file: secrets and the policy are files, mounted below.
+      MCP_POLICY_FILE: /etc/okta-mcp/policy.yaml
+      MCP_CURSOR_KEY_FILE: /run/secrets/cursor_key
+      OKTA_PRIVATE_KEY_FILE: /run/secrets/okta_private_key
+
+      # X-Forwarded-* is honored from ANY peer when this is true: the server does not check
+      # which address sent it. That is safe only when nothing but the proxy can reach the port
+      # (the loopback binding above, or no published port), so check from another host before
+      # turning it on. It changes only the client address in logs; identity, limits and audit
+      # key on the token's uid.
+      MCP_TRUST_PROXY: "false"
+
+    secrets:
+      - cursor_key
+      - okta_private_key
+    volumes:
+      # The policy decides who may call what: read-only, so a compromised process can't widen
+      # it. Start from policy.example.yaml. Changes take effect on restart.
+      # create_host_path: false makes a missing ./policy.yaml an error at `up`, where Docker
+      # would otherwise create an empty directory in its place.
+      - type: bind
+        source: ./policy.yaml
+        target: /etc/okta-mcp/policy.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+
+    # Health: the image's HEALTHCHECK probes /healthz. /readyz (JWKS loaded, service token
+    # held) is for the proxy or an orchestrator.
+    stop_grace_period: 30s
+
+secrets:
+  cursor_key:
+    # 32+ random bytes, base64:  head -c 32 /dev/urandom | base64 > secrets/cursor_key
+    file: ./secrets/cursor_key
+  okta_private_key:
+    # The service app's private key, unencrypted PEM (RSA >= 2048 bits).
+    file: ./secrets/okta_private_key.pem
+
+# networks:
+#   proxy:
+#     external: true      # created by, and shared with, the proxy's compose project
