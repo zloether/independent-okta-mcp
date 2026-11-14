@@ -458,6 +458,25 @@ Verify: someone (or a fresh Claude session) follows the runbook on a clean machi
 - [ ] Complete `docs/compatibility-matrix.md` for all target clients (Path A)
 - [ ] E2E checklist: groups claim; per-role tool lists; revocation (A: group removal takes effect within one access-token lifetime; B: group removal and role changes at the next refresh, token revocation ends the chain, an expired Okta session doesn't); 429 behavior under load
 
+### 8.2.1 Live-org CI 🔒 ☐
+Design: §14, §6.4, §12.1 · Depends: 5.x, 7.2, 0.5 · Decided 2026-11-14 (see the decisions log)
+
+Live checks of what only Okta decides: the service token, routing, response shapes, roles and paging. The user side stays on the local test issuer: automating a real Okta sign-in needs a user that gets tokens unattended (password grant, or MFA off), which weakens the org being tested.
+
+- [ ] **Org and service app:** a long-lived developer org (the trial org expires); a CI-only service app made by `scripts/okta-setup.py` (DPoP on, its own key, the roles `SCOPE_ROLES` requires). Find out whether Okta accepts GitHub OIDC tokens in place of a stored key; if not, the key is a GitHub Environment secret
+- [ ] **Seed data** by Terraform or the setup script, never by CI: a known user, group, app and policy, and a group large enough to page. Tests find IDs by name or from a checked-in map of non-secret IDs
+- [ ] **Workflow** `live.yml`: `schedule` (nightly), `workflow_dispatch`, `push` to `main`; **never `pull_request`**. Environment `okta-dev`, `concurrency: okta-live`, `permissions: contents: read`, a low `MCP_REQUESTS_PER_MINUTE`. A failure opens an issue; it does not gate merges (Okta releases and org drift fail it as often as code does)
+- [ ] **Output hygiene:** `tests/live/` asserts only on derived values (status codes, error codes, key sets, lengths), never on body values, since pytest prints both sides of a failed `assert`; run with `--tb=line`. A test fails if a known secret-like value appears in captured output
+- [ ] **Checks:**
+  1. Service token: nonce retry, `DPoP` token type (a `Bearer` downgrade fails), second call served from the cache
+  2. Every registry command once through the executor: no `E0000006` (keeps V6 current), every view field present, paged lists follow `next`
+  3. Schema drift and secret canary: live keys vs the pinned spec's schema; fail on a new key that looks secret- or credential-like or is not covered by `scrub.yaml` (keeps V14 current); report other new keys
+  4. Path-routing probes from the 2.10 dev-org check (`me;x`, `.json` suffixes, `groups/rules`); run before and after the 8.1 `.`-rule change
+  5. The image with the live service app and a policy, user tokens from the local test issuer: one `tools/call` per role
+- [ ] **Not in CI:** 429 behavior and V16 (a shared bucket), Okta sign-in / MFA / refresh (4.6, 8.2 manual), anything that writes
+
+Verify: a manual `workflow_dispatch` run is green; a planted failure (a command whose role is removed, a view naming a missing field) fails it with no response body in the log; `/security-review` of the workflow and `tests/live/`.
+
 ### 8.3 Documentation pass ☐
 - [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed)
 
@@ -694,3 +713,4 @@ Verify: all phases ☑; CI green on tag.
 | 2026-11-14 | 7.2 | `/security-review` of `origin/main...6273a3a` (Opus subagent): **no findings**. Checked: loopback-only port, no privileges or added capabilities, the one bind read-only, no secret values in `environment` (so none in `docker inspect`), `MCP_TRUST_PROXY` (grep of `src/` finds no use of client address, scheme or Host beyond logging; PRM uses `MCP_PUBLIC_URL`), the `.dockerignore` allow-list keeping `docker/secrets/` and `policy.yaml` out of the build context. Noted, not changed: under the commented shared-network option, other containers on that network can reach plain HTTP and could see bearer tokens in transit; the comment already limits that network to the proxy, and the runbook (7.3) should repeat it | |
 | 2026-11-14 | 7.2 | **Compose bring-up in CI** (user request). `tests/container/test_compose.py`, in the existing `container` job (no workflow step: it skips without `OKTA_MCP_IMAGE` like the image tests): the example plus a test-only override that swaps in the image under test and sets an egress proxy that doesn't exist (the placeholder org and issuer are real-looking hostnames), files in a temp `--project-directory`, `up --no-build --wait`; then `docker inspect` shows read-only root FS, `CapDrop [ALL]`, no `CapAdd`, not privileged, `SecurityOpt` exactly `no-new-privileges:true`, user 10001, exactly the three expected mounts all read-only, the one binding `127.0.0.1:8080`, health `healthy`; `/healthz` 200 and `/readyz` 503 through the published port. A plain `compose config` step was dropped: Compose 5.6.1's `config` doesn't check that secret or bind sources exist, so it catches only syntax, which the static test already parses. `--no-build` overrides `pull_policy: build` (checked). Mutation check: a bare `8080:8080` port, or `read_only: false`, each fails a test | 4 tests |
 | 2026-11-14 | 7.2 | `/code-review low` of `028d299`: **no findings**. No `/security-review`: the commit adds a container test and changes a CI comment and docs; the compose file and Dockerfile are unchanged | |
+| 2026-11-14 | 8.2.1 | **Live-org CI planned (user decision).** Live checks cover only the Okta side (service token, routing, shapes, roles, paging, a schema-drift and secret canary); user tokens stay on the local test issuer, since an unattended real sign-in needs a password grant or MFA off on the org under test. Nightly, on demand and on `main` only, never on `pull_request`; a failure opens an issue and does not gate merges. Marked 🔒: the workflow holds a service-app key and its tests must not print result bodies (pytest prints both sides of a failed `assert`). Open: whether Okta accepts GitHub OIDC tokens in place of a stored key | |
