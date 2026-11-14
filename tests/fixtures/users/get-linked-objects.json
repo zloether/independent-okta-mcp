@@ -1,0 +1,13 @@
+{
+  "source": "generated",
+  "operation": "listLinkedObjectsForUser",
+  "body": [
+    {
+      "_links": {
+        "self": {
+          "href": "https://example.okta.com/api/v1/users/00u5t60iloOHN9pBi0h7"
+        }
+      }
+    }
+  ]
+}

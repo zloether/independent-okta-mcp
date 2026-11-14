@@ -42,6 +42,18 @@ paths:
   - apiKey                                     # Persona IdP protocol.credentials.bearer
   # Event and inline hook headers are `{key, value}` pairs; any of them may carry a credential.
   - channel.config.headers.value
+  # Private JWK members (RFC 7518 §6.2.2, §6.4), in case an admin pasted a private key into an
+  # app's client JWKS: Okta documents public keys only there (8.1 sweep). Bare keys, so every
+  # shape matches (`jwks.keys`, `{"keys": …}`, one JWK from `apps get-jwk`, `oth`). No pinned-spec
+  # schema has a property with these names; a custom profile attribute named so is redacted too.
+  - d
+  - p
+  - q
+  - dp
+  - dq
+  - qi
+  - oth
+  - k
 strings:
   # Objects elsewhere: password policy `settings.password` and
   # `settings.recovery.factors.okta_email.properties.recoveryToken`, OIDC app

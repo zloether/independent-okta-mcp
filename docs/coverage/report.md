@@ -8,10 +8,10 @@ the registry and the pinned spec 2026.42.1. Do not edit; rerun the script.
 | Kind | Commands | Done |
 |---|---|---|
 | simple | 168 | 167 |
-| resolved | 30 | 29 |
+| resolved | 30 | 30 |
 | composite (post-v1) | 4 | — |
 | excluded | 4 | — |
-| **total** | **206** | **196** |
+| **total** | **206** | **197** |
 
 Gotcha endpoints (record a fixture): 6, 1 to do
 
@@ -41,12 +41,11 @@ Gotcha endpoints (record a fixture): 6, 1 to do
 | schemas | 13 | 13 | 0 | 0 | 0 | 13 | 0 |
 | security | 6 | 4 | 0 | 0 | 2 | 4 | 0 |
 | sessions | 1 | 1 | 0 | 0 | 0 | 1 | 0 |
-| users | 34 | 3 | 30 | 0 | 1 | 32 | 1 |
+| users | 34 | 3 | 30 | 0 | 1 | 33 | 0 |
 
 ## To do
 
 - **apps**: list-jwks
-- **users**: get-linked-objects
 
 ## Registry commands outside the catalogue
 

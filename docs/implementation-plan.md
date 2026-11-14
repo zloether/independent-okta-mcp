@@ -29,7 +29,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 | 5. Registry authoring (all domains) | 5.0–5.7 | ◐ |
 | 6. Audit, limits, logging | 6.1–6.2 | ◐ |
 | 7. Packaging & deployment | 7.1–7.3 | ◐ |
-| 8. Hardening & release | 8.1–8.4 | ☐ |
+| 8. Hardening & release | 8.1–8.4 | ◐ |
 
 **Ordering note vs design §15:** the MCP server (Phase 4) comes *before* bulk registry authoring (Phase 5), so two pilot domains run end to end early and every later registry entry can be smoke-tested through the real server.
 
@@ -382,12 +382,12 @@ plus manual dev-org smoke of each new command; V14 review (does any "normal" com
 
 | Step | Domains | Notes | Status |
 |---|---|---|---|
-| 5.1 | users, apps | Largest; `user_id` resolver; `get-factors`/`get-enrollments` simple; `expand` rules. Registry, fixtures, guides done; **open:** dev-org smoke, V14 review, V6 role for `okta.userRisk.read` (not offered by the trial org; the other new scopes are in `SCOPE_ROLES`, 2026-11-13), `users get-linked-objects` (loader can't express it yet), `apps list-jwks` (5.4 added `response_override: wrapped`, but the spec example shows `{"jwks": {"keys": …}}` and okta-skills `{"keys": …}`: record it live first), whether users/groups `search` on an object (`profile co "x"`) matches inside it (5.3 review) | ◐ |
+| 5.1 | users, apps | Largest; `user_id` resolver; `get-factors`/`get-enrollments` simple; `expand` rules. Registry, fixtures, guides done; **open:** dev-org smoke, V14 review, V6 role for `okta.userRisk.read` (not offered by the trial org; the other new scopes are in `SCOPE_ROLES`, 2026-11-13), `apps list-jwks` (5.4 added `response_override: wrapped`, but the spec example shows `{"jwks": {"keys": …}}` and okta-skills `{"keys": …}`: record it live first), whether users/groups `search` on an object (`profile co "x"`) matches inside it (5.3 review) | ◐ |
 | 5.2 | policies, authenticators, network-zones (done in 1.6), behaviors, attack-protection | Security-analyst role coverage. Registry, fixtures, guides done; **open:** dev-org smoke, V14 review, live shape of the two attack-protection settings (object or one-item list), whether Okta pages policies `q` and policy rules | ◐ |
 | 5.3 | logs (simple commands only), sessions, security | Mostly `sensitive`; free-form `filter` rules; SSF stream secret. Registry, fixtures, guides done; SSF stream commands excluded; **open:** dev-org smoke, V14 review, V6 role for `okta.sessions.read` (`sessions get` fails DPoP `htu` validation) and `okta.botProtection.read` (not offered by the trial org), whether `debugContext.debugData` string values (`url`, `requestUri`) carry tokens (V14: key-based scrubbing can't see them; `filter` can't name them), whether session IDs are ever under 20 characters | ◐ |
 | 5.4 | iam, oauth-client-roles, api-tokens, authorization-servers | Admin roles / credential material; wrapped lists (`items_key`, `link_or_body`). Registry, fixtures, guides done; `response_override: wrapped` for `list-resource-server-keys`; **open:** dev-org smoke, V14 review, `authorization-servers list-associated` needs `trusted` (400 without it), live shape of `list-resource-server-keys` (`{"keys": …}`), `list-scopes` and `list-bundles` page sizes (200 and 20, no spec maximum), whether `list-tokens` is empty for a missing permission | ◐ |
 | 5.5 | identity-providers, schemas, org-settings, realms | IdP `client_secret` scrub. Registry, fixtures, guides done; **open:** dev-org smoke, V14 review, V6 role for `okta.realms.read`, `okta.realmAssignments.read` (not offered by the trial org), live shape and role of `list-support-cases` (spec schema wraps in `supportCases`, spec example is a bare array; 403 on an org without a support contract), whether realm `search` takes more than `profile.name co`, whether Read-only Admin reads YubiKey tokens (`okta.users.read`, already in `SCOPE_ROLES`), a view path for fields the spec omits (`list-log-stream-schemas` items carry `$id`, so its view lost `id`, 2026-11-13) | ◐ |
-| 5.6 | devices, device-assurance, device-posture, device-integrations | Registry, fixtures, guides done; **open:** dev-org smoke, V14 review, V6 role for `okta.deviceIntegrations.read` (not offered by the trial org), the ID prefixes taken from spec examples (`guo`, `dao`, `dae`, `din`), whether Okta pages the six lists the spec declares unpaged (assurance, integrations and both posture lists, `devices get-users`, `get-os-accounts`; `list-defaults` does, at 50, 2026-11-13: declare its paging), a recorded `list-defaults` fixture in place of the spec-generated one (whose built-in check has an `id`) | ◐ |
+| 5.6 | devices, device-assurance, device-posture, device-integrations | Registry, fixtures, guides done; **open:** dev-org smoke, V14 review, V6 role for `okta.deviceIntegrations.read` (not offered by the trial org), the ID prefixes taken from spec examples (`guo`, `dao`, `dae`, `din`), whether Okta pages the six lists the spec declares unpaged (assurance, integrations, posture `list`, `devices get-users`, `get-os-accounts`; posture `list-defaults` does, at 50, 2026-11-13, and now follows next links), a recorded `list-defaults` fixture in place of the spec-generated one (whose built-in check has an `id`) | ◐ |
 
 ### 5.7 Full example policy ☑
 Design: §9.3 · Depends: 5.1–5.6
@@ -409,7 +409,7 @@ Design: §6.5, §13 · Depends: 2.4, 4.5
 - [x] Per-principal Okta-request limiter enforced in the HTTP path; `rate_limited` errors
 - [x] Per-principal share of the in-flight slots (e.g. at most half of `MCP_OKTA_MAX_INFLIGHT`): ten slow System Log calls from one user fit inside `MCP_REQUESTS_PER_MINUTE` and hold every slot (2026-11-10 review)
 - [x] Back off after a failed service-token request (a few seconds, served from the stored error): today every tool call during an outage or a bad key sends its own token POST, and those aren't charged to the per-principal limiter
-- [ ] Log Okta's `errorCode` on an upstream 401/403 (a fixed Okta string, not result data), so an operator can tell a missing admin role (`E0000006`) from a missing feature (`E0000015`); today every 403 gets one fixed message and no code (2026-11-13 V6 sweep)
+- [x] Log Okta's `errorCode` on an upstream 401/403 (a fixed Okta string, not result data), so an operator can tell a missing admin role (`E0000006`) from a missing feature (`E0000015`); today every 403 gets one fixed message and no code (2026-11-13 V6 sweep)
 - [ ] V16: cap the service app's rate-limit share in the dev org and confirm 429s arrive at the cap; record the value for the runbook (needs the dev org)
 - [x] Structured operational logs with `request_id`; 429/retry/limiter/truncation/JWKS events
 - [x] Tests: integration test trips the limiter; log events emitted
@@ -452,10 +452,10 @@ Verify: someone (or a fresh Claude session) follows the runbook on a clean machi
 
 ## Phase 8 — Hardening & release
 
-### 8.1 Security review sweep ☐
-- [ ] `/security-review` over all 🔒 paths together (cross-cutting issues)
-- [ ] Resolve or ticket every finding
-- [ ] Narrow the `.` half of the reserved-literal rule in `exec/params.py` so logins such as `me.smith@…` resolve again: Okta doesn't strip suffixes (`me.json` is a literal), but does strip matrix parameters, so `;` stays refused (2.10 dev-org check, 2026-11-13) 🔒
+### 8.1 Security review sweep ☑
+- [x] `/security-review` over all 🔒 paths together (cross-cutting issues): four parallel reviewers by theme (identity → authorization, request building and URL following, data egress, credentials and deployment), 2026-11-14
+- [x] Resolve or ticket every finding (see the [decisions log](decisions-log.md))
+- [x] Narrow the `.` half of the reserved-literal rule in `exec/params.py` so logins such as `me.smith@…` resolve again: Okta doesn't strip suffixes (`me.json` is a literal), but does strip matrix parameters, so `;` stays refused (2.10 dev-org check, 2026-11-13) 🔒
 
 ### 8.2 Compatibility matrix & E2E ☐
 - [ ] Complete `docs/compatibility-matrix.md` for all target clients (Path A)
@@ -474,7 +474,7 @@ Live checks of what only Okta decides: the service token, routing, response shap
   1. Service token: nonce retry, `DPoP` token type (a `Bearer` downgrade fails), second call served from the cache
   2. Every registry command once through the executor: no `E0000006` (keeps V6 current), every view field present, paged lists follow `next`
   3. Schema drift and secret canary: live keys vs the pinned spec's schema; fail on a new key that looks secret- or credential-like or is not covered by `scrub.yaml` (keeps V14 current); report other new keys
-  4. Path-routing probes from the 2.10 dev-org check (`me;x`, `.json` suffixes, `groups/rules`); run before and after the 8.1 `.`-rule change
+  4. Path-routing probes from the 2.10 dev-org check (`me;x`, `.json` suffixes, `groups/rules`), plus what the 8.1 change allowed or still refuses untested: `me.smith@<a test login domain>`, other reserved names with a suffix (`apps/export.csv`, `policies/simulate.json`: if Okta routes them as literals, `_SUFFIX_IS_LITERAL` in `exec/params.py` can become a rule for all names), a trailing dot (`me.`, `groups/rules.`), and a leading dot on `users get` (`/users/.json`; 8.1 sweep). The 8.1 change merged before these ran (user decision, 2026-11-14)
   5. The image with the live service app and a policy, user tokens from the local test issuer: one `tools/call` per role
 - [ ] **Not in CI:** 429 behavior and V16 (a shared bucket), Okta sign-in / MFA / refresh (4.6, 8.2 manual), anything that writes
 

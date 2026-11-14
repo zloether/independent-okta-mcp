@@ -449,25 +449,42 @@ def test_path_segment_needs_the_reserved_set() -> None:
 @pytest.mark.parametrize(
     ("value", "reserved"),
     [
-        ("me.json", {"me"}),
         ("ME.", {"me"}),
-        ("me.smith@example.com", {"me"}),  # refused too: fail closed, give the ID
-        ("rules.json", {"rules"}),
-        ("Rules.x.y", {"rules"}),
+        ("me..", {"me"}),
+        ("Rules.", {"rules"}),
         ("a;b", set()),
-        ("me;x", {"me"}),
-        ("\N{FULLWIDTH LATIN SMALL LETTER M}e.json", {"me"}),
+        ("me;x", {"me"}),  # Okta strips `;x` and routes `me` (2.10 dev-org check)
+        ("oauth2.json", {"oauth2"}),  # suffix routing unverified for names other than me, rules
+        ("Export.csv", {"export"}),
+        ("simulate.x.y", {"simulate"}),
+        ("\N{FULLWIDTH LATIN SMALL LETTER M}e.", {"me"}),
+        ("me\N{FULLWIDTH FULL STOP}", {"me"}),  # NFKC: `me.`
     ],
 )
-def test_reserved_name_with_a_suffix_or_semicolon_is_refused(
+def test_reserved_name_with_trailing_dots_or_semicolon_is_refused(
     value: str, reserved: set[str]
 ) -> None:
     with pytest.raises(InvalidArguments, match="arg 'x'"):
         path_segment("x", value, frozenset(reserved))
 
 
-@pytest.mark.parametrize("value", ["alice.me@example.com", "meg.ryan@example.com", "rulesx.y"])
-def test_dotted_values_not_starting_with_a_reserved_name_pass(value: str) -> None:
+@pytest.mark.parametrize(
+    "value",
+    [
+        "alice.me@example.com",
+        "meg.ryan@example.com",
+        "rulesx.y",
+        # 8.1: Okta routes these as literal values (`/users/me.json` E0000007, `/groups/rules.json`
+        # E0000008 where `/groups/rules` is 200; 2.10 dev-org check), so they aren't aliases.
+        # Only `me` and `rules` were checked: other reserved names with a suffix stay refused.
+        "me.smith@example.com",
+        "ME.Smith@example.com",
+        "me.json",
+        "rules.json",
+        "Rules.x.y",
+    ],
+)
+def test_dotted_values_pass(value: str) -> None:
     path_segment("x", value, frozenset({"me", "rules"}))
 
 

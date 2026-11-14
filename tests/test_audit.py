@@ -287,6 +287,8 @@ def test_arg_named_by_a_scrub_rule_is_redacted(registry: Registry, engine: Engin
     The names come from scrub.yaml's single-key paths."""
     log, out = audit(registry, engine)
     assert "client_secret" in log._redacted  # pyright: ignore[reportPrivateUsage]
+    # The private JWK members are response fields only; `q` is also the search arg (8.1 sweep).
+    assert "q" in engine.scrub.starts and "q" not in log._redacted  # pyright: ignore[reportPrivateUsage]
     log._redacted = frozenset({"q"})  # pyright: ignore[reportPrivateUsage]
     sent = {"command": "list", "args": {"Q": SECRET, "search": 'type eq "OKTA_GROUP"'}}
     got = line(log, out, "okta_groups", sent, Failure(Code.INVALID_ARGUMENTS, "unknown arg"))

@@ -16,11 +16,12 @@ import yaml
 from okta_mcp.auth.principal import Principal
 from okta_mcp.exec.cursor import RESUMED_WARNING, Cursors
 from okta_mcp.exec.envelope import UNPAGED_WARNING
-from okta_mcp.exec.executor import (
+from okta_mcp.exec.executor import (  # pyright: ignore[reportPrivateUsage]
     CURSOR_MAX,
     EXPRESSION,
     FORBIDDEN,
     INTERNAL,
+    NOT_FOUND_HELD,
     UNAVAILABLE,
     Call,
     Code,
@@ -29,14 +30,21 @@ from okta_mcp.exec.executor import (
     Success,
     tool_name,
 )
-from okta_mcp.exec.resolve import UserResolver
+from okta_mcp.exec.executor import _not_found as not_found_message  # pyright: ignore[reportPrivateUsage]
+from okta_mcp.exec.resolve import NOT_FOUND, UserResolver
 from okta_mcp.okta import ratelimit
 from okta_mcp.okta.client import OktaClient, new_http_client
 from okta_mcp.okta.ratelimit import RequestLimiter
 from okta_mcp.okta.token import ServiceToken, TokenError
 from okta_mcp.policy.engine import Engine, Verdict
 from okta_mcp.policy.loader import build_policy
-from okta_mcp.registry.loader import REGISTRY, Registry, UniqueKeyLoader, build_registry
+from okta_mcp.registry.loader import (
+    REGISTRY,
+    Registry,
+    UniqueKeyLoader,
+    build_registry,
+    load_registry,
+)
 from okta_mcp.registry.spec import SpecIndex, load_spec
 
 
@@ -553,9 +561,51 @@ async def test_unavailable(registry: Registry, okta: Okta, spec: SpecIndex) -> N
 
 
 @pytest.mark.anyio
+async def test_a_404_after_the_lookup_reads_like_no_such_user(ex: Executor, okta: Okta) -> None:
+    # 8.1 sweep: with Okta's own 404 text, `apps get-user` on a login would say whether the login
+    # exists anywhere in the org (the lookup found it, then the app said "not assigned").
+    login = okta.alice["profile"]["login"]
+
+    def answer(request: httpx2.Request) -> httpx2.Response | None:
+        if request.url.path.endswith("/groups"):
+            return httpx2.Response(404, json={"errorSummary": "Not found: Resource not found"})
+        return None
+
+    okta.override = answer
+    found = await run(ex, who(READERS), "users", "get-groups", args={"user": login})
+    missing = await run(ex, who(READERS), "users", "get-groups", args={"user": "zed@example.com"})
+    assert failed(found, Code.NOT_FOUND).message == failed(missing, Code.NOT_FOUND).message
+    assert "Resource" not in found.message
+
+
+@pytest.mark.anyio
+async def test_a_404_on_an_id_given_as_is_keeps_okta_s_text(ex: Executor, okta: Okta) -> None:
+    # No lookup ran, so there is nothing to give away; Okta's text is the better diagnosis.
+    okta.override = lambda r: (
+        httpx2.Response(404, json={"errorSummary": "Not found: Resource not found"})
+        if r.url.path.endswith("/groups")
+        else None
+    )
+    out = await run(ex, who(READERS), "users", "get-groups", args={"user": ALICE})
+    assert "Okta returned HTTP 404" in failed(out, Code.UPSTREAM_ERROR).message
+
+
+def test_not_found_names_the_other_args_only_where_there_are_some() -> None:
+    shipped = load_registry(load_spec())
+    assert not_found_message(shipped.domains["users"].commands["get-groups"]) == NOT_FOUND
+    assert not_found_message(shipped.domains["apps"].commands["get-user"]) == NOT_FOUND_HELD
+
+
+@pytest.mark.anyio
+async def test_a_404_without_a_resolved_arg_keeps_okta_s_text(ex: Executor, okta: Okta) -> None:
+    out = await run(ex, who(READERS), "users", "get", args={"user": "zed@example.com"})
+    assert "Okta returned HTTP 404" in failed(out, Code.UPSTREAM_ERROR).message
+
+
+@pytest.mark.anyio
 async def test_not_found(ex: Executor, okta: Okta) -> None:
     out = await run(ex, who(READERS), "users", "get-groups", args={"user": "zed@example.com"})
-    assert failed(out, Code.NOT_FOUND).message == "no user has that ID or exact login"
+    assert failed(out, Code.NOT_FOUND).message == NOT_FOUND
     assert "zed" not in out.message
     assert okta.paths == ["/api/v1/users/zed@example.com"]
 
@@ -1090,15 +1140,45 @@ async def test_log_lines_carry_no_unbounded_caller_data(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("value", ["me.json", "me.", "ME;x", "me;", "a;b@example.com"])
-async def test_me_with_a_suffix_or_matrix_param_is_refused(
+@pytest.mark.parametrize("value", ["me.", "ME..", "ME;x", "me;", "a;b@example.com"])
+async def test_me_with_trailing_dots_or_matrix_param_is_refused(
     ex: Executor, okta: Okta, value: str
 ) -> None:
-    # S1: in case Okta matches `/users/me.json` or `/users/me;x` as `/users/me`.
+    # S1: Okta routes `/users/me;x` as `/users/me`; `me.` is untested, so refused too.
     for command in ("get", "get-groups"):
         out = await run(ex, who(READERS), "users", command, args={"user": value})
         failed(out, Code.INVALID_ARGUMENTS)
     assert okta.requests == []
+
+
+@pytest.mark.anyio
+async def test_login_starting_with_me_dot_resolves(ex: Executor, okta: Okta) -> None:
+    # 8.1: `/users/me.smith@…` is a literal login on Okta, not `/users/me`.
+    login = "me.smith@example.com"
+    okta.alice["profile"]["login"] = login
+
+    def answer(request: httpx2.Request) -> httpx2.Response | None:
+        if unquote(request.url.path) == f"/api/v1/users/{login}":
+            return httpx2.Response(200, json=okta.alice)
+        return None
+
+    okta.override = answer
+    out = await run(ex, who(READERS), "users", "get-groups", args={"user": login})
+    assert out["count"] == 10
+    paths = [unquote(r.url.path) for r in okta.requests]
+    assert paths.count(f"/api/v1/users/{login}") == 1  # the lookup, by login
+    assert "/api/v1/users/me" not in paths
+    assert f"/api/v1/users/{okta.alice['id']}/groups" in paths  # then the resolved ID
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("value", ["me.json", "me.smith@example.com"])
+async def test_users_get_sends_a_suffixed_me_as_a_literal(
+    ex: Executor, okta: Okta, value: str
+) -> None:
+    # 8.1: `users get` sends its value unresolved; the segment must be the whole value.
+    await run(ex, who(READERS), "users", "get", args={"user": value})
+    assert [unquote(r.url.path) for r in okta.requests] == [f"/api/v1/users/{value}"]
 
 
 @pytest.mark.anyio

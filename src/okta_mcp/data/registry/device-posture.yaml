@@ -5,7 +5,8 @@ description: Read device posture checks (read-only).
 # but no example shows a built-in check's ID, so only the character set is fixed; `default`, the
 # reserved segment after /device-posture-checks/, is refused by the reserved-segment check
 # (design §6.4). The spec declares no paging for either list, but the dev org paged
-# `list-defaults` at 50 (2026-11-13; open in plan 5.6).
+# `list-defaults` at 50 (2026-11-13), so it follows next links; the spec gives it no `limit`, so
+# Okta picks the page size. Whether `list` pages is unverified (plan 5.6).
 commands:
   list:
     operation: listDevicePostureChecks
@@ -25,4 +26,5 @@ commands:
     summary: Okta's built-in posture checks
     # Not `id`: built-in checks have none (2026-11-13 dev org).
     view: [name, platform, type, variableName]
+    paginate: link
     data_classes: [org-config]

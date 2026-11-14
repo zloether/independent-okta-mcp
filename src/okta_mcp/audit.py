@@ -356,9 +356,16 @@ class AuditLog:
         return "args_not_permitted"
 
 
+# Private JWK members (scrub.yaml): response fields only. `q` is also the search arg on ten
+# commands, whose text the log keeps.
+_JWK_MEMBERS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
+
+
 def _arg_names(rules: ScrubRules) -> frozenset[str]:
-    """Single-key scrub paths: an arg so named is redacted from the log."""
-    return frozenset(chain[0] for chain, _ in rules.chains if len(chain) == 1)
+    """Single-key scrub paths, but the JWK members: an arg so named is redacted from the log."""
+    return frozenset(
+        chain[0] for chain, _ in rules.chains if len(chain) == 1 and chain[0] not in _JWK_MEMBERS
+    )
 
 
 def _scalar(value: object) -> object:

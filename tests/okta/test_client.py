@@ -353,6 +353,73 @@ async def test_feature_not_enabled_keeps_token_and_says_so(
     assert f"HTTP {status} E0000015" in caplog.text
 
 
+def refusals(caplog: pytest.LogCaptureFixture) -> list[object]:
+    return [
+        e
+        for r in caplog.records
+        if (e := getattr(r, "okta_mcp_event", None)) and e[0] == "okta_refused"
+    ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize("code", ["E0000006", "E0000015", "E0000011"])
+async def test_refusal_logs_okta_error_code(
+    status: int, code: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    body = {"errorCode": code, "errorSummary": "You do not have permission: okta.apps.read"}
+    with pytest.raises(UpstreamError):
+        await client(Okta(httpx2.Response(status, json=body))).get(USERS)
+    assert refusals(caplog) == [("okta_refused", {"status": status, "error_code": code})]
+    assert f"HTTP {status} {code}" in caplog.text
+    assert "okta.apps.read" not in caplog.text  # the summary is Okta's text: never logged
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        {},
+        {"errorCode": ["E0000006"]},
+        {"errorCode": 6},
+        {"errorCode": ""},
+        {"errorCode": "e0000006"},
+        {"errorCode": "E000006"},
+        {"errorCode": "E00000066"},
+        {"errorCode": "E0000006\n"},
+        {"errorCode": "E\u0660\u0660\u0660\u0660\u0660\u0660\u0660"},  # non-ASCII digits
+        {"errorCode": "user@example.com"},
+    ],
+)
+async def test_refusal_logs_no_code_unless_okta_shaped(
+    body: object, caplog: pytest.LogCaptureFixture
+) -> None:
+    with pytest.raises(UpstreamError):
+        await client(Okta(httpx2.Response(403, json=body))).get(USERS)
+    assert refusals(caplog) == [("okta_refused", {"status": 403, "error_code": None})]
+    assert "HTTP 403 (no errorCode)" in caplog.text
+    assert "example.com" not in caplog.text
+
+
+@pytest.mark.anyio
+async def test_refusal_after_token_challenge_logs_code(caplog: pytest.LogCaptureFixture) -> None:
+    headers = {"WWW-Authenticate": 'DPoP error="insufficient_scope"'}
+    okta = Okta(httpx2.Response(403, headers=headers, json=FEATURE_OFF))
+    with pytest.raises(UpstreamError) as e:
+        await client(okta).get(USERS)
+    assert "E0000015" not in str(e.value)  # the caller's message still doesn't claim it
+    assert refusals(caplog) == [("okta_refused", {"status": 403, "error_code": "E0000015"})]
+
+
+@pytest.mark.anyio
+async def test_other_errors_log_no_refusal(caplog: pytest.LogCaptureFixture) -> None:
+    body = {"errorCode": "E0000007", "errorSummary": "Not found"}
+    with pytest.raises(UpstreamError):
+        await client(Okta(httpx2.Response(404, json=body))).get(USERS)
+    assert refusals(caplog) == []
+
+
 @pytest.mark.anyio
 async def test_feature_not_enabled_after_nonce_retry_keeps_token() -> None:
     tokens = FakeTokenProvider(DPOP_TOKEN)
@@ -582,6 +649,17 @@ def test_http_client_settings() -> None:
     http = new_http_client()
     assert http.follow_redirects is False
     assert (http.timeout.connect, http.timeout.read) == (10, 30)
+
+
+@pytest.mark.anyio
+async def test_okta_cookies_are_never_sent_back() -> None:
+    # 8.1 sweep: one client serves every principal and the token endpoint, so a cookie Okta
+    # set on one caller's response must not ride on the next request (or the token POST).
+    okta = Okta(httpx2.Response(200, headers={"Set-Cookie": "sid=s1; Path=/"}, json=[]))
+    c = client(okta)
+    await c.get(USERS)
+    await c.get(USERS)
+    assert [r.headers.get("Cookie") for r in okta.requests] == [None, None]
 
 
 @pytest.mark.anyio

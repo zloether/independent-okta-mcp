@@ -94,6 +94,13 @@ class UniqueKeyLoader(yaml.CSafeLoader):
         return super().construct_mapping(node, deep)
 
 
+def link_href(path: str) -> bool:
+    """`path` names one top-level link's `href` (`_links.self.href`): the one `_links` path a
+    view may hold, and a column `links: false` doesn't blank."""
+    keys = path.split(".")
+    return len(keys) == 3 and keys[0] == "_links" and keys[2] == "href"
+
+
 def load_registry(spec: SpecIndex, directory: Traversable = REGISTRY) -> Registry:
     errors: list[str] = []
     docs: dict[str, Any] = {}
@@ -385,8 +392,10 @@ def _check_shape(entry: CommandEntry, op: Operation, errors: list[str]) -> bool:
     if is_list and entry.view is None and item_fields:
         errors.append("list commands need a view")
     for path in entry.view or ():
-        if path.split(".")[0] == "_links":
-            errors.append(f"view path {path}: _links are never in a view")
+        if path.split(".")[0] == "_links" and not link_href(path):
+            errors.append(
+                f"view path {path}: the only _links paths in a view are _links.<rel>.href"
+            )
         elif path not in item_fields:
             errors.append(f"view path {path} is not in the {op.operation_id} response schema")
     if entry.view is not None and len(set(entry.view)) != len(entry.view):

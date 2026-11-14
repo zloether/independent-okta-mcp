@@ -6,9 +6,11 @@ characters. The rule applies whatever the argument's `pattern`, so it also cover
 parameters that have none. A value that stays inside its segment can still name another
 endpoint (`rules` as a group ID is `/api/v1/groups/rules`, the group-rules list), so the literal
 segments the spec has in the parameter's place (`Operation.reserved`, which also holds names Okta
-routes that the spec doesn't list, such as `me` after `/users/`) are refused as well, and so is a
-reserved name followed by `.` (`me.json`), in case Okta matches a suffix. Query values go out as a
-params mapping, never concatenated.
+routes that the spec doesn't list, such as `me` after `/users/`) are refused as well, with any
+trailing dots (`me.`), and so is a reserved name followed by `.` and more (`oauth2.json`), in case
+Okta matches a suffix. Okta was seen not to for `me` and `rules` (`/users/me.json`,
+`/groups/rules.json` are literal values; 2.10 dev-org check), so those two take a suffix and a login
+such as `me.smith@…` resolves. Query values go out as a params mapping, never concatenated.
 """
 
 import re
@@ -24,9 +26,14 @@ from okta_mcp.registry.loader import Command
 from okta_mcp.registry.schema import InvalidArguments, schema_problems
 
 PATH_VALUE_MAX = 256
-# `;` too: a matrix parameter (`me;x`) could be stripped before routing. No ID or login needs it.
+# `;` too: Okta strips a matrix parameter before routing (`/users/me;x` is `/users/me`, 2.10
+# dev-org check). No ID or login needs it.
 _FORBIDDEN = frozenset("/\\%?#;")
 _VAR = re.compile(r"\{([^}]*)\}")
+# Reserved names Okta was seen to route as literals when suffixed (2.10 dev-org check:
+# `/users/me.json` E0000007, `/groups/rules.json` E0000008). Others stay refused with a suffix
+# until the live-org probes (plan 8.2.1) cover them.
+_SUFFIX_IS_LITERAL = frozenset({"me", "rules"})
 
 
 def _path_problem(value: object, reserved: frozenset[str]) -> str | None:
@@ -41,11 +48,13 @@ def _path_problem(value: object, reserved: frozenset[str]) -> str | None:
         # Category C: control, format, surrogate, private-use and unassigned code points.
         if any(c in _FORBIDDEN or c.isspace() or unicodedata.category(c)[0] == "C" for c in form):
             return "can't contain / \\ % ? #, a semicolon, whitespace or control characters"
-        # Casefolded: Okta may match path literals case-insensitively. Also the part before a
-        # first `.`, in case Okta matches `me.json` as `me` (a login `me.x@…` is refused too:
-        # give the ID).
+        # Casefolded: Okta may match path literals case-insensitively. Trailing dots stripped:
+        # whether Okta drops them (`me.` as `me`) is unverified, and no ID or login ends in one.
+        # The part before a first `.` too, in case Okta matches a suffix (`export.csv`), except
+        # for the names seen not to (`me.smith@…` is a login).
         folded = form.casefold()
-        if folded in reserved or folded.partition(".")[0] in reserved:
+        head = folded.partition(".")[0]
+        if folded.rstrip(".") in reserved or (head in reserved and head not in _SUFFIX_IS_LITERAL):
             return "is the name of another endpoint, not an ID"
     return None
 

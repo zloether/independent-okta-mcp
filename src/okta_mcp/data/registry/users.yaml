@@ -73,6 +73,19 @@ commands:
     view: [id, type, name, status]
     data_classes: [pii, credential-material]
 
+  get-linked-objects:
+    operation: listLinkedObjectsForUser
+    summary: Linked users
+    args:
+      user: {path_param: userIdOrLogin, resolve: user_id}
+      relationship: {path_param: relationshipName, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,255}$"}
+    # Items are only `_links.self`: the primary user, or each associated user, by URL.
+    view: [_links.self.href]
+    # The associated side lists every linked user. The spec declares no paging, but Okta paged
+    # another such list (`device-posture list-defaults`), so next links are followed.
+    paginate: link
+    data_classes: [pii]
+
   get-factors:
     operation: listFactors
     summary: MFA factors enrolled by a user

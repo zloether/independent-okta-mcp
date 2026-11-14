@@ -213,7 +213,30 @@ def test_links_kept_when_asked() -> None:
     assert render(item, RULES, links=True, cols=("_links.self.href",)) == [
         "https://example.okta.com/x"
     ]
-    assert render(item, RULES, links=False, cols=("_links.self.href",)) == [None]
+    assert render(item, RULES, links=False, cols=("_links.self",)) == [None]
+
+
+def test_a_link_href_column_is_kept_without_links() -> None:
+    # 5.1: a column naming one link's `href` is an explicit ask (a view or `select`), so
+    # `links: false` doesn't blank it; only whole link objects are dropped.
+    item = {
+        "id": "00u1",
+        "_links": {"self": {"href": "https://example.okta.com/api/v1/users/00u2", "hints": {}}},
+    }
+    cols = ("id", "_links.self.href", "_links.self", "_links.manager.href", "_links")
+    assert render(item, RULES, links=False, cols=cols) == [
+        "00u1",
+        "https://example.okta.com/api/v1/users/00u2",
+        None,
+        None,
+        None,
+    ]
+
+
+def test_a_link_href_column_is_scrubbed() -> None:
+    item = {"_links": {"qrcode": {"href": "https://example.okta.com/api/v1/users/00u1/qr?t=x"}}}
+    assert render(item, RULES, links=False, cols=("_links.qrcode.href",)) == [None]
+    assert render(item, RULES, links=True, cols=("_links.qrcode.href",)) == [None]
 
 
 def test_prune() -> None:
@@ -330,3 +353,28 @@ def test_shipped_scrub_has_design_paths() -> None:
         "sharedSecret",
     ):
         assert tuple(path.lower().split(".")) in RULES.paths
+
+
+_PRIVATE_JWK = {
+    "kty": "RSA",
+    "kid": "k1",
+    "n": "PUBLIC-n",
+    "e": "AQAB",
+    **{m: "PRIVATE" for m in ("d", "p", "q", "dp", "dq", "qi")},
+    "oth": [{"r": "PRIVATE", "d": "PRIVATE", "t": "PRIVATE"}],
+}
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"settings": {"oauthClient": {"jwks": {"keys": [_PRIVATE_JWK, _PRIVATE_JWK]}}}},
+        {"keys": [_PRIVATE_JWK]},  # apps get-connection-jwks
+        _PRIVATE_JWK,  # apps get-jwk
+        {"keys": [{"kty": "oct", "kid": "s1", "k": "PRIVATE"}]},
+    ],
+)
+def test_private_jwk_members_are_redacted_in_every_shape(item: dict[str, Any]) -> None:
+    out = json.dumps(render(item, RULES, links=False, cols=None))
+    assert "PRIVATE" not in out
+    assert "PUBLIC-n" in out or '"oct"' in out
