@@ -482,6 +482,27 @@ async def test_401_not_exactly_feature_off_still_invalidates(
             httpx2.Response(400, json={"errorSummary": "x" * 600}),
             "Okta returned HTTP 400: " + "x" * 500,
         ),
+        (
+            httpx2.Response(
+                400, json={"error": "invalid_dpop_proof", "error_description": "bad htu"}
+            ),
+            "Okta returned HTTP 400: invalid_dpop_proof: bad htu",
+        ),
+        (httpx2.Response(400, json={"error": "invalid_request"}), "Okta returned HTTP 400"),
+        (
+            httpx2.Response(
+                400,
+                headers={
+                    "WWW-Authenticate": 'DPoP error="invalid_dpop_proof", '
+                    'error_description="The htu claim is invalid."'
+                },
+            ),
+            "Okta returned HTTP 400: invalid_dpop_proof, The htu claim is invalid.",
+        ),
+        (
+            httpx2.Response(400, headers={"WWW-Authenticate": 'DPoP error="invalid_token"'}),
+            "Okta returned HTTP 400: invalid_token",
+        ),
         (httpx2.Response(500, text="<html>"), "Okta returned HTTP 500"),
         (httpx2.Response(502, json={"errorSummary": ""}), "Okta returned HTTP 502"),
         (httpx2.Response(503, json={"errorSummary": 5}), "Okta returned HTTP 503"),

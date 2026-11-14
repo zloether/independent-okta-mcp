@@ -173,13 +173,16 @@ def test_server_id_shape(registry: Registry) -> None:
     for name, cmd in registry.domains["authorization-servers"].commands.items():
         if "server" not in cmd.entry.args:
             continue
-        args = {
+        args: dict[str, object] = {
             n: "abc"
             for n, a in cmd.entry.args.items()
             if a.path_param is not None and n not in ("server", "client")
         }
         if "client" in cmd.entry.args:
             args["client"] = CLIENT
+        for n in cmd.schema.get("required", ()):
+            if cmd.entry.args[n].query is not None:
+                args[n] = cmd.schema["properties"][n].get("type") == "boolean" or "abc"
         for good in (AUS, "default"):
             validate_args(cmd, {**args, "server": good})
         for bad in ("DEFAULT", "defaults", "aus1emaKYZTWRYYRRTS", f"{AUS}\n", "..", "org"):
@@ -254,6 +257,10 @@ def test_filters_and_expands(registry: Registry) -> None:
     associated = servers["list-associated"]
     _, params = build_request(associated, {"server": AUS, "trusted": True}, ORG)
     assert params == {"trusted": "true", "limit": "200"}
+    # Okta 400s without `trusted` (5.4 dev-org smoke); the spec doesn't flag it.
+    assert not associated.operation.params["trusted"].required
+    with pytest.raises(InvalidArguments, match="trusted"):
+        validate_args(associated, {"server": AUS, "q": "okta"})
 
 
 def _engine(registry: Registry, role: dict[str, Any]) -> Engine:

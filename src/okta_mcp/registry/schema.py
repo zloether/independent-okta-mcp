@@ -65,8 +65,13 @@ def build_schema(entry: CommandEntry, op: Operation, errors: list[str]) -> dict[
         param = op.params.get(arg.param)
         if param is None:
             continue  # reported by the loader's check 2
+        is_required = param.required or arg.required
+        if arg.required and param.required:
+            errors.append(f"arg {name}: the spec already makes {arg.param} required")
+        if arg.required and arg.arg_rule is not None and arg.arg_rule.forbidden:
+            errors.append(f"arg {name}: required and forbidden, so no call is valid")
         if arg.allowed_values == ():
-            if param.required:
+            if is_required:
                 errors.append(f"arg {name}: {arg.param} is required, so it can't be hidden")
             continue
         s = _spec_schema(param.schema)
@@ -102,7 +107,7 @@ def build_schema(entry: CommandEntry, op: Operation, errors: list[str]) -> dict[
                 errors.append(f"arg {name}: maxItems needs an array")
             s["maxItems"] = arg.max_items
         props[name] = s
-        if param.required:
+        if is_required:
             required.append(name)
 
     schema: dict[str, Any] = {"type": "object", "properties": props, "additionalProperties": False}

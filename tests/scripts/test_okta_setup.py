@@ -335,7 +335,7 @@ def test_terraform_prefix_matches_the_script() -> None:
 # (plans 5.1 to 5.6). The setup script refuses them, so their commands stay unavailable
 # until a live check adds each to SCOPE_ROLES and is removed from here.
 UNVERIFIED_SCOPES = {
-    "okta.sessions.read",  # `sessions get` fails DPoP htu validation (2026-11-13)
+    "okta.sessions.read",  # `sessions get` needs DPoP off (Okta htu bug), so role unchecked
     # Not offered by the trial org used for the 2026-11-13 checks.
     "okta.userRisk.read",
     "okta.botProtection.read",

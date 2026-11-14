@@ -139,12 +139,19 @@ def _path_args(cmd: Command) -> dict[str, Any]:
 
 def _required_query(cmd: Command) -> dict[str, Any]:
     """A valid value per required query arg (`policies list` `type`): a spec enum's first
-    value, else its pattern's sample (a missing one is a `KeyError`), else a plain word."""
+    value, else its pattern's sample (a missing one is a `KeyError`), else a plain word
+    (`True` for a boolean)."""
     props = cmd.schema["properties"]
+
+    def sample(prop: dict[str, Any], pattern: str | None) -> object:
+        if "enum" in prop:
+            return prop["enum"][0]
+        if prop.get("type") == "boolean":
+            return True
+        return SAMPLES[pattern] if pattern else "sample"
+
     return {
-        n: props[n]["enum"][0]
-        if "enum" in props[n]
-        else (SAMPLES[a.pattern] if a.pattern else "sample")
+        n: sample(props[n], a.pattern)
         for n, a in cmd.entry.args.items()
         if a.query is not None and n in cmd.schema.get("required", ())
     }

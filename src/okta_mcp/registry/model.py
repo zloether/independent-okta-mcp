@@ -124,6 +124,8 @@ class Arg(_Model):
     arg_rule: ArgRule | None = None
     type: Literal["string", "integer", "boolean", "array"] | None = None
     max_items: int | None = Field(default=None, alias="maxItems", ge=1)
+    required: bool = False
+    """Okta rejects calls without it though the spec doesn't flag it required."""
 
     @field_validator("pattern")
     @classmethod

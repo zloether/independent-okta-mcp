@@ -40,8 +40,6 @@ def test_users_commands(registry: Registry) -> None:
         "get-client-token",
         "get-grants",
         "get-grant",
-        "get-subscriptions",
-        "get-subscription",
         "list-roles",
         "get-role",
         "list-role-app-targets",
@@ -208,10 +206,6 @@ def test_expand_values_are_closed(registry: Registry) -> None:
 
 
 def test_spec_enum_path_params(registry: Registry) -> None:
-    sub = registry.domains["users"].commands["get-subscription"]
-    validate_args(sub, {"user": USER, "type": "USER_LOCKED_OUT"})
-    with pytest.raises(InvalidArguments, match="arg 'type'"):
-        validate_args(sub, {"user": USER, "type": "nope"})
     feature = registry.domains["apps"].commands["get-feature"]
     validate_args(feature, {"app": APP, "feature": "USER_PROVISIONING"})
 

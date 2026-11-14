@@ -201,6 +201,18 @@ def test_overlay_errors(spec: SpecIndex) -> None:
             _with(GET_GROUP, args={"group": {"path_param": "groupId", "allowed_values": []}}),
             "required, so it can't be hidden",
         ),
+        (
+            args(expand={"query": "expand", "allowed_values": [], "required": True}),
+            "required, so it can't be hidden",
+        ),
+        (
+            _with(GET_GROUP, args={"group": {"path_param": "groupId", "required": True}}),
+            "the spec already makes groupId required",
+        ),
+        (
+            args(f={"query": "filter", "required": True, "arg_rule": {"forbidden": True}}),
+            "required and forbidden",
+        ),
     ]
     for cmd, message in cases:
         with pytest.raises(RegistryError, match=message):
@@ -242,6 +254,15 @@ def test_type_overlay() -> None:
         "x": {"type": "string"},
         "ids": {"type": "array", "items": {"type": "string", "maxLength": 4096}},
     }
+
+
+def test_required_overlay(spec: SpecIndex) -> None:
+    # For a param Okta requires though the spec doesn't flag it.
+    sort = {"query": "sortOrder", "allowed_values": ["asc", "desc"], "required": True}
+    cmd = _with(LIST_GROUPS, args={**LIST_GROUPS["args"], "sort_order": sort})
+    assert _one(spec, cmd).schema["required"] == ["sort_order"]
+    with pytest.raises(RegistryError, match="one_of_required: sort_order is always required"):
+        _one(spec, {**cmd, "one_of_required": ["sort_order", "filter"]})
 
 
 def test_one_of_required(spec: SpecIndex) -> None:

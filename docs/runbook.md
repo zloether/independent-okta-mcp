@@ -13,6 +13,7 @@ Decide these first. Each is hard to change later.
 | **Exposure** | Internal only (VPN or private network) or internet-facing. Either way TLS ends at a reverse proxy, and nothing but that proxy reaches the container's port (§3.3). Write the choice down here and in the compatibility matrix | Your network, `ports:` in compose |
 | **Refresh tokens** | A: none (sign in again every access-token lifetime, the default) or B: rotating | `refresh_tokens` in the setup config ([A or B](okta-setup.md#refresh-tokens-option-a-or-b)) |
 | **Scopes and admin role** | Each `okta.*.read` scope you grant exposes its commands and may need a broader admin role than Read-only Administrator ([table](okta-setup.md#service-app-scopes-and-admin-roles)). Leave a scope out to stay narrow | `service_app.scopes` → `OKTA_SCOPES` |
+| **DPoP or sessions** | DPoP on (default), or off so `sessions get` works: Okta rejects that call from a DPoP-bound token ([details](okta-setup.md#service-app-scopes-and-admin-roles)) | Require DPoP on the service app, `OKTA_DPOP` |
 | **Roles** | Which Okta groups get which commands. Sensitive commands need a name or `include_sensitive` | `policy.yaml` (start from [`docker/policy.example.yaml`](../docker/policy.example.yaml)) |
 | **Audit args** | `full` (args in clear, which are PII) or `hash` (keyed hashes) | `MCP_AUDIT_ARGS` |
 

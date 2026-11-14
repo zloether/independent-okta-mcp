@@ -37,6 +37,9 @@ log = logging.getLogger(__name__)
 _SUMMARY_MAX = 500
 _FEATURE_OFF = "E0000015"
 _ERROR_CODE = re.compile(r"E[0-9]{7}")
+# A challenge's `error` codes and descriptions (RFC 6750 §3), shown like `errorSummary`.
+_CHALLENGE_ERROR = re.compile(r'\berror\s*=\s*"?([A-Za-z0-9_]{1,64})')
+_CHALLENGE_DESCRIPTION = re.compile(r'\berror_description\s*=\s*"([\x20\x21\x23-\x7e]{1,500})"')
 
 
 class OriginError(Exception):
@@ -304,6 +307,20 @@ class OktaClient:
             )
         match json_body(response):
             case {"errorSummary": str(summary)} if summary:
+                return UpstreamError(
+                    status, f"Okta returned HTTP {status}: {summary[:_SUMMARY_MAX]}"
+                )
+            # OAuth-style, as for a DPoP proof Okta rejects (`invalid_dpop_proof`).
+            case {"error": str(error), "error_description": str(description)} if description:
+                summary = f"{error[:64]}: {description}"
+                return UpstreamError(
+                    status, f"Okta returned HTTP {status}: {summary[:_SUMMARY_MAX]}"
+                )
+            case _ if errors := _CHALLENGE_ERROR.findall(
+                challenge := response.headers.get("WWW-Authenticate", "")
+            ):
+                descriptions = _CHALLENGE_DESCRIPTION.findall(challenge)
+                summary = ", ".join(errors + descriptions)
                 return UpstreamError(
                     status, f"Okta returned HTTP {status}: {summary[:_SUMMARY_MAX]}"
                 )

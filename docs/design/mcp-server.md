@@ -409,13 +409,14 @@ Load-time and CI checks (startup fails on any error):
 
 ### 6.3 Argument schemas
 
-The registry loader builds a JSON Schema per command from the spec parameter definitions (type, enum, pattern, length and min/max bounds, `maxItems`, array `items`; the spec's `format`s are prose and are dropped) overlaid with registry fields (rename, `pattern`, `allowed_values`, `maxItems`, `one_of_required`). The same schema feeds the synopsis, `okta_help` and validation (`jsonschema`; pydantic is used for config, registry and policy models, not for per-command args, because those schemas are generated at runtime). Validation happens before any network call.
+The registry loader builds a JSON Schema per command from the spec parameter definitions (type, enum, pattern, length and min/max bounds, `maxItems`, array `items`; the spec's `format`s are prose and are dropped) overlaid with registry fields (rename, `pattern`, `allowed_values`, `maxItems`, `required`, `one_of_required`). The same schema feeds the synopsis, `okta_help` and validation (`jsonschema`; pydantic is used for config, registry and policy models, not for per-command args, because those schemas are generated at runtime). Validation happens before any network call.
 
 Overlays can only narrow what the spec allows, and a misuse fails the load:
 
 - The arg name is the rename; the schema is keyed by it, `additionalProperties: false`. Path params are always strings.
 - `type` only fills in a type the spec leaves out; it can't replace one.
 - `allowed_values` and `pattern` constrain the value, or each item of an array. `allowed_values` sets `enum`, only on string args and only as a subset of a spec `enum`; `[]` hides the arg, which is an error on a required parameter. `pattern` is an error where the spec already sets one, so it can never replace a spec constraint. `maxItems` applies only to arrays.
+- `required: true` makes an optional query param required, where Okta rejects calls without it though the spec doesn't flag it (`authorization-servers list-associated` `trusted`). It is an error on a param the spec already requires, on a hidden arg, with `forbidden`, and in `one_of_required`.
 - `one_of_required: [a, b]`: exactly one of the listed (optional, distinct) args must be passed.
 - `integer` accepts only whole JSON numbers without a fraction part (not `5.0`, not `true`), so Okta always receives `5`.
 
