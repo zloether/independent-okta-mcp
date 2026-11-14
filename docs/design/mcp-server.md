@@ -28,6 +28,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 | The resolver used `getUser` on any non-ID value and trusted the answer (§5.6) | The user returned must have **exactly** the login given (case aside); `me` is refused (§5.6, step 2.10). `me` after a `/users/` segment is refused for every path parameter (§6.4 item 5) | Okta's `getUser` also answers a login shortname, and `/api/v1/users/me` is the token's own user (the SSWS owner in dev mode), a path the spec doesn't list |
 | `.manage ⇒ .read` implication to be modeled in the capability gate (§9.4, V4) | **No implication.** The gate is a plain subset test (step 3.2) | `OKTA_SCOPES` accepts only `.read` scopes (§10, config), so no held scope could imply another. 2 of the spec's 319 GET operations accept only a `.manage` scope (`getAerialConsent`, `previewPolicyBranchPromotion`); they stay unavailable |
 | §9.3 example: only `security-analyst` had `search_attributes`; helpdesk's list was a separate snippet | Helpdesk's list and `platform-admin: search_attributes: ["*"]` are in the example, which is now `docker/policy.example.yaml` (step 5.7) | Without it the admin role, which holds every command, could not search; one block a test can compare against the shipped file |
+| Policy deployment was edit, review, restart; a bad file was found only by the restart (§9.3, §11.4) | `okta-mcp --check` loads config and policy against the shipped registry and exits 0 or 2 without serving; run before a policy change and before an upgrade (plan 7.3) | A file that fails to load is an outage; an upgrade's registry can reject a policy the old one accepted |
 
 ### 0.1 Changes from r3
 
@@ -177,10 +178,12 @@ independent-okta-mcp/
 ├── uv.lock                      # committed
 ├── docs/
 │   ├── design/mcp-server.md     # this document
-│   ├── implementation-plan.md
+│   ├── implementation-plan.md   # order of work, status
+│   ├── decisions-log.md         # append-only decisions and review outcomes
+│   ├── agents/                  # task-specific agent guidance (AGENTS.md lists when to read)
 │   └── coverage/                # catalogue.yaml, report.md (§5.6)
 ├── src/okta_mcp/
-│   ├── __main__.py              # entrypoint: config, policy, registry; HTTP (uvicorn) or --stdio
+│   ├── __main__.py              # entrypoint: config, policy, registry; HTTP (uvicorn) or --stdio; --check loads all of it and exits
 │   ├── config.py                # env parsing + validation (fail fast)
 │   ├── server.py                # startup wiring + MCP handlers, per-request principal; stdio serve
 │   ├── logs.py                  # stderr logging, request ID, what dependencies may log
@@ -660,7 +663,7 @@ Validation at load (startup fails):
 
 All errors are reported at once. Patterns are expanded once, at load, against the registry the server runs with.
 
-Policy changes take effect on restart (stateless, seconds). Mount the file read-only.
+Policy changes take effect on restart (stateless, seconds). Mount the file read-only. `okta-mcp --check` loads the config and policy against the registry the image ships and exits 0 or 2 without serving, so a policy edit or an upgrade that would stop startup is caught before the restart (runbook §4.1, §4.2).
 
 ### 9.4 Enforcement points
 
@@ -763,7 +766,7 @@ Startup fails fast on missing/invalid values, unreadable key, invalid policy, or
 - **Replicas:** safe (stateless), but limiters and the service token are per replica.
 - **Exposure decision** (before rollout): internal-only vs internet-facing; record it in the runbook and the compatibility matrix.
 - **Kill switch:** (1) stop the container / pull from proxy; (2) deactivate the service app in Okta; (3) rotate the service key; (4) deactivate the custom AS or remove clients from its policy; (5) rotate `MCP_CURSOR_KEY`.
-- **Policy deployment:** edit, review, restart. The stateless server does not send list-change notifications (`subscriptions/listen` in 2026-07-28); clients re-list after `ttlMs` expires.
+- **Policy deployment:** edit, review, `okta-mcp --check` in the server's own environment, restart. The same check runs before an upgrade, since a new registry can reject a policy the old one accepted. The stateless server does not send list-change notifications (`subscriptions/listen` in 2026-07-28); clients re-list after `ttlMs` expires.
 
 ---
 

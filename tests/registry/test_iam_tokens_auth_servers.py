@@ -164,7 +164,7 @@ def test_resource_server_keys_are_read_wrapped(registry: Registry) -> None:
 
 
 def test_apps_list_jwks_waits_for_a_recording(registry: Registry) -> None:
-    # Spec, spec example and okta-skills disagree on its shape (plan 5.4 decisions log).
+    # Spec, spec example and okta-skills disagree on its shape (5.4 rows in docs/decisions-log.md).
     ops = {c.operation.operation_id for c in registry.domains["apps"].commands.values()}
     assert "listJwk" not in ops
 

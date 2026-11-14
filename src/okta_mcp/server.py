@@ -28,7 +28,16 @@ from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 
 from okta_mcp import __version__
-from okta_mcp.audit import AuditError, AuditLog, collect, hash_key, open_sink, record_sent
+from okta_mcp.audit import (
+    AuditError,
+    AuditLog,
+    Sink,
+    cannot_open,
+    collect,
+    hash_key,
+    open_sink,
+    record_sent,
+)
 from okta_mcp.auth.devmode import dev_principal
 from okta_mcp.auth.principal import Principal
 from okta_mcp.config import Config, ConfigError
@@ -76,6 +85,9 @@ class Runtime:
     tokens: RefreshableTokens
     """The service-app token provider, for `/readyz` and its background refresh (§11.4)."""
     audit: AuditLog
+    warnings: tuple[str, ...]
+    """The policy's load warnings: logged before serving (`log_warnings`), printed by
+    `okta-mcp --check`."""
 
 
 def _tokens(config: Config, http: httpx2.AsyncClient) -> tuple[RefreshableTokens, DPoP | None]:
@@ -98,13 +110,18 @@ def _tokens(config: Config, http: httpx2.AsyncClient) -> tuple[RefreshableTokens
     return provider, dpop
 
 
-def build_runtime(config: Config, http: httpx2.AsyncClient, *, stdio: bool = False) -> Runtime:
+def build_runtime(
+    config: Config, http: httpx2.AsyncClient, *, stdio: bool = False, sink: Sink | None = None
+) -> Runtime:
     """Everything a call needs, from `config`. `http` is the one Okta client
     (`new_http_client`), shared with the token provider; `stdio` keeps the audit log off
-    stdout, the transport. Raises what the loaders raise (`RegistryError`, `ScrubError`,
-    `PolicyError`, `ResourceError`, `ConfigError` for the private key or an audit file that
-    can't be opened). `Executor`'s `ValueError` for limits no call could work under can't
-    happen with a validated `Config`, whose own checks are stricter, so it is a bug if it does.
+    stdout, the transport. `sink` replaces the one `MCP_AUDIT_LOG` names (`okta-mcp --check`
+    passes one, so no file is created). The policy's warnings are in `Runtime.warnings`, for
+    the caller to log (`log_warnings`) or print. Raises what the loaders
+    raise (`RegistryError`, `ScrubError`, `PolicyError`, `ResourceError`, `ConfigError` for the
+    private key or an audit file that can't be opened). `Executor`'s `ValueError` for limits no
+    call could work under can't happen with a validated `Config`, whose own checks are
+    stricter, so it is a bug if it does.
     Call inside the event loop: the client's semaphore and the provider's lock are anyio
     primitives."""
     spec = load_spec()
@@ -113,8 +130,6 @@ def build_runtime(config: Config, http: httpx2.AsyncClient, *, stdio: bool = Fal
     # load, and the engine and executor read them from the policy, so load and call agree.
     scrub = load_scrub()
     policy = load_policy(config.policy_file, registry, scrub)
-    for warning in policy.warnings:
-        log.warning("policy: %s", warning)
     engine = Engine(policy, registry, config.okta_scopes)
     tokens, dpop = _tokens(config, http)
     limiter = RequestLimiter(config.requests_per_minute)
@@ -149,10 +164,11 @@ def build_runtime(config: Config, http: httpx2.AsyncClient, *, stdio: bool = Fal
         max_items=config.max_items,
         guides=resources.guides,
     )
-    try:
-        sink = open_sink(config.audit_log, stdio=stdio)
-    except OSError as e:
-        raise ConfigError([f"MCP_AUDIT_LOG: cannot open the file ({type(e).__name__})"]) from None
+    if sink is None:
+        try:
+            sink = open_sink(config.audit_log, stdio=stdio)
+        except OSError as e:
+            raise ConfigError([cannot_open(e)]) from None
     audit = AuditLog(
         sink,
         registry=registry,
@@ -160,7 +176,15 @@ def build_runtime(config: Config, http: httpx2.AsyncClient, *, stdio: bool = Fal
         args_mode=config.audit_args,
         key=hash_key(config.cursor_key.get_secret_value()),
     )
-    return Runtime(tools=tools, resources=resources, tokens=tokens, audit=audit)
+    return Runtime(
+        tools=tools, resources=resources, tokens=tokens, audit=audit, warnings=policy.warnings
+    )
+
+
+def log_warnings(runtime: Runtime) -> None:
+    """Log the policy's load warnings, once, before serving."""
+    for warning in runtime.warnings:
+        log.warning("policy: %s", warning)
 
 
 def _text(text: str) -> list[types.ContentBlock]:
@@ -315,6 +339,7 @@ async def serve_stdio(config: Config) -> None:
     caller = dev_principal(config)
     async with new_http_client() as http:
         runtime = build_runtime(config, http, stdio=True)
+        log_warnings(runtime)
         server = mcp_server(runtime, lambda: caller)
         log.warning(
             "dev mode: serving stdio as %s with %d group(s); no authentication",

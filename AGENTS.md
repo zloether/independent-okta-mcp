@@ -1,84 +1,60 @@
 # AGENTS.md
 
-Instructions for agents and contributors working in this repo.
+Rules for agents working in this repo. Loaded every session: keep it to what every task needs.
 
-## Purpose
+`independent-okta-mcp` is a self-hosted, **read-only** MCP server for the Okta Management API. OAuth users (Okta custom authorization server) map by `groups` claim to roles in a YAML policy that decides which commands they may call; Okta is called with one service app (`private_key_jwt` + DPoP, `.read` scopes).
 
-`independent-okta-mcp` is a self-hosted, **read-only** MCP server for the Okta Management API. Users authenticate with OAuth (Okta custom authorization server); their `groups` claim maps to roles in a YAML policy that decides which domains and commands they may call. Okta is called with a shared service app (`private_key_jwt` + DPoP, read scopes).
+## Docs: read only what the task needs
 
-- Design: [`docs/design/mcp-server.md`](docs/design/mcp-server.md) — what and why
-- Plan: [`docs/implementation-plan.md`](docs/implementation-plan.md) — order of work, per-step verification, decisions log
+| File | Read when |
+|---|---|
+| [`docs/implementation-plan.md`](docs/implementation-plan.md) | Starting or finishing a step: its status, checklist, Verify block and "How to work a step" |
+| [`docs/decisions-log.md`](docs/decisions-log.md) | Before changing something a step decided (search by step ID); append a row for every decision and review outcome |
+| [`docs/design/mcp-server.md`](docs/design/mcp-server.md) | Only the § refs the step names; update it in the same PR if the step changes the design |
+| [`docs/agents/subagents.md`](docs/agents/subagents.md) | Before delegating to a subagent |
+| [`docs/runbook.md`](docs/runbook.md), [`docs/okta-setup.md`](docs/okta-setup.md) | Changing operator-visible behavior (human docs: update them with it) |
 
-Follow the plan's "How to work a step" section: branch `step/<id>-<slug>`, tests first, update the plan's status and decisions log, update the design doc in the same PR if the step changes it.
+## Working a step
 
-## Before a pull request
+Follow the plan's "How to work a step": tests first, update the plan's status and the decisions log. Every change gets **`/code-review`** before a PR is opened (or, on a branch with one, before it's called done); fix the findings or log why not, then re-run the checks. A change to a trust boundary (below) also gets **`/security-review`**; neither replaces the other. Re-run both on fix commits that touch a trust boundary. Log each review's outcome.
 
-Every change gets **`/code-review`** before a PR is opened or, on a branch that already has one, before the work is called done. Fix what it finds or say in the decisions log why not, then re-run the standard checks. A change to a trust boundary (below) also gets **`/security-review`**; one does not replace the other, since the security review looks only for exploitable flaws and skips correctness. Re-run both on commits that fix review findings when those commits touch a trust boundary. Record each review's outcome in the plan's decisions log.
-
-## Working with subagents
-
-Orchestrate a step with subagents where it makes sense, and give work that is well specified and bounded to a lower-cost model. Do the work yourself when explaining it would take as long as doing it.
-
-- **Delegate to a lower-cost model:** tests for an API that is already written; resource and guide prose; mechanical edits across files; searches and inventories; running checks and reporting the failures.
-- **Keep:** the design of code on a trust boundary, choices the plan or design doc must record, judging review findings, and anything a later step depends on.
-- **Brief it fully.** A subagent starts with none of your context, so give it the exact API or contract, the design and plan refs, what to cover, and the standard checks to pass.
-- **One owner per file.** Name the files a subagent may create or edit. Other files, `docs/implementation-plan.md` and the design doc stay yours. Subagents don't commit, push, stash, reset or check out. When subagents run in parallel, give each its own set of files.
-- **Don't let it fix around a bug.** A subagent that finds a bug in code it didn't write reports it, with a failing or `xfail(strict=True)` test. It doesn't change that code.
-- **Review what comes back.** Read the diff, check factual claims about Okta and about this repo's behavior against the code, then rerun the standard checks yourself. Subagent output gets the same `/code-review` and `/security-review` as your own, and the decisions log says which parts were delegated.
-
-## Layout
-
-```
-src/okta_mcp/          package (layout in design §4.1)
-  __main__.py          console script `okta-mcp`
-  auth/ policy/ registry/ okta/ exec/   (added by later steps)
-  data/                package data: specs/, registry/*.yaml, resources/, scrub.yaml
-tests/                 pytest; mirrors src/ layout
-scripts/               developer tools (spec pinning, coverage, fixtures)
-docs/                  design, plan, coverage reports
-```
-
-Data files live under `src/okta_mcp/data/` so they ship in the wheel; the image installs with `uv sync --no-editable`.
-
-## Commands
-
-```
-uv sync                                   # install runtime + dev deps
-uv run okta-mcp                           # run the server entrypoint
-uv run pytest                             # tests
-uv run ruff check . && uv run ruff format --check .
-uv run pyright                            # strict on src/
-uv lock --check                           # lockfile is committed and must be current
-```
-
-A step is done only when all of these pass, and it has been through the reviews in "Before a pull request":
+Done means these pass, plus the reviews:
 
 ```
 uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run pytest
+uv lock --check                           # lockfile committed and current
 ```
+
+Other commands: `uv sync` (install), `uv run okta-mcp` (serve HTTP), `--stdio` (dev mode), `--check` (load config and policy, exit 0 or 2).
 
 ## Conventions
 
-- **Read-only invariant.** The server never writes to Okta. The registry loader rejects non-GET operations; the Okta HTTP client exposes only `get`. Do not add methods, flags or code paths in `src/` that issue any other HTTP method to Okta. The one exception is the admin tool `scripts/okta-setup.py`, which an Okta admin runs separately from the server; it creates objects and adds links but never deletes or loosens anything.
-- **Registry first.** A command is a YAML entry in `src/okta_mcp/data/registry/` naming an Okta `operationId` from the pinned spec. Add or change commands there, not in code. Every entry must be classified (`data_classes`); sensitivity is derived, never declared. Code is only for post-v1 composite handlers.
-- **Fail closed.** Unknown roles, unclassified commands, scope-less operations or invalid policy expose nothing. Don't add fallbacks that widen access.
-- **Tests with every change.** New behavior comes with tests in the same change. HTTP is mocked; fixtures use reserved example domains only: `example.okta.com` for the Okta org, `*.example.com` for other hosts and for emails.
-- **Never log** tokens, keys, or Okta result bodies.
-- Python ≥3.12, fully async (`anyio`, `httpx2`). Async tests use anyio's pytest plugin (`@pytest.mark.anyio`).
+- **Read-only invariant.** The server never writes to Okta: the registry loader rejects non-GET operations and the Okta client exposes only `get`. Add no code path in `src/` that sends any other method. Only `scripts/okta-setup.py`, run separately by an Okta admin, creates objects; it never deletes or loosens anything.
+- **Registry first.** A command is a YAML entry in `src/okta_mcp/data/registry/` naming an `operationId` from the pinned spec, not code. Every entry is classified (`data_classes`); sensitivity is derived, never declared. Code is only for post-v1 composite handlers.
+- **Fail closed.** Unknown roles, unclassified commands, scope-less operations or an invalid policy expose nothing. No fallbacks that widen access.
+- **Tests with every change.** HTTP is mocked. Fixtures use only `example.okta.com` (the org) and `*.example.com` (other hosts, emails).
+- **Never log** tokens, keys or Okta result bodies.
+- Python ≥3.12, fully async (`anyio`, `httpx2`); async tests use `@pytest.mark.anyio`.
+- Package data (spec, registry, guides, `scrub.yaml`) lives under `src/okta_mcp/data/` so it ships in the wheel. `tests/` mirrors `src/`; `scripts/` holds developer tools.
+- `../okta-skills` is **reference only** (design §3): nothing in `src/`, `tests/` or CI imports, runs or reads it. Re-implement with tests; copied prose keeps attribution.
+
+## Documentation
+
+One audience per doc: humans or agents. Complete, not verbose; link instead of repeating.
+
+- **Human docs:** READMEs as short as possible (what it is, how to start, where to read more); depth in separate files under `docs/`.
+- **Agent docs:** token-efficient. This file holds only rules every task needs; task-specific guidance gets its own file, listed in the table above with when to read it.
+- **MCP guides** (`src/okta_mcp/data/resources/`) are read by the model calling the server: one per domain, short, checked by `tests/test_resources.py`.
 
 ## Trust boundaries
 
-Mistakes in these paths are the hardest to undo (design §12.2). Code touching them must pass **`/security-review`** before it is considered complete; these steps are marked 🔒 in the plan.
+Hardest to undo (design §12.2); changes need `/security-review`, and their plan steps are marked 🔒.
 
-- `src/okta_mcp/auth/` — JWT validation, Protected Resource Metadata, 401/403, dev mode
-- `src/okta_mcp/policy/`, the classification fields in `src/okta_mcp/data/registry/*.yaml`, the data-class → sensitivity table, `src/okta_mcp/data/scrub.yaml` — who may call what; what leaves the server
-- `src/okta_mcp/exec/params.py` and URL building, and the reserved path literals in `src/okta_mcp/registry/spec.py` — path-parameter injection, sibling-endpoint aliasing
-- `src/okta_mcp/exec/resolve.py` — runs Okta lookups on user input
-- `src/okta_mcp/exec/cursor.py`, `src/okta_mcp/okta/paginate.py` — token-attached URL following
-- `src/okta_mcp/okta/token.py`, `src/okta_mcp/okta/dpop.py` — service credential handling
-- `Dockerfile`, `docker/compose.example.yaml` — runtime privileges
-- `scripts/okta-setup.py`, `terraform/okta/` — run with a Super Admin credential; create the clients, policy, groups claim and service-app grants that decide who gets tokens
-
-## okta-skills
-
-`../okta-skills` is **reference only** (design §3). Nothing in `src/`, `tests/` or CI may import from, shell out to, or read files from it. Borrow ideas and endpoint gotchas; re-implement them here with tests. Copied prose keeps attribution.
+- `src/okta_mcp/auth/`: JWT validation, PRM, 401/403, dev mode
+- `src/okta_mcp/policy/`, registry classification fields, the data-class → sensitivity table, `data/scrub.yaml`: who may call what, what leaves the server
+- `exec/params.py` and URL building, reserved path literals in `registry/spec.py`: path injection, sibling-endpoint aliasing
+- `exec/resolve.py`: Okta lookups on user input
+- `exec/cursor.py`, `okta/paginate.py`: token-attached URL following
+- `okta/token.py`, `okta/dpop.py`: service credentials
+- `Dockerfile`, `docker/compose.example.yaml`: runtime privileges
+- `scripts/okta-setup.py`, `terraform/okta/`: run with Super Admin; decide who gets tokens

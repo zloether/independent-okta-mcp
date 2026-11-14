@@ -20,6 +20,7 @@ default `MCP_HOST`, and it would then refuse every `Host` but loopback, i.e. eve
 through the TLS proxy.
 """
 
+import io
 import logging
 import math
 import time
@@ -43,14 +44,16 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from okta_mcp.audit import cannot_open, probe_sink
+from okta_mcp.auth.devmode import dev_principal
 from okta_mcp.auth.metadata import PRM_PATH, RequireToken, prm_routes
 from okta_mcp.auth.principal import Principal, VerifiedToken
 from okta_mcp.auth.verifier import JWTVerifier
-from okta_mcp.config import MCP_PATH, Config
+from okta_mcp.config import MCP_PATH, Config, ConfigError
 from okta_mcp.logs import log_internal
 from okta_mcp.okta.client import new_http_client
 from okta_mcp.okta.token import keep_fresh
-from okta_mcp.server import Runtime, build_runtime, mcp_server
+from okta_mcp.server import Runtime, build_runtime, log_warnings, mcp_server
 
 log = logging.getLogger(__name__)
 
@@ -322,6 +325,7 @@ async def serve_http(config: Config, transport: httpx2.AsyncBaseTransport | None
     the background too, for `/readyz`. `transport` is for tests."""
     async with new_http_client(transport) as http:
         runtime = build_runtime(config, http)
+        log_warnings(runtime)
         verifier = JWTVerifier(http, config)
         app = build_app(runtime, config, verifier)
         async with anyio.create_task_group() as tg:
@@ -330,3 +334,27 @@ async def serve_http(config: Config, transport: httpx2.AsyncBaseTransport | None
             log.info("serving %s on %s:%d", MCP_PATH, config.host, config.port)
             await uvicorn.Server(uvicorn_config(config, app)).serve()
             tg.cancel_scope.cancel()
+
+
+def _no_network(request: httpx2.Request) -> httpx2.Response:
+    raise RuntimeError("okta-mcp --check sends no requests")
+
+
+async def check(config: Config, *, stdio: bool) -> list[str]:
+    """`okta-mcp --check`: build what serving would for the transport `stdio` picks, without
+    serving, binding a port, or sending a request (to Okta or the issuer), and return the
+    warnings startup would log. Raises what `serve_http` or `serve_stdio` would raise before
+    serving; the audit file is probed (`probe_sink`) rather than opened, so none is created.
+    Not covered: the port bind, the issuer's JWKS and the service token, which need the
+    network. Run it with the server's own variables, mounts and user."""
+    if stdio:
+        dev_principal(config)  # first, as in `serve_stdio`
+    async with new_http_client(httpx2.MockTransport(_no_network)) as http:
+        runtime = build_runtime(config, http, stdio=stdio, sink=io.StringIO())
+        if not stdio:
+            build_app(runtime, config, JWTVerifier(http, config))
+    try:
+        audit = probe_sink(config.audit_log)
+    except OSError as e:
+        raise ConfigError([cannot_open(e)]) from None
+    return [f"policy: {w}" for w in runtime.warnings] + ([audit] if audit else [])

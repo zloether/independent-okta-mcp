@@ -1,7 +1,7 @@
 """docker/compose.example.yaml keeps the runtime privileges design §11.4 asks for (plan 7.2).
 
 Static: no Docker needed. `docker compose config` and a bring-up were run by hand (see the
-plan's decisions log); this pins what a later edit could quietly loosen.
+decisions log); this pins what a later edit could quietly loosen.
 """
 
 from __future__ import annotations

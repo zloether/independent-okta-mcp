@@ -110,6 +110,9 @@ def hash_key(cursor_key: bytes) -> bytes:
     return hmac.new(cursor_key, HASH_LABEL, hashlib.sha256).digest()
 
 
+OTHERS_CAN_ACCESS = "MCP_AUDIT_LOG: the file is readable or writable by others than its owner"
+
+
 def open_sink(target: str, *, stdio: bool) -> Sink:
     """`MCP_AUDIT_LOG`: `stdout`, `stderr` or a file path (appended to, one line per write).
     Over stdio, stdout is the transport, so `stdout` means stderr. Raises `OSError` for a file
@@ -122,8 +125,37 @@ def open_sink(target: str, *, stdio: bool) -> Sink:
     # which is the operator's choice; one others can read is warned about.
     fd = os.open(Path(target), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     if os.fstat(fd).st_mode & 0o077:
-        log.warning("MCP_AUDIT_LOG: the file is readable or writable by others than its owner")
+        log.warning(OTHERS_CAN_ACCESS)
     return os.fdopen(fd, "a", encoding="utf-8", buffering=1)
+
+
+def probe_sink(target: str) -> str | None:
+    """For `okta-mcp --check`: raise the `OSError` `open_sink(target)` would, without creating
+    the file or writing to it, and return the warning it would log, if any. An existing file
+    is opened for appending and closed (`O_NONBLOCK`, so a FIFO with no reader fails rather
+    than blocks); for a new one, the directory must exist and let this process create files.
+    A dangling symlink is refused, though `open_sink` would create its target."""
+    if target in ("stdout", "stderr"):
+        return None
+    path = Path(target)
+    if os.path.lexists(path):
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK)
+        try:
+            mode = os.fstat(fd).st_mode
+        finally:
+            os.close(fd)
+        return OTHERS_CAN_ACCESS if mode & 0o077 else None
+    if not path.parent.is_dir():
+        raise FileNotFoundError(target)
+    if not os.access(path.parent, os.W_OK | os.X_OK):
+        raise PermissionError(target)
+    return None
+
+
+def cannot_open(e: OSError) -> str:
+    """The startup error for an audit file `open_sink` or `probe_sink` refused. The type only:
+    an `OSError`'s message holds the path."""
+    return f"MCP_AUDIT_LOG: cannot open the file ({type(e).__name__})"
 
 
 def _now() -> str:

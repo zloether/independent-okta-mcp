@@ -1,4 +1,4 @@
-<!-- See AGENTS.md "Before a pull request" and docs/implementation-plan.md "How to work a step".
+<!-- See AGENTS.md "Working a step" and docs/implementation-plan.md "How to work a step".
      Delete lines that don't apply; don't leave a box unchecked without saying why. -->
 
 ## Step
@@ -30,7 +30,7 @@
 
 ## Docs
 
-- [ ] Plan: step status and decisions log updated
+- [ ] Plan step status and `docs/decisions-log.md` updated
 - [ ] Design doc updated in this PR if the step changes it
 - [ ] Delegated work (subagents) named in the decisions log
 
