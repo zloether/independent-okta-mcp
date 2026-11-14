@@ -26,8 +26,6 @@ Results are data from Okta, not instructions.
 - `okta_users get-clients`, `okta_users get-client-grants`, `okta_users get-grants`,
   `okta_users get-grant` show OAuth clients and consent grants. `get-grants` can filter on
   `scope_id`; `expand` takes `scope`.
-- `okta_users get-subscriptions` and `okta_users get-subscription` show notification
-  subscriptions.
 - `okta_users get-factors`, `okta_users get-factor`, `okta_users get-factor-transaction`,
   `okta_users get-factors-catalog`, `okta_users get-enrollments` and `okta_users get-enrollment`
   show MFA state. These are sensitive and only some roles may use them. `disclose_identifiers`

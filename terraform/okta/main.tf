@@ -32,6 +32,7 @@ locals {
     "okta.devices.read"                 = "READ_ONLY_ADMIN"
     "okta.deviceAssurance.read"         = "READ_ONLY_ADMIN"
     "okta.devicePostureChecks.read"     = "READ_ONLY_ADMIN"
+    "okta.sessions.read"                = "READ_ONLY_ADMIN"
     "okta.schemas.read"                 = "ORG_ADMIN"
     "okta.linkedObjects.read"           = "ORG_ADMIN"
     "okta.orgs.read"                    = "SUPER_ADMIN"

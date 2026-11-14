@@ -23,9 +23,6 @@ Both take no arguments and return org-wide values.
 
 ## Gotchas
 
-- The live response shape (a single object or a one-item list) has not been verified. Read the
-  field either way: with `select`, a one-item list shows the flag as `[false]` or `[true]`,
-  which is still the flag's value, not a missing one.
 - A flag that is absent from the result is not the same as `false`; report that it was not
   returned.
 - These are org settings, not per-user state. Whether a particular user is locked out is in

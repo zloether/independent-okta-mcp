@@ -321,8 +321,8 @@ def test_resume_url_without_query(members: Command) -> None:
 
 
 def test_resume_url_encodes_path_values(members: Command) -> None:
-    url = resume_url(members, Resume({"groupId": "a@b:c"}, "limit=1", 0), ORG)
-    assert url == ORG + "/api/v1/groups/a%40b%3Ac/users?limit=1"
+    url = resume_url(members, Resume({"groupId": 'a@b:c"d'}, "limit=1", 0), ORG)
+    assert url == ORG + "/api/v1/groups/a@b:c%22d/users?limit=1"
 
 
 @pytest.mark.parametrize(

@@ -37,6 +37,31 @@ log = logging.getLogger(__name__)
 _SUMMARY_MAX = 500
 _FEATURE_OFF = "E0000015"
 _ERROR_CODE = re.compile(r"E[0-9]{7}")
+# The registered OAuth `error` codes (RFC 6749 §5.2, 6750 §3.1, 9449 §12.2): fixed strings, so
+# they may be logged. Any other value is Okta's text and isn't used.
+_OAUTH_ERRORS = frozenset(
+    {
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+        "access_denied",
+        "server_error",
+        "temporarily_unavailable",
+        "invalid_token",
+        "insufficient_scope",
+        "invalid_dpop_proof",
+        "use_dpop_nonce",
+    }
+)
+# A challenge's scheme, or one auth-param: a quoted string (with `\` escapes) or a token
+# (RFC 9110 §11.2). A scheme (a token with no `=`) starts the next challenge.
+_CHALLENGE_PART = re.compile(
+    r'([!#$%&\'*+.^_`|~0-9A-Za-z-]+)\s*(=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,"]*)))?'
+)
+_UNPRINTABLE = re.compile(r"[^\x20-\x7e]+")
 
 
 class OriginError(Exception):
@@ -68,6 +93,31 @@ def _error_code(response: httpx2.Response) -> str | None:
             return code
         case _:
             return None
+
+
+def _challenges(header: str) -> list[dict[str, str]]:
+    """Each challenge's auth-params, lower-cased names, first value wins."""
+    challenges: list[dict[str, str]] = []
+    for m in _CHALLENGE_PART.finditer(header):
+        if m[2] is None:
+            challenges.append({})
+        elif challenges:
+            value = re.sub(r"\\(.)", r"\1", m[3]) if m[3] is not None else m[4]
+            challenges[-1].setdefault(m[1].lower(), value)
+    return challenges
+
+
+def _oauth_error(body: Any, challenge: str) -> tuple[str, str] | None:
+    """A registered OAuth `error` and its `error_description` (empty if absent), from the JSON
+    body or else the first `WWW-Authenticate` challenge with one, as for a DPoP proof Okta
+    rejects. The description is Okta's text: printable ASCII only, uncapped."""
+    candidates: list[dict[str, Any]] = [body] if isinstance(body, dict) else []
+    for params in candidates + _challenges(challenge):
+        error, description = params.get("error"), params.get("error_description")
+        if error in _OAUTH_ERRORS:
+            text = description if isinstance(description, str) else ""
+            return error, _UNPRINTABLE.sub(" ", text).strip()
+    return None
 
 
 def _feature_off(response: httpx2.Response) -> bool:
@@ -281,10 +331,15 @@ class OktaClient:
 
     def _error(self, response: httpx2.Response) -> UpstreamError:
         status = response.status_code
+        body = json_body(response)
+        challenge = response.headers.get("WWW-Authenticate", "")
         if status in (401, 403):
             # The code tells a too-narrow admin role (E0000006) from a missing feature
-            # (E0000015) for the operator; the caller's message names only the latter.
+            # (E0000015), or names a token or DPoP error, for the operator; the caller's
+            # message names only a missing feature.
             code = _error_code(response)
+            if code is None and (oauth := _oauth_error(body, challenge)):
+                code = oauth[0]
             log.warning(
                 "Okta refused the service app's request: HTTP %d %s",
                 status,
@@ -302,8 +357,13 @@ class OktaClient:
             return UpstreamError(
                 status, f"Okta refused the request (HTTP {status}); contact the MCP administrator"
             )
-        match json_body(response):
+        match body:
             case {"errorSummary": str(summary)} if summary:
+                return UpstreamError(
+                    status, f"Okta returned HTTP {status}: {summary[:_SUMMARY_MAX]}"
+                )
+            case _ if oauth := _oauth_error(body, challenge):
+                summary = ": ".join(p for p in oauth if p)
                 return UpstreamError(
                     status, f"Okta returned HTTP {status}: {summary[:_SUMMARY_MAX]}"
                 )

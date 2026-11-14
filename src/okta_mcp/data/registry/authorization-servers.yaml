@@ -32,7 +32,7 @@ commands:
     summary: Associated servers
     args:
       server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
-      trusted: {query: trusted}
+      trusted: {query: trusted, required: true}  # Okta 400s without it (5.4 dev-org smoke)
       q: {query: q, arg_rule: {reviewed: "matches the server name and audiences, both returned"}}
     paginate: link
     page_size: 200

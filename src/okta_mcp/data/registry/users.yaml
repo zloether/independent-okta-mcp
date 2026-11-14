@@ -233,22 +233,6 @@ commands:
       expand: {query: expand, allowed_values: [scope]}
     data_classes: [pii]
 
-  get-subscriptions:
-    operation: listSubscriptionsUser
-    summary: User's notification subscriptions
-    args:
-      user: {path_param: userId, resolve: user_id}
-    view: [notificationType, status, channels]
-    data_classes: [pii]
-
-  get-subscription:
-    operation: getSubscriptionsNotificationTypeUser
-    summary: A notification subscription
-    args:
-      user: {path_param: userId, resolve: user_id}
-      type: {path_param: notificationType}
-    data_classes: [pii]
-
   # Role commands follow `groups`: role assignment IDs are base32 role types or irb…/ra….
   list-roles:
     operation: listAssignedRolesForUser

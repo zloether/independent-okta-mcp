@@ -842,12 +842,12 @@ domains:
       paginate: none
     get-subscriptions:
       operations: [listSubscriptionsUser]
-      kind: resolved
-      paginate: none
+      kind: excluded
+      reason: Okta shows only the caller's own subscriptions; the service app is not a user (403)
     get-subscription:
       operations: [getSubscriptionsNotificationTypeUser]
-      kind: resolved
-      paginate: none
+      kind: excluded
+      reason: Okta shows only the caller's own subscriptions; the service app is not a user (403)
     get-factors-catalog:
       operations: [listSupportedFactors]
       kind: resolved

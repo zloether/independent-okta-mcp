@@ -97,15 +97,15 @@ async def test_user_id_is_used_as_is(spec: SpecIndex) -> None:
 async def test_exact_login_ignoring_case(spec: SpecIndex, login: str) -> None:
     okta = Okta()
     assert await resolver(spec, okta).user_id("user", login, {}) == ALICE
-    assert okta.paths == ["/api/v1/users/" + login.replace("@", "%40")]
+    assert okta.paths == ["/api/v1/users/" + login]
 
 
 @pytest.mark.anyio
-async def test_lookup_value_is_encoded_with_no_safe_characters(spec: SpecIndex) -> None:
+async def test_lookup_value_is_encoded_but_for_sub_delims_colon_and_at(spec: SpecIndex) -> None:
     okta = Okta(httpx2.Response(404))
     with pytest.raises(NotFound):
-        await resolver(spec, okta).user_id("user", "a+b:c=e@example.com", {})
-    assert okta.paths == ["/api/v1/users/a%2Bb%3Ac%3De%40example.com"]
+        await resolver(spec, okta).user_id("user", 'a+b:c=e"f@example.com', {})
+    assert okta.paths == ["/api/v1/users/a+b:c=e%22f@example.com"]
 
 
 @pytest.mark.anyio
