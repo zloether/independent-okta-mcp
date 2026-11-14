@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import base64
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 import pytest
@@ -23,8 +23,12 @@ COMPOSE = DOCKER / "compose.example.yaml"
 
 
 @pytest.fixture(scope="module")
-def service() -> dict[str, Any]:
-    doc = cast(dict[str, Any], yaml.safe_load(COMPOSE.read_text(encoding="utf-8")))
+def doc() -> dict[str, Any]:
+    return cast(dict[str, Any], yaml.safe_load(COMPOSE.read_text(encoding="utf-8")))
+
+
+@pytest.fixture(scope="module")
+def service(doc: dict[str, Any]) -> dict[str, Any]:
     services = cast(dict[str, Any], doc["services"])
     assert list(services) == ["okta-mcp"]
     return cast(dict[str, Any], services["okta-mcp"])
@@ -41,9 +45,20 @@ def test_hardened(service: dict[str, Any]) -> None:
     assert service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]
     assert "cap_add" not in service
-    assert "no-new-privileges:true" in service["security_opt"]
+    # Exactly this: `seccomp:unconfined` or `apparmor:unconfined` would loosen confinement.
+    assert service["security_opt"] == ["no-new-privileges:true"]
     assert service["user"] == "10001:10001"
-    for key in ("privileged", "network_mode", "pid", "ipc", "devices", "tmpfs"):
+    # env_file and extends could bring in MCP_ENV, dev mode or inline secrets unseen.
+    for key in (
+        "privileged",
+        "network_mode",
+        "pid",
+        "ipc",
+        "devices",
+        "tmpfs",
+        "env_file",
+        "extends",
+    ):
         assert key not in service, key
 
 
@@ -56,6 +71,9 @@ def test_port_published_on_loopback_only(service: dict[str, Any]) -> None:
 def test_image_not_latest(service: dict[str, Any]) -> None:
     image = str(service["image"])
     assert ":" in image and not image.endswith(":latest")
+    if "build" in service:
+        # Otherwise Compose tries Docker Hub first, and never rebuilds an existing local tag.
+        assert service["pull_policy"] == "build"
 
 
 def test_environment_names_are_config_variables(environment: dict[str, str]) -> None:
@@ -93,17 +111,22 @@ def test_policy_mounted_read_only_and_must_exist(
         assert m.get("read_only") is True, m
 
 
-def test_secrets_are_files(service: dict[str, Any]) -> None:
-    doc = cast(dict[str, Any], yaml.safe_load(COMPOSE.read_text(encoding="utf-8")))
+def test_secrets_are_files_in_the_ignored_directory(
+    doc: dict[str, Any], service: dict[str, Any]
+) -> None:
     declared = cast(dict[str, Any], doc["secrets"])
     assert set(service["secrets"]) == set(declared)
     for spec in declared.values():
-        assert str(spec["file"]).startswith("./secrets/")
+        path = PurePosixPath(str(spec["file"]))
+        assert ".." not in path.parts and path.parent == PurePosixPath("secrets"), path
 
 
-def test_secrets_directory_is_git_ignored() -> None:
-    ignore = (Path(__file__).parents[1] / ".gitignore").read_text(encoding="utf-8")
-    assert "docker/secrets/" in ignore.splitlines()
+def test_operator_files_are_git_ignored(service: dict[str, Any]) -> None:
+    ignore = (Path(__file__).parents[1] / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "docker/secrets/" in ignore
+    for m in service["volumes"]:
+        source = PurePosixPath(str(cast(dict[str, Any], m)["source"]))
+        assert f"docker/{source}" in ignore, source
 
 
 def test_example_values_pass_config_validation(environment: dict[str, str], tmp_path: Path) -> None:

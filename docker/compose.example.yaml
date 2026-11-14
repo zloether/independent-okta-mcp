@@ -1,15 +1,21 @@
-# Example deployment (design §11.4, plan 7.2). Copy this directory, fill in the values marked
-# CHANGE, put the secrets in ./secrets/ (git-ignored), then:
+# Example deployment (design §11.4, plan 7.2). Until an image is published this builds from
+# the repo checkout, so run it from this directory of the checkout: fill in the values marked
+# CHANGE, copy policy.example.yaml to policy.yaml and edit it, put the secrets in ./secrets/
+# (policy.yaml and secrets/ are git-ignored here), then:
 #
 #   docker compose -f compose.example.yaml up -d
 #   curl -s http://127.0.0.1:8080/readyz
 #
+# `pull_policy: build` rebuilds on every `up`, so a `git pull` takes effect. With a published
+# image, delete `build:` and `pull_policy:`; then the directory can live anywhere.
+#
 # TLS terminates at a reverse proxy in front of this port (Caddy, nginx, a load balancer); the
 # container speaks plain HTTP and must never be reachable by anything but that proxy.
 #
-# Secret files must be readable by the container's user, uid 10001 (Compose bind-mounts a
-# file secret as it is on the host and ignores `uid`/`gid`/`mode` for it): for example
-#   sudo chown 10001:10001 secrets/* && sudo chmod 0400 secrets/*
+# The secret files and policy.yaml must be readable by the container's user, uid 10001:
+# Compose bind-mounts each as it is on the host, owner and mode included, and ignores
+# `uid`/`gid`/`mode` for a file secret. For example
+#   sudo chown 10001:10001 secrets/* policy.yaml && sudo chmod 0400 secrets/* policy.yaml
 # The server checks only that it can read them. Rotation = replace the file, then restart.
 
 name: okta-mcp
@@ -21,6 +27,7 @@ services:
     image: okta-mcp:local
     build:
       context: ..
+    pull_policy: build
     restart: unless-stopped
 
     # Runtime privileges. The image already runs as uid 10001 with no setuid binaries; these
@@ -48,7 +55,7 @@ services:
       MCP_ALLOWED_CLIENT_IDS: 0oa1client0000000000          # comma list of MCP client app IDs
       OKTA_ORG_URL: https://example.okta.com
       OKTA_CLIENT_ID: 0oa1service000000000                  # the service app
-      OKTA_KEY_ID: ""                                       # kid that scripts/okta-setup.py printed
+      OKTA_KEY_ID: example-kid                              # the kid scripts/okta-setup.py printed
       OKTA_SCOPES: okta.users.read okta.groups.read         # exactly what the service app was granted
 
       # Fixed by this file: secrets and the policy are files, mounted below.

@@ -244,3 +244,4 @@ environment.*
 
 # Compose example: secrets placed next to docker/compose.example.yaml
 docker/secrets/
+docker/policy.yaml
