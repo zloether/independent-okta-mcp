@@ -4,10 +4,11 @@ Every error is collected and reported at once; any error fails the load. Check 7
 guides) lands with the resources in step 3.4.
 """
 
+import itertools
 import re
 from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
 from importlib.resources.abc import Traversable
 from types import MappingProxyType
@@ -17,7 +18,7 @@ import yaml
 from jsonschema.protocols import Validator
 from pydantic import ValidationError
 
-from okta_mcp.registry.model import CommandEntry, DomainFile, Sensitivity
+from okta_mcp.registry.model import HANDLER_STRING_MAX, CommandEntry, DomainFile, Sensitivity, Uses
 from okta_mcp.registry.schema import build_schema, make_validator, synopsis
 from okta_mcp.registry.spec import Operation, SpecIndex
 
@@ -46,9 +47,11 @@ class Command:
     domain: str
     name: str
     entry: CommandEntry
-    operation: Operation
+    operation: Operation | None
+    """None for a handler (composite) command, which has `uses` instead."""
     scope_sets: tuple[frozenset[str], ...]
-    """Alternatives, as in `Operation.scope_sets`, with the resolver's scopes added to each."""
+    """Alternatives, as in `Operation.scope_sets`, with the resolver's scopes added to each. For
+    a handler command, the scopes that cover all of its `uses.required` operations."""
     sensitivity: Sensitivity
     """Base sensitivity; `arg_rule`s may raise it per call."""
     is_list: bool
@@ -56,6 +59,20 @@ class Command:
     """JSON Schema for `args` (design §6.3). Nested values are plain dicts: don't change them."""
     synopsis: str
     validator: Validator
+    uses: Mapping[str, Operation] = field(default_factory=lambda: MappingProxyType({}))
+    """Handler commands: operationId → operation, for every operation the handler may call."""
+    optional: frozenset[str] = frozenset()
+    """Handler commands: the `uses` it can do without when the service app lacks their scopes."""
+
+    @property
+    def handler(self) -> str | None:
+        return self.entry.handler
+
+    def op(self) -> Operation:
+        """The operation of a simple command. A bug to ask a handler command for one."""
+        if self.operation is None:
+            raise RuntimeError("a handler command has no single operation")
+        return self.operation
 
 
 @dataclass(frozen=True)
@@ -160,8 +177,9 @@ def _command(
     domain: str, name: str, entry: CommandEntry, spec: SpecIndex, errors: list[str]
 ) -> Command | None:
     if entry.handler is not None:
-        errors.append("handler commands are post-v1")
-        return None
+        return _handler_command(domain, name, entry, spec, errors)
+    if entry.operation is None:  # the model requires one of the two
+        raise RuntimeError("command without operation or handler")
     # Check 1: the operation exists and is a GET.
     if entry.operation in spec.non_get:
         method = spec.non_get[entry.operation].upper()
@@ -188,6 +206,71 @@ def _command(
         line,
         make_validator(schema),
     )
+
+
+def _handler_command(
+    domain: str, name: str, entry: CommandEntry, spec: SpecIndex, errors: list[str]
+) -> Command | None:
+    """A composite command (design §5.6): check 1 (GET only, known) and check 3 (scopes) for
+    every operation in `uses`; its schema from the registry args alone."""
+    uses = cast(Uses, entry.uses)  # the model requires it with a handler
+    ops: dict[str, Operation] = {}
+    for op_id in (*uses.required, *uses.optional):
+        if op_id in spec.non_get:
+            errors.append(f"uses {op_id}: it is {spec.non_get[op_id].upper()}; only GET is allowed")
+        elif (op := spec.operations.get(op_id)) is None:
+            errors.append(f"uses {op_id}: unknown operation")
+        elif not op.scope_sets:
+            # No override for handler commands: a scope-less operation exposes nothing.
+            errors.append(f"uses {op_id}: declares no oauth2 scopes")
+        else:
+            ops[op_id] = op
+    if len(ops) != len(uses.required) + len(uses.optional):
+        return None
+    # Any one alternative of each required operation; the union of a choice covers them all.
+    choices = itertools.product(*(ops[o].scope_sets for o in uses.required))
+    scope_sets = tuple(sorted({frozenset[str]().union(*c) for c in choices}, key=sorted))
+    schema = _handler_schema(entry, errors)
+    line = synopsis(name, entry.summary, schema, errors)
+    return Command(
+        domain,
+        name,
+        entry,
+        None,
+        scope_sets,
+        entry.sensitivity,
+        False,
+        MappingProxyType(schema),
+        line,
+        make_validator(schema),
+        MappingProxyType(ops),
+        frozenset(uses.optional),
+    )
+
+
+def _handler_schema(entry: CommandEntry, errors: list[str]) -> dict[str, Any]:
+    props: dict[str, Any] = {}
+    required: list[str] = []
+    for name, arg in entry.args.items():
+        s: dict[str, Any] = {"type": arg.type or "string"}
+        if s["type"] == "string":
+            if arg.allowed_values:
+                s["enum"] = list(arg.allowed_values)
+            else:
+                s["maxLength"] = arg.max_length or HANDLER_STRING_MAX
+            if arg.pattern is not None:
+                s["pattern"] = arg.pattern
+        elif arg.pattern is not None or arg.allowed_values:
+            errors.append(f"arg {name}: pattern and allowed_values are for strings")
+        if arg.allowed_values == ():
+            errors.append(f"arg {name}: a handler command has no hidden args")
+        props[name] = s
+        if arg.required:
+            required.append(name)
+    schema: dict[str, Any] = {"type": "object", "properties": props, "additionalProperties": False}
+    if required:
+        schema["required"] = required
+    return schema
 
 
 def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
@@ -409,7 +492,8 @@ def _check_shared_operations(domains: Mapping[str, Domain]) -> list[str]:
     by_op: dict[str, list[Command]] = defaultdict(list)
     for d in domains.values():
         for c in d.commands.values():
-            by_op[c.operation.operation_id].append(c)
+            if c.operation is not None:  # a handler's `uses` read data its own classes cover
+                by_op[c.operation.operation_id].append(c)
     errors: list[str] = []
     for op_id, cmds in by_op.items():
         if len(cmds) < 2:

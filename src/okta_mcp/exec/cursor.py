@@ -215,7 +215,7 @@ def resume_url(command: Command, resume: Resume, org_url: str) -> str:
     path params, on `org_url`, plus the cursor's query. Send it with no `params`. Raises
     `CursorError` if the path params aren't the template's, a value fails the §6.4 rule, or the
     query isn't one the HTTP client sends unchanged."""
-    operation = command.operation
+    operation = command.op()
     try:
         segments = {
             name: path_segment(name, value, operation.reserved.get(name, frozenset()))

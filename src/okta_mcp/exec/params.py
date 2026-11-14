@@ -91,7 +91,10 @@ def check_args(command: Command, args: object) -> None:
     value that breaks the §6.4 rule, at once. No request is built; `build_request` runs this
     too, so no caller can skip it."""
     entry = command.entry
-    reserved = command.operation.reserved
+    # A handler command's args are no path values (`Arg.targeted`), so it has nothing reserved.
+    reserved: Mapping[str, frozenset[str]] = (
+        command.operation.reserved if command.operation is not None else {}
+    )
     problems = schema_problems(command, args)
     if isinstance(args, Mapping):
         problems |= {
@@ -130,14 +133,12 @@ def build_request(
             segments[arg.path_param] = quote(value, safe=_SEGMENT_SAFE)
         elif isinstance(value, list):
             items = [_query_value(v) for v in cast(list[object], value)]
-            params[arg.param] = (
-                items if command.operation.params[arg.param].explode else ",".join(items)
-            )
+            params[arg.param] = items if command.op().params[arg.param].explode else ",".join(items)
         else:
             params[arg.param] = _query_value(value)
     if entry.page_size is not None:
         params["limit"] = str(entry.page_size)
-    return build_url(org_url, command.operation.path, segments), params
+    return build_url(org_url, command.op().path, segments), params
 
 
 def _encodable(value: object) -> bool:

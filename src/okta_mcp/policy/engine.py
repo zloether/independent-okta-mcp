@@ -14,6 +14,7 @@ from okta_mcp.exec.output import ScrubRules
 from okta_mcp.policy.expression import ExpressionError, attribute, attributes, scrubbed
 from okta_mcp.policy.model import WILDCARD, Grant, Policy
 from okta_mcp.registry.loader import Command, Registry
+from okta_mcp.registry.spec import Operation
 
 
 class Verdict(enum.Enum):
@@ -56,6 +57,7 @@ class Engine:
         self._commands: Mapping[Grant, Command] = {
             (d.name, c.name): c for d in registry.domains.values() for c in d.commands.values()
         }
+        self._okta_scopes = okta_scopes
         # Capability gate (§9.4 item 3). Plain subset: `OKTA_SCOPES` holds `.read` scopes only
         # (config), so there is no `.manage` to imply anything, and a command whose operation
         # accepts only a `.manage` scope is unavailable. No scope sets → unavailable.
@@ -66,6 +68,11 @@ class Engine:
         )
         """Commands the service app can't run, whoever asks."""
         self._by_roles: dict[frozenset[str], _Effective] = {}
+
+    def runs(self, operation: Operation) -> bool:
+        """The service app holds one of the operation's scope sets: the capability gate's test
+        for one operation, which a handler command applies to each of its optional `uses`."""
+        return any(scopes <= self._okta_scopes for scopes in operation.scope_sets)
 
     @property
     def scrub(self) -> ScrubRules:

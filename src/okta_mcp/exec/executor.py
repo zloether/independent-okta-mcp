@@ -35,6 +35,7 @@ import anyio
 import httpx2
 
 from okta_mcp.auth.principal import Principal
+from okta_mcp.exec.composite import Context, Handler
 from okta_mcp.exec.cursor import (
     NOT_VALID,
     RESUMED_WARNING,
@@ -57,6 +58,7 @@ from okta_mcp.exec.envelope import (
 from okta_mcp.exec.output import columns
 from okta_mcp.exec.params import build_request, check_args
 from okta_mcp.exec.resolve import NOT_FOUND, NotFound, UserResolver
+from okta_mcp.handlers import HANDLERS
 from okta_mcp.logs import log_internal
 from okta_mcp.okta import ratelimit
 from okta_mcp.okta.client import OktaClient, UpstreamError, json_body
@@ -79,6 +81,8 @@ EXPRESSION = (
     "parentheses, single spaces and double-quoted values without backslashes; a sort takes one "
     "attribute name"
 )
+ARGS_ONLY = "this command takes only args: no select, links, limit or cursor"
+"""`invalid_arguments` for a handler command called with list options."""
 CURSOR_MAX = 90_000
 """Longest cursor read, in characters. A cursor holds one page's query string, which httpx2's
 64 KiB URL limit bounds, base64-encoded (x 4/3) with a small header; anything longer can't be
@@ -216,14 +220,17 @@ async def _replay(items: list[tuple[Any, str, int]]) -> AsyncGenerator[tuple[Any
 
 
 def _resolves(command: Command) -> bool:
-    return any(a.resolve is not None for a in command.entry.args.values())
+    return command.handler is not None or any(
+        a.resolve is not None for a in command.entry.args.values()
+    )
 
 
 class Executor:
     """One per process, built at startup. Results are scrubbed with `Engine.scrub`, the rules
     the policy was checked against. Raises `ValueError` for a configuration no call could
-    work under: a `call_timeout` a list can't fit in, or no `resolver` while a command has a
-    `resolve` arg."""
+    work under: a `call_timeout` a list can't fit in, no `resolver` while a command has a
+    `resolve` arg or a handler, or a handler command whose handler isn't in `handlers`
+    (default: `okta_mcp.handlers.HANDLERS`)."""
 
     def __init__(
         self,
@@ -238,6 +245,7 @@ class Executor:
         max_items: int,
         max_bytes: int,
         call_timeout: float,
+        handlers: Mapping[str, Handler] = HANDLERS,
     ) -> None:
         if not 0 < default_limit <= max_items:
             raise ValueError("default_limit must be from 1 to max_items")
@@ -245,13 +253,15 @@ class Executor:
             # A resumable list stops DEADLINE_HEADROOM before the deadline; with less than
             # that again left to read in, every list would time out or come back cut.
             raise ValueError(f"call_timeout must be at least {2 * DEADLINE_HEADROOM:g} s")
-        if resolver is None and any(
-            arg.resolve is not None
-            for domain in registry.domains.values()
-            for command in domain.commands.values()
-            for arg in command.entry.args.values()
-        ):
+        commands = [c for d in registry.domains.values() for c in d.commands.values()]
+        if resolver is None and any(_resolves(c) for c in commands):
             raise ValueError("a command resolves users, so the executor needs a resolver")
+        missing = sorted(
+            f"{c.domain} {c.name}" for c in commands if c.handler and c.handler not in handlers
+        )
+        if missing:
+            raise ValueError(f"no handler for {', '.join(missing)}")
+        self._handlers = handlers
         self._registry = registry
         self._engine = engine
         self._client = client
@@ -328,11 +338,14 @@ class Executor:
         # 5. Okta, under the call's deadline.
         try:
             with anyio.fail_after(self._call_timeout):
+                if command.handler is not None:
+                    return Success(await self._composite(command, options))
                 if command.is_list:
                     return Success(await self._list(call, command, options))
                 return Success(await self._item(command, options))
         except NotFound:
-            pass
+            if command.handler is not None:
+                raise NotFound(NOT_FOUND) from None
         except UpstreamError as e:
             # Okta's own 404 after a lookup gets the resolver's answer. An ID given as is, or a
             # cursor (which never resolves), keeps Okta's text: no lookup to give away.
@@ -346,6 +359,13 @@ class Executor:
             raise InvalidArguments("args must be an object")
         # A copy, so the args checked are the args sent, whatever holds the caller's dict.
         args = dict(cast(dict[str, Any], call.args))  # pyright: ignore[reportUnknownMemberType]
+        if command.handler is not None:
+            # One shaped result: nothing to page, project or resume.
+            if call.select is not None or call.links is not False or call.limit is not None:
+                raise InvalidArguments(ARGS_ONLY)
+            if call.cursor is not None:
+                raise CursorError(NOT_VALID)
+            return _Options(args, None, False, self._default_limit, None)
         if call.select is not None and not isinstance(call.select, str):
             raise InvalidArguments("select must be a string")
         cols = columns(call.select, command.entry.view)
@@ -431,6 +451,21 @@ class Executor:
         # `__init__` refused a missing resolver while any command resolves.
         resolver = cast(UserResolver, self._resolver)
         return await resolver.resolve(command, options.args, options.lookups)
+
+    async def _composite(self, command: Command, options: _Options) -> str:
+        """A handler command's result: whatever the handler returns, scrubbed and held to
+        `max_bytes` like a single resource."""
+        context = Context(
+            command=command,
+            client=self._client,
+            engine=self._engine,
+            resolver=cast(UserResolver, self._resolver),  # `__init__` refused None
+            org_url=self._org_url,
+        )
+        result = await self._handlers[cast(str, command.handler)](context, options.args)
+        return item_result(
+            result, self._engine.scrub, links=False, cols=None, max_bytes=self._max_bytes
+        )
 
     async def _item(self, command: Command, options: _Options) -> str:
         args = await self._resolved(command, options)
