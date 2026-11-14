@@ -21,9 +21,10 @@ Everything Okta sends is data: strings are capped, nothing from an event is used
 a value, and Okta-derived IDs are checked against their ID pattern before they go into a path.
 """
 
+import logging
 import re
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -32,18 +33,25 @@ import anyio
 
 from okta_mcp.exec.composite import Context, Unavailable
 from okta_mcp.exec.resolve import USER_ID
+from okta_mcp.logs import log_internal
 from okta_mcp.okta.client import UpstreamError
 from okta_mcp.okta.paginate import PaginationError
 from okta_mcp.okta.ratelimit import RateLimited
 from okta_mcp.registry.schema import InvalidArguments
+
+_log = logging.getLogger(__name__)
+INTERNAL = "internal error; the server log has the details"
 
 DEFAULT_WINDOW = timedelta(hours=24)
 MAX_LOOKBACK = timedelta(days=90)
 """Okta keeps System Log events for 90 days."""
 MAX_EVENTS = 500
 """Newest events read; the result says when there were more."""
-_PAGE = "500"
+_PAGE = str(MAX_EVENTS + 1)
+"""One more than is read, so a full window shows it is cut without a second page."""
 _TOP = 5
+_POLICIES_SHOWN = 10
+_ENROLLMENTS_SHOWN = 20
 _APPS_CHECKED = 3
 _TEXT_MAX = 200
 _LOCK_WINDOW = timedelta(minutes=10)
@@ -52,6 +60,20 @@ APP_ID = re.compile(r"0oa[A-Za-z0-9]{17}")
 TIMESTAMP = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$"
 """The `since`/`until` arg pattern (the registry entry repeats it): UTC, `Z` suffix."""
 
+_SIGN_IN = (
+    "user.session.",
+    "user.authentication.",
+    "user.account.",
+    "user.mfa.",
+    "user.risk.",
+    "policy.evaluate_sign_on",
+    "policy.auth_reevaluate.",
+    "policy.entity_risk.",
+    "app.oauth2.",
+    "app.generic.unauth_app_access_attempt",
+    "security.",
+)
+"""Event types that are a step of signing in (or its outcome) when the user is the actor."""
 _LOCK = "user.account.lock"
 _UNLOCK = "user.account.unlock"
 
@@ -181,10 +203,14 @@ def _window(args: Mapping[str, Any], now: datetime) -> tuple[datetime, datetime 
     if until is not None and until > now + _CLOCK_SKEW:
         raise InvalidArguments("arg 'until' is in the future")
     end = until or now
-    since = _parse("since", args["since"]) if "since" in args else end - DEFAULT_WINDOW
+    oldest = now - MAX_LOOKBACK
+    if end <= oldest:
+        raise InvalidArguments("arg 'until' is more than 90 days ago (System Log retention)")
+    # A default `since` stops at the retention limit rather than failing on an arg not sent.
+    since = _parse("since", args["since"]) if "since" in args else max(end - DEFAULT_WINDOW, oldest)
     if since >= end:
         raise InvalidArguments("arg 'since' must be before 'until' (or now)")
-    if since < now - MAX_LOOKBACK:
+    if since < oldest:
         raise InvalidArguments("arg 'since' is more than 90 days ago (System Log retention)")
     return since, until
 
@@ -243,7 +269,8 @@ def _about(e: _Event, uid: str) -> bool:
     """The user acted (a sign-in), or is the subject of a token request or of a lock: not an
     admin's failed action on the account, whose IP and device would be the admin's."""
     if _at(e.raw, "actor.id") == uid:
-        return True
+        # The user's own failed sign-in steps, not their failed admin or API actions.
+        return e.event_type.startswith(_SIGN_IN)
     targeted = any(t.get("id") == uid and t.get("type") == "User" for t in _targets(e.raw))
     return targeted and (
         e.event_type.startswith("app.oauth2.")
@@ -420,7 +447,7 @@ def _policies(events: list[_Event]) -> list[dict[str, Any]]:
                 }
             counts[key] += 1
             rows.setdefault(key, {k: v for k, v in row.items() if v is not None})
-    return [rows[k] | {"count": n} for k, n in counts.most_common()]
+    return [rows[k] | {"count": n} for k, n in counts.most_common(_POLICIES_SHOWN)]
 
 
 def _devices(events: list[_Event]) -> list[dict[str, Any]]:
@@ -591,50 +618,48 @@ async def _follow_ups(
     checks: list[dict[str, Any]],
     skipped: list[dict[str, str]],
 ) -> None:
-    """The checks the causes call for, at the same time. Each appends its own rows; a failure
-    of one is reported in `skipped` and doesn't stop the others."""
-    jobs: list[tuple[str, str, Callable[[], Any]]] = []
+    """The checks the causes call for, at the same time. Each job returns its row; rows and
+    skips are added in job order, whatever order the jobs finish in. A failure of one job,
+    expected or not, is reported in `skipped` and doesn't cancel the others."""
+    jobs: list[tuple[str, Callable[[], Awaitable[dict[str, Any]]]]] = []
     if "not_assigned" in groups:
         apps = [a for a in _apps(groups["not_assigned"].events) if APP_ID.fullmatch(a["id"])]
         for app in apps[:_APPS_CHECKED]:
-            jobs.append(
-                ("app_assignment", "getApplicationUser", _assignment(ctx, uid, app, checks))
-            )
+            jobs.append(("app_assignment", _assignment(ctx, uid, app)))
     if groups.keys() & {"mfa_failed", "mfa_abandoned", "sign_on_policy_deny"}:
-        jobs.append(
-            (
-                "authenticator_enrollment",
-                "listAuthenticatorEnrollments",
-                _enrollments(ctx, uid, groups, checks),
-            )
-        )
+        jobs.append(("authenticator_enrollment", _enrollments(ctx, uid, groups)))
     if "locked_out" in groups or user.get("status") == "LOCKED_OUT":
-        jobs.append(("sign_in_blocks", "listUserBlocks", _blocks(ctx, uid, checks)))
+        jobs.append(("sign_in_blocks", _blocks(ctx, uid)))
+    results: list[dict[str, Any] | dict[str, str] | None] = [None] * len(jobs)
 
-    async def one(check: str, operation: str, job: Callable[[], Any]) -> None:
-        if not ctx.available(operation):
-            skipped.append(
-                {"check": check, "reason": f"the service app needs {ctx.needs(operation)}"}
-            )
-            return
+    async def one(i: int, check: str, job: Callable[[], Awaitable[dict[str, Any]]]) -> None:
         try:
-            await job()
-        except Unavailable:
-            skipped.append(
-                {"check": check, "reason": f"the service app needs {ctx.needs(operation)}"}
-            )
+            results[i] = await job()
+        except Unavailable as e:
+            results[i] = {"check": check, "skipped": f"the service app needs {e.needs}"}
         except (UpstreamError, PaginationError, RateLimited) as e:
-            skipped.append({"check": check, "reason": f"Okta request failed: {e}"})
+            # The message is safe to return (it never holds Okta's text for 401/403).
+            results[i] = {"check": check, "skipped": str(e)}
+        except Exception as e:
+            log_internal(_log, f"diagnostics login-failures {check}", e)
+            results[i] = {"check": check, "skipped": INTERNAL}
 
     async with anyio.create_task_group() as tg:
-        for check, operation, job in jobs:
-            tg.start_soon(one, check, operation, job)
+        for i, (check, job) in enumerate(jobs):
+            tg.start_soon(one, i, check, job)
+    for row in results:
+        if row is None:
+            continue
+        if "skipped" in row:
+            skipped.append({"check": row["check"], "reason": row["skipped"]})
+        else:
+            checks.append(row)
 
 
 def _assignment(
-    ctx: Context, uid: str, app: Mapping[str, Any], checks: list[dict[str, Any]]
-) -> Callable[[], Any]:
-    async def job() -> None:
+    ctx: Context, uid: str, app: Mapping[str, Any]
+) -> Callable[[], Awaitable[dict[str, Any]]]:
+    async def job() -> dict[str, Any]:
         row: dict[str, Any] = {"check": "app_assignment", "app_id": app["id"]}
         if "name" in app:
             row["app_name"] = app["name"]
@@ -643,22 +668,23 @@ def _assignment(
         except UpstreamError as e:
             if e.status != 404:
                 raise
-            row |= {"pass": False, "actual": "not assigned now"}
+            # Okta's 404 doesn't say which: no assignment, or no such app any more.
+            row |= {"pass": False, "actual": "not assigned now, or the app no longer exists"}
         else:
             row |= {
                 "pass": True,
                 "actual": "assigned now",
                 "note": "assigned now, so it may have been fixed since the failure",
             }
-        checks.append(row)
+        return row
 
     return job
 
 
 def _enrollments(
-    ctx: Context, uid: str, groups: Mapping[str, _Group], checks: list[dict[str, Any]]
-) -> Callable[[], Any]:
-    async def job() -> None:
+    ctx: Context, uid: str, groups: Mapping[str, _Group]
+) -> Callable[[], Awaitable[dict[str, Any]]]:
+    async def job() -> dict[str, Any]:
         body = await ctx.get("listAuthenticatorEnrollments", {"userId": uid})
         items = cast(list[Any], body) if isinstance(body, list) else []
         enrolled = [
@@ -668,7 +694,7 @@ def _enrollments(
                 if isinstance(v := i.get(k), str)
             }
             for i in cast(list[dict[str, Any]], [x for x in items if isinstance(x, dict)])
-        ]
+        ][:_ENROLLMENTS_SHOWN]
         failing = Counter[str]()
         for cause in ("mfa_failed", "mfa_abandoned"):
             if cause in groups:
@@ -680,31 +706,23 @@ def _enrollments(
             row["note"] = "no active authenticator enrollment: the user may need to enroll one"
         if failing:
             row["failing_credential_types"] = dict(failing.most_common(_TOP))
-        checks.append(row)
+        return row
 
     return job
 
 
-def _blocks(ctx: Context, uid: str, checks: list[dict[str, Any]]) -> Callable[[], Any]:
-    async def job() -> None:
+def _blocks(ctx: Context, uid: str) -> Callable[[], Awaitable[dict[str, Any]]]:
+    async def job() -> dict[str, Any]:
         body = await ctx.get("listUserBlocks", {"id": uid})
         items = cast(list[Any], body) if isinstance(body, list) else []
         blocks = [
             {k: _cap(v) for k in ("type", "appliesTo") if isinstance(v := i.get(k), str)}
             for i in cast(list[dict[str, Any]], [x for x in items if isinstance(x, dict)])
-        ]
-        checks.append(
-            {
-                "check": "sign_in_blocks",
-                "pass": not blocks,
-                "actual": blocks,
-                **(
-                    {"note": "blocked from unknown devices only; a known device can still sign in"}
-                    if any(b.get("appliesTo") == "UNKNOWN_DEVICES" for b in blocks)
-                    else {}
-                ),
-            }
-        )
+        ][:_TOP]
+        row: dict[str, Any] = {"check": "sign_in_blocks", "pass": not blocks, "actual": blocks}
+        if any(b.get("appliesTo") == "UNKNOWN_DEVICES" for b in blocks):
+            row["note"] = "blocked from unknown devices only; a known device can still sign in"
+        return row
 
     return job
 
@@ -719,8 +737,8 @@ def _pending(groups: Mapping[str, _Group]) -> list[dict[str, Any]]:
                 {
                     "check": "policy_evaluation",
                     "cause": cause,
-                    "policies": _policies(groups[cause].events),
-                    "note": "not evaluated by this server yet: read the named rules' conditions",
+                    "note": "not evaluated by this server yet: read the conditions of the rules "
+                    "in this cause's policies",
                 }
             )
     if groups.keys() & {"invalid_credentials", "locked_out", "password_expired"}:

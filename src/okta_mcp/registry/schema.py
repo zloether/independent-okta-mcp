@@ -286,6 +286,8 @@ def _message(e: ValidationError, args: object, props: Mapping[str, Any]) -> str:
             return f"{where} must match {value}"
         case "maxItems":
             return f"{where} takes at most {_count(value, 'item')}"
+        case "maxLength":
+            return f"{where} is longer than {_count(value, 'character')}"
         case _:
             return f"{where} fails {e.validator} {value}"
 

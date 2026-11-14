@@ -276,7 +276,7 @@ async def test_a_cursor_is_refused(ex: Executor, org: Org) -> None:
             "must be before",
         ),
         ({"user": UID, "app": APP}, "unknown arg"),
-        ({"user": "x" * 300}, "fails maxLength"),
+        ({"user": "x" * 300}, "arg 'user' is longer than 256 characters"),
     ],
 )
 async def test_invalid_arguments(ex: Executor, org: Org, args: dict[str, Any], text: str) -> None:
@@ -317,7 +317,8 @@ async def test_the_log_query(ex: Executor, org: Org) -> None:
     ]
     assert query["since"] == ["2026-11-13T12:00:00.000Z"]
     assert "until" not in query
-    assert query["sortOrder"] == ["DESCENDING"] and query["limit"] == ["500"]
+    # One more than is read, so a cut shows without a second page.
+    assert query["sortOrder"] == ["DESCENDING"] and query["limit"] == ["501"]
     # Nulls and empty lists are pruned from every result (`output.render`).
     assert out["window"] == {
         "since": "2026-11-13T12:00:00.000Z",
@@ -349,6 +350,8 @@ async def test_at_most_max_events_are_read(ex: Executor, org: Org) -> None:
     out = await diagnose(ex)
     assert out["window"]["events_read"] == lf.MAX_EVENTS
     assert out["window"]["truncated"] is True
+    # The cut is seen on the first page: no second log request (code review, 9.1).
+    assert org.paths.count("/api/v1/logs") == 1
     assert cause(out, "invalid_credentials")["count"] == lf.MAX_EVENTS
 
 
@@ -504,7 +507,8 @@ async def test_a_sign_on_policy_deny(ex: Executor, org: Org) -> None:
     assert denied["behaviors"] == {"New Geo-Location": 2, "New IP": 2}
     assert denied["user_agents"] == [{"os": "Mac OS X", "browser": "CHROME", "count": 2}]
     assert out["pending"][0]["check"] == "policy_evaluation"
-    assert out["pending"][0]["policies"] == denied["policies"]
+    assert out["pending"][0]["cause"] == "sign_on_policy_deny"
+    assert "policies" not in out["pending"][0]  # once, in the cause
     # A policy cause calls for the enrollments (what the rule's authenticators could be).
     checks = {c["check"]: c for c in out["checks"]}
     assert checks["authenticator_enrollment"]["enrolled"] == [
@@ -532,7 +536,7 @@ async def test_not_assigned_checks_the_assignment_now(ex: Executor, org: Org) ->
             "app_id": APP,
             "app_name": "Salesforce",
             "pass": False,
-            "actual": "not assigned now",
+            "actual": "not assigned now, or the app no longer exists",
         }
     ]
     # An app ID that isn't one never reaches a path.
@@ -580,7 +584,7 @@ async def test_a_failing_follow_up_is_skipped_not_fatal(ex: Executor, org: Org) 
     out = await diagnose(ex)
     (skip,) = out["skipped"]
     assert skip["check"] == "authenticator_enrollment"
-    assert skip["reason"].startswith("Okta request failed")
+    assert skip["reason"] == "Okta returned HTTP 500"
     assert cause(out, "mfa_failed")["credential_types"] == {"OTP": 1}
 
 
@@ -777,3 +781,91 @@ def test_a_helpdesk_principal_sees_only_the_diagnosis(
     description = listed["okta_diagnostics"].description or ""
     assert "login-failures <user> [options]" in description
     assert "okta://guide/diagnostics" in description
+
+
+@pytest.mark.anyio
+async def test_until_alone_clamps_the_default_since(ex: Executor, org: Org) -> None:
+    # 24 h before `until` would be past retention; the default stops at 90 days.
+    await diagnose(ex, args={"user": UID, "until": "2026-08-16T13:00:00Z"})
+    assert org.log_query()["since"] == ["2026-08-16T12:00:00.000Z"]
+    out = await diagnose(ex, args={"user": UID, "until": "2026-08-01T00:00:00Z"})
+    assert "arg 'until' is more than 90 days" in failed(out, Code.INVALID_ARGUMENTS).message
+
+
+@pytest.mark.anyio
+async def test_the_user_s_own_failed_admin_actions_are_left_out(ex: Executor, org: Org) -> None:
+    org.events = [
+        event("group.user_membership.add", reason="INSUFFICIENT_PERMISSIONS"),
+        event("user.session.start", reason="INVALID_CREDENTIALS"),
+    ]
+    out = await diagnose(ex)
+    assert out["window"]["events_about_user"] == 1
+    assert [c["cause"] for c in out["causes"]] == ["invalid_credentials"]
+
+
+@pytest.mark.anyio
+async def test_a_bug_in_one_check_costs_only_that_check(
+    ex: Executor, org: Org, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(ctx: Any, uid: str) -> Any:
+        async def job() -> dict[str, Any]:
+            raise KeyError("boom")
+
+        return job
+
+    monkeypatch.setattr(lf, "_blocks", broken)
+    org.user["status"] = "LOCKED_OUT"
+    org.events = [event("policy.evaluate_sign_on", "DENY", "x")]
+    out = await diagnose(ex)
+    assert out["skipped"] == [{"check": "sign_in_blocks", "reason": lf.INTERNAL}]
+    assert [c["check"] for c in out["checks"]] == ["user_status", "authenticator_enrollment"]
+
+
+@pytest.mark.anyio
+async def test_checks_come_in_job_order_whatever_finishes_first(ex: Executor, org: Org) -> None:
+    import anyio
+
+    org.user["status"] = "LOCKED_OUT"
+    org.events = [
+        event("policy.evaluate_sign_on", "DENY", "x"),
+        event(
+            "app.generic.unauth_app_access_attempt",
+            reason="not assigned",
+            targets=[{"id": APP, "type": "AppInstance"}],
+        ),
+    ]
+    first = Org.__call__
+
+    async def slow_assignment(self: Org, request: httpx2.Request) -> httpx2.Response:
+        if request.url.path.startswith("/api/v1/apps"):
+            await anyio.sleep(0.05)  # finishes last
+        return await first(self, request)
+
+    Org.__call__ = slow_assignment  # pyright: ignore[reportAttributeAccessIssue]
+    try:
+        out = await diagnose(ex)
+    finally:
+        Org.__call__ = first  # pyright: ignore[reportAttributeAccessIssue]
+    assert [c["check"] for c in out["checks"]] == [
+        "user_status",
+        "app_assignment",
+        "authenticator_enrollment",
+        "sign_in_blocks",
+    ]
+
+
+@pytest.mark.anyio
+async def test_many_distinct_rules_are_capped(ex: Executor, org: Org) -> None:
+    org.events = [
+        event(
+            "policy.evaluate_sign_on",
+            "DENY",
+            "x",
+            targets=[{"id": f"rul{i:017d}", "type": "Rule", "displayName": "r" * 300}],
+        )
+        for i in range(50)
+    ]
+    out = await diagnose(ex)
+    policies = cause(out, "sign_on_policy_deny")["policies"]
+    assert len(policies) == 10
+    assert all(len(p["rule_name"]) == 200 for p in policies)

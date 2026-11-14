@@ -27,7 +27,12 @@ _SERVER_PARAMS = frozenset({"after"})
 
 class Unavailable(Exception):
     """The service app holds none of the operation's scope sets. The message names the
-    operation and its scopes, which a handler may report (they are in the public spec)."""
+    operation and its scopes, which a handler may report (they are in the public spec);
+    `needs` is the scopes alone."""
+
+    def __init__(self, operation_id: str, needs: str) -> None:
+        super().__init__(f"{operation_id} needs {needs}")
+        self.needs = needs
 
 
 class Context:
@@ -119,7 +124,7 @@ class Context:
     def _operation(self, operation_id: str) -> Operation:
         op = self._declared(operation_id)
         if not self._engine.runs(op):
-            raise Unavailable(f"{operation_id} needs {self.needs(operation_id)}")
+            raise Unavailable(operation_id, self.needs(operation_id))
         return op
 
     def _url(self, op: Operation, path: Mapping[str, str] | None) -> str:
