@@ -34,7 +34,10 @@ def _gen() -> ModuleType:
 
 gen = _gen()
 REGISTRY = load_registry(load_spec())
-COMMANDS = [c for d in REGISTRY.domains.values() for c in d.commands.values()]
+# Simple commands: a handler command has no one response (tests/handlers covers those).
+COMMANDS = [
+    c for d in REGISTRY.domains.values() for c in d.commands.values() if c.operation is not None
+]
 RULES = load_scrub()
 
 

@@ -237,6 +237,8 @@ def plan(
         if domain is not None and d.name != domain:
             continue
         for command in d.commands.values():
+            if command.operation is None:
+                continue  # a handler command has no one response; tests/handlers cover it
             path = path_of(root, command)
             if _recorded(path):
                 kept.append(path)
@@ -262,7 +264,12 @@ def problems(
         for p, text in wanted.items()
         if not p.exists() or p.read_text() != text
     ]
-    known = {path_of(root, c) for d in registry.domains.values() for c in d.commands.values()}
+    known = {
+        path_of(root, c)
+        for d in registry.domains.values()
+        for c in d.commands.values()
+        if c.operation is not None
+    }
     out += [
         f"{p.relative_to(root)}: no such command"
         for p in sorted(root.glob(f"{domain or '*'}/*.json"))

@@ -36,7 +36,12 @@ def test_commands(registry: Registry) -> None:
 
 def test_ssf_streams_are_not_served(registry: Registry) -> None:
     # Excluded in the catalogue: Okta shows a client only the streams it created.
-    ops = {c.operation.operation_id for d in registry.domains.values() for c in d.commands.values()}
+    ops = {
+        o
+        for d in registry.domains.values()
+        for c in d.commands.values()
+        for o in ([c.operation.operation_id] if c.operation else list(c.uses))
+    }
     assert not ops & {"getSsfStreams", "getSsfStreamStatus"}
 
 

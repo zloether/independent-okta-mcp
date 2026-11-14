@@ -29,7 +29,10 @@ LOGIN = "alice@example.com"
 
 SPEC = load_spec()
 REGISTRY = load_registry(SPEC)
-COMMANDS = [c for d in REGISTRY.domains.values() for c in d.commands.values()]
+# Simple commands: a handler command has no one response (tests/handlers covers those).
+COMMANDS = [
+    c for d in REGISTRY.domains.values() for c in d.commands.values() if c.operation is not None
+]
 SCOPES = frozenset(s for c in COMMANDS for ss in c.scope_sets for s in ss)
 
 

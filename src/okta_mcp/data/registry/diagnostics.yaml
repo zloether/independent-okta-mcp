@@ -1,0 +1,30 @@
+domain: diagnostics
+description: >-
+  Diagnose problems across Okta domains with one call each (read-only). Results are derived
+  attributes and IDs, not raw objects or events.
+# Composite commands (design §5.6): a Python handler in `okta_mcp.handlers` calls the operations
+# in `uses`, and nothing else. `required` must be within the service app's scopes for the command
+# to be offered; an `optional` one it lacks is skipped and reported in the result's `skipped`.
+# Classification covers everything any of `uses` returns that the handler passes on.
+commands:
+  # Reads the user's System Log failures (audit-log, risk: sign-in risk and behaviors), the user
+  # (pii) and their authenticator enrollments (mfa-state): sensitive, so a role must name it.
+  # A role granted only this command sees attributes pulled from the events (IP, geo, device,
+  # policy and rule IDs and names), never the events, the policies or other users.
+  login-failures:
+    handler: login-failures
+    summary: Why a user can't sign in
+    args:
+      user:
+        required: true
+        description: User ID (00u…) or exact login
+      since:
+        pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$'
+        description: Start, UTC (2026-01-02T03:04:05Z); default 24 h before until, at most 90 days ago
+      until:
+        pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$'
+        description: End, UTC; default now
+    uses:
+      required: [getUser, listLogEvents]
+      optional: [getApplicationUser, listAuthenticatorEnrollments, listUserBlocks]
+    data_classes: [audit-log, pii, risk, mfa-state]

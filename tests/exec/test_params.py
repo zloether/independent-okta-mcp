@@ -123,7 +123,9 @@ def _unpatterned(spec: SpecIndex) -> dict[str, Command]:
 
 def _commands(spec: SpecIndex) -> list[Command]:
     registry = load_registry(spec)
-    packaged = [c for d in registry.domains.values() for c in d.commands.values()]
+    packaged = [
+        c for d in registry.domains.values() for c in d.commands.values() if c.operation is not None
+    ]
     return packaged + list(_unpatterned(spec).values())
 
 
