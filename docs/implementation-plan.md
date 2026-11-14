@@ -420,16 +420,18 @@ Verify (phase): `uv run pytest tests/test_audit.py tests/integration/test_limits
 
 ## Phase 7 — Packaging & deployment
 
-### 7.1 Container 🔒 ◐
+### 7.1 Container 🔒 ☑
 Design: §11.2 · Depends: 4.5
 - [x] `Dockerfile`, `.dockerignore` per design (allow-list includes `LICENSE`, `README.md`; `uv sync --no-editable`); non-root; `MCP_ENV=production`
 - [x] CI job: build image, run container tests (non-root, read-only FS, health endpoints, no tests/docs/keys in image), image scan
 
 Verify: `docker build . && docker run --read-only …` health checks pass; CI container job green; `/security-review`.
 
-### 7.2 Compose example ☐
+### 7.2 Compose example 🔒 ◐
 Design: §11.4 · Depends: 7.1
-- [ ] `docker/compose.example.yaml`: secrets as files, read-only policy file mount, read-only root FS, `cap_drop: [ALL]`, `no-new-privileges`, loopback port binding (or no published port, proxy on a shared network), with a comment saying why: `MCP_TRUST_PROXY` trusts any peer (design §11.4)
+- [x] `docker/compose.example.yaml`: secrets as files, read-only policy file mount, read-only root FS, `cap_drop: [ALL]`, `no-new-privileges`, loopback port binding (or no published port, proxy on a shared network), with a comment saying why: `MCP_TRUST_PROXY` trusts any peer (design §11.4)
+- [x] `tests/test_compose_example.py`: hardening, loopback-only ports, no inline secrets, no `MCP_ENV`/dev-mode override, read-only policy mount that must exist, example values pass `load_config`
+- [ ] Bring-up with dev-org values (needs the dev org; done with placeholder values, see the decisions log)
 
 Verify: `docker compose -f docker/compose.example.yaml config` validates; bring-up with dev-org values works.
 
@@ -685,3 +687,5 @@ Verify: all phases ☑; CI green on tag.
 | 2026-11-14 | 5.x (V6) | `/security-review` re-run on the `_roles` message change (Opus subagent): **no findings**. Same scopes selected, values from config and the fixed `SCOPE_ROLES`; `role` still reset to `READ_ONLY_ADMIN` before the only role POST; `check`/`apply` decisions unchanged. Its one note (an empty list would start the message with `; `) can't happen: the branch runs only when some scope's role isn't Read-only Admin | |
 | 2026-11-14 | 7.1 | uv `0.12.5` → `0.12.24` in the Dockerfile's `uv` stage (Dependabot's digest, `3af4716e…`, checked against `ghcr.io` with `docker buildx imagetools inspect`) and in both CI `setup-uv` pins, which Dependabot doesn't track (design §11.2: the image uses CI's uv). `uv_build>=0.12,<0.14` already covers it. Same change as the Dependabot PR, made here with the CI pins so the two stay equal; the Dependabot PR closes once this merges. Also `opentelemetry-api` 1.45.1 → 1.45.2 in `uv.lock` (CVE-2026-126360, via `mcp`; `pip-audit` clean) | standard checks |
 | 2026-11-14 | 7.1 | `/security-review` of the uv and `opentelemetry-api` bumps (Opus subagent): **no findings**. uv image still digest-pinned from `ghcr.io/astral-sh/uv`, copied into the build stage only (runtime gets `/app/.venv` as before); `setup-uv` still SHA-pinned, only `version:` changed; the lock diff is one package with hashed `files.pythonhosted.org` artifacts. Its note: the lock header went `revision = 5` → `3` (local uv 0.12.5 rewrote what a newer uv in Dependabot's `3f8c22a` wrote); uv 0.12.24 passes `uv lock --check` on it and `uv lock` leaves it unchanged. Image not rebuilt locally (Docker not running): CI's `container` job is the check | |
+| 2026-11-14 | 7.1 | CI's `container` job green on `main` (run 114, `c2499a9`): 7.1 ☑. Also run locally against an image built from the same Dockerfile with the session proxy's CA added to the **build stage only** (a scratch copy of the Dockerfile; the runtime stage is unchanged): 8 container tests pass | |
+| 2026-11-14 | 7.2 | `docker/compose.example.yaml`: one service, `read_only`, `cap_drop: [ALL]`, `no-new-privileges`, `user: 10001:10001` (same as the image, stated so an `image:` swap can't drop it), port `127.0.0.1:8080:8080` with a commented shared-network alternative that publishes nothing, `MCP_TRUST_PROXY: "false"` with the any-peer comment, cursor key and service key as file secrets under `./secrets/` (git-ignored as `docker/secrets/`), policy as a read-only bind. **Checked with Compose 5.6.1:** a file secret is bind-mounted with the host file's owner and mode, and service-level `uid`/`gid`/`mode` are **ignored** (a root 0600 file stays root 0600; the server exits 2 "cannot read"), so the file comment says to `chown 10001:10001` and `chmod 0400` the host files. A short-syntax bind of a missing `./policy.yaml` makes Docker create an empty directory; the long syntax with `create_host_path: false` makes `up` fail instead (checked). Image is `okta-mcp:local` with `build: ..` until 8.4 publishes one; the comment says to pin tag and digest. `MCP_TRUST_PROXY` only changes the logged client address here (uvicorn `proxy_headers`; PRM uses `MCP_PUBLIC_URL`), so off is the default. Bring-up with placeholder values: `config -q` passes; container `healthy`; `/healthz` 200, `/readyz` and `/mcp` 503 (no issuer); port refused on a non-loopback address; `ReadonlyRootfs`, `CapDrop [ALL]`, `no-new-privileges` in `docker inspect`; `stop` exits 0. **Open:** bring-up with dev-org values | 11 tests |

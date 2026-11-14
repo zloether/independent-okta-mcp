@@ -241,3 +241,6 @@ environment.*
 
 # Claude Code: share settings.json, keep personal overrides local
 .claude/settings.local.json
+
+# Compose example: secrets placed next to docker/compose.example.yaml
+docker/secrets/
