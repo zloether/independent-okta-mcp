@@ -45,6 +45,7 @@ Data files live under `src/okta_mcp/data/` so they ship in the wheel; the image 
 ```
 uv sync                                   # install runtime + dev deps
 uv run okta-mcp                           # run the server entrypoint
+uv run okta-mcp --check                   # load config + policy, exit 0 or 2, don't serve
 uv run pytest                             # tests
 uv run ruff check . && uv run ruff format --check .
 uv run pyright                            # strict on src/

@@ -69,6 +69,15 @@ Edit the `CHANGE` values in [`compose.example.yaml`](../docker/compose.example.y
 
 ### 3.2 Start
 
+Check first, so a configuration, key or policy error shows as one `check failed` report rather than a container that won't stay up (§4.2 has the details):
+
+```sh
+docker compose -f compose.example.yaml build
+docker compose -f compose.example.yaml run --rm okta-mcp --check
+```
+
+Then:
+
 ```sh
 docker compose -f compose.example.yaml up -d --wait
 curl -s http://127.0.0.1:8080/healthz          # {"status":"ok"}
@@ -116,13 +125,15 @@ Results are Okta data, and some of it is controlled by outsiders. For example, f
 
 ### 4.1 Upgrade
 
-The server is stateless. Pull the new checkout (or change the pinned image tag and digest), then:
+The server is stateless. Pull the new checkout (or change the pinned image tag and digest). Before restarting, check the live policy against the new version: a release can rename or remove a command, or tighten what the loader accepts, and then the policy that loads today stops the new server from starting. Build first, so the check runs the image that will serve:
 
 ```sh
+docker compose -f compose.example.yaml build    # with a published image: docker compose pull
+docker compose -f compose.example.yaml run --rm okta-mcp --check
 docker compose -f compose.example.yaml up -d --wait
 ```
 
-`pull_policy: build` rebuilds from the checkout. Outstanding cursors survive a restart if the cursor key is unchanged. Okta-side objects don't change on upgrade. Read the release notes for new scopes, since a new domain needs a grant, an `OKTA_SCOPES` change and possibly a broader role.
+If the check fails, the running server is untouched: fix the policy (§4.2) or go back to the old checkout. `pull_policy: build` rebuilds from the checkout on `up`. Outstanding cursors survive a restart if the cursor key is unchanged. Okta-side objects don't change on upgrade. Read the release notes for new scopes, since a new domain needs a grant, an `OKTA_SCOPES` change and possibly a broader role.
 
 ### 4.2 Policy change
 
@@ -131,6 +142,7 @@ docker compose -f compose.example.yaml up -d --wait
 
    ```sh
    sudo install -o 10001 -g 10001 -m 0400 /path/to/reviewed/policy.yaml policy.new.yaml
+   docker compose -f compose.example.yaml build    # if the checkout changed since the last up
    docker compose -f compose.example.yaml run --rm \
      -v ./policy.new.yaml:/etc/okta-mcp/policy.new.yaml:ro \
      -e MCP_POLICY_FILE=/etc/okta-mcp/policy.new.yaml \
