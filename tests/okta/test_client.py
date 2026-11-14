@@ -511,6 +511,38 @@ async def test_401_not_exactly_feature_off_still_invalidates(
             "Okta returned HTTP 400",  # not an OAuth error code
         ),
         (
+            httpx2.Response(400, json={"error": "user_example", "error_description": "x"}),
+            "Okta returned HTTP 400",  # code-shaped but not registered
+        ),
+        (
+            httpx2.Response(
+                400,
+                json={"error": "a b"},
+                headers={"WWW-Authenticate": 'DPoP error="invalid_dpop_proof"'},
+            ),
+            "Okta returned HTTP 400: invalid_dpop_proof",  # the header, when the body has none
+        ),
+        (
+            httpx2.Response(
+                400,
+                headers={
+                    "WWW-Authenticate": 'Bearer realm="x", DPoP error="invalid_dpop_proof", '
+                    'error_description="bad htu", Basic error_description="other"'
+                },
+            ),
+            "Okta returned HTTP 400: invalid_dpop_proof: bad htu",
+        ),
+        (
+            httpx2.Response(
+                400,
+                headers=[
+                    ("WWW-Authenticate", 'Bearer error="invalid_token"'),
+                    ("WWW-Authenticate", 'DPoP error="invalid_dpop_proof", error_description="x"'),
+                ],
+            ),
+            "Okta returned HTTP 400: invalid_token",  # not paired with the other's description
+        ),
+        (
             httpx2.Response(
                 400, json={"error": "invalid_request", "error_description": "a\nb\u0000éc"}
             ),
