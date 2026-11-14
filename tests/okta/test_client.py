@@ -423,6 +423,20 @@ async def test_refusal_after_token_challenge_logs_code(caplog: pytest.LogCapture
 
 
 @pytest.mark.anyio
+async def test_refusal_logs_dpop_error_code(caplog: pytest.LogCaptureFixture) -> None:
+    headers = {
+        "WWW-Authenticate": 'DPoP error="invalid_dpop_proof", error_description="user@example.com"'
+    }
+    with pytest.raises(UpstreamError) as e:
+        await client(Okta(httpx2.Response(401, headers=headers))).get(USERS)
+    assert "contact the MCP administrator" in str(e.value)
+    assert refusals(caplog) == [
+        ("okta_refused", {"status": 401, "error_code": "invalid_dpop_proof"})
+    ]
+    assert "example.com" not in caplog.text  # the description is Okta's text: never logged
+
+
+@pytest.mark.anyio
 async def test_other_errors_log_no_refusal(caplog: pytest.LogCaptureFixture) -> None:
     body = {"errorCode": "E0000007", "errorSummary": "Not found"}
     with pytest.raises(UpstreamError):
@@ -488,20 +502,37 @@ async def test_401_not_exactly_feature_off_still_invalidates(
             ),
             "Okta returned HTTP 400: invalid_dpop_proof: bad htu",
         ),
-        (httpx2.Response(400, json={"error": "invalid_request"}), "Okta returned HTTP 400"),
+        (
+            httpx2.Response(400, json={"error": "invalid_request"}),
+            "Okta returned HTTP 400: invalid_request",
+        ),
+        (
+            httpx2.Response(400, json={"error": "a b", "error_description": "x"}),
+            "Okta returned HTTP 400",  # not an OAuth error code
+        ),
+        (
+            httpx2.Response(
+                400, json={"error": "invalid_request", "error_description": "a\nb\u0000éc"}
+            ),
+            "Okta returned HTTP 400: invalid_request: a b c",
+        ),
         (
             httpx2.Response(
                 400,
                 headers={
                     "WWW-Authenticate": 'DPoP error="invalid_dpop_proof", '
-                    'error_description="The htu claim is invalid."'
+                    'error_description="The \\"htu\\" claim; error=nonce is invalid."'
                 },
             ),
-            "Okta returned HTTP 400: invalid_dpop_proof, The htu claim is invalid.",
+            'Okta returned HTTP 400: invalid_dpop_proof: The "htu" claim; error=nonce is invalid.',
         ),
         (
-            httpx2.Response(400, headers={"WWW-Authenticate": 'DPoP error="invalid_token"'}),
+            httpx2.Response(400, headers={"WWW-Authenticate": "DPoP error=invalid_token"}),
             "Okta returned HTTP 400: invalid_token",
+        ),
+        (
+            httpx2.Response(400, headers={"WWW-Authenticate": 'DPoP realm="x"'}),
+            "Okta returned HTTP 400",
         ),
         (httpx2.Response(500, text="<html>"), "Okta returned HTTP 500"),
         (httpx2.Response(502, json={"errorSummary": ""}), "Okta returned HTTP 502"),

@@ -182,7 +182,8 @@ def test_server_id_shape(registry: Registry) -> None:
             args["client"] = CLIENT
         for n in cmd.schema.get("required", ()):
             if cmd.entry.args[n].query is not None:
-                args[n] = cmd.schema["properties"][n].get("type") == "boolean" or "abc"
+                assert cmd.schema["properties"][n]["type"] == "boolean"  # extend if this fails
+                args[n] = True
         for good in (AUS, "default"):
             validate_args(cmd, {**args, "server": good})
         for bad in ("DEFAULT", "defaults", "aus1emaKYZTWRYYRRTS", f"{AUS}\n", "..", "org"):

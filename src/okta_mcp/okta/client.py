@@ -37,9 +37,11 @@ log = logging.getLogger(__name__)
 _SUMMARY_MAX = 500
 _FEATURE_OFF = "E0000015"
 _ERROR_CODE = re.compile(r"E[0-9]{7}")
-# A challenge's `error` codes and descriptions (RFC 6750 §3), shown like `errorSummary`.
-_CHALLENGE_ERROR = re.compile(r'\berror\s*=\s*"?([A-Za-z0-9_]{1,64})')
-_CHALLENGE_DESCRIPTION = re.compile(r'\berror_description\s*=\s*"([\x20\x21\x23-\x7e]{1,500})"')
+# OAuth `error` codes are fixed tokens (RFC 6749 §5.2), so they may be logged.
+_OAUTH_ERROR = re.compile(r"[A-Za-z0-9_]{1,64}")
+# One auth-param of a challenge (RFC 9110 §11.2): a quoted string (with `\` escapes) or a token.
+_AUTH_PARAM = re.compile(r'([A-Za-z0-9_-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,"]+))')
+_UNPRINTABLE = re.compile(r"[^\x20-\x7e]+")
 
 
 class OriginError(Exception):
@@ -71,6 +73,25 @@ def _error_code(response: httpx2.Response) -> str | None:
             return code
         case _:
             return None
+
+
+def _oauth_error(response: httpx2.Response) -> tuple[str, str] | None:
+    """An OAuth-style `error` and `error_description` (empty if absent), from the JSON body or
+    else the `WWW-Authenticate` challenge, as for a DPoP proof Okta rejects. None without a
+    well-formed `error`. The description is Okta's text: printable ASCII only, uncapped."""
+    match json_body(response):
+        case {"error": str(error), **rest}:
+            description = rest.get("error_description")
+        case _:
+            params: dict[str, str] = {}
+            for m in _AUTH_PARAM.finditer(response.headers.get("WWW-Authenticate", "")):
+                value = re.sub(r"\\(.)", r"\1", m[2]) if m[2] is not None else m[3]
+                params.setdefault(m[1].lower(), value)
+            error, description = params.get("error", ""), params.get("error_description")
+    if not _OAUTH_ERROR.fullmatch(error):
+        return None
+    text = description if isinstance(description, str) else ""
+    return error, _UNPRINTABLE.sub(" ", text).strip()
 
 
 def _feature_off(response: httpx2.Response) -> bool:
@@ -287,7 +308,8 @@ class OktaClient:
         if status in (401, 403):
             # The code tells a too-narrow admin role (E0000006) from a missing feature
             # (E0000015) for the operator; the caller's message names only the latter.
-            code = _error_code(response)
+            oauth = _oauth_error(response)
+            code = _error_code(response) or (oauth[0] if oauth else None)
             log.warning(
                 "Okta refused the service app's request: HTTP %d %s",
                 status,
@@ -310,17 +332,8 @@ class OktaClient:
                 return UpstreamError(
                     status, f"Okta returned HTTP {status}: {summary[:_SUMMARY_MAX]}"
                 )
-            # OAuth-style, as for a DPoP proof Okta rejects (`invalid_dpop_proof`).
-            case {"error": str(error), "error_description": str(description)} if description:
-                summary = f"{error[:64]}: {description}"
-                return UpstreamError(
-                    status, f"Okta returned HTTP {status}: {summary[:_SUMMARY_MAX]}"
-                )
-            case _ if errors := _CHALLENGE_ERROR.findall(
-                challenge := response.headers.get("WWW-Authenticate", "")
-            ):
-                descriptions = _CHALLENGE_DESCRIPTION.findall(challenge)
-                summary = ", ".join(errors + descriptions)
+            case _ if oauth := _oauth_error(response):
+                summary = ": ".join(p for p in oauth if p)
                 return UpstreamError(
                     status, f"Okta returned HTTP {status}: {summary[:_SUMMARY_MAX]}"
                 )

@@ -61,6 +61,7 @@ Okta answers a service-app request only when the token's scope **and** the app's
 | `okta.devices.read` | `READ_ONLY_ADMIN` | `devices` |
 | `okta.deviceAssurance.read` | `READ_ONLY_ADMIN` | `device-assurance` |
 | `okta.devicePostureChecks.read` | `READ_ONLY_ADMIN` | `device-posture` |
+| `okta.sessions.read` | `READ_ONLY_ADMIN` | `sessions`, only with DPoP off (see below) |
 | `okta.schemas.read` | `ORG_ADMIN` | `schemas get-user-schema`, `get-group-schema` (`get-app-user-schema` needs only `READ_ONLY_ADMIN`) |
 | `okta.linkedObjects.read` | `ORG_ADMIN` | `schemas list-linked-objects`, `get-linked-object` |
 | `okta.orgs.read` | `SUPER_ADMIN` | `org-settings get-third-party-admin-setting`, `get-support-settings`, `get-admin-app-setting`, `get-client-privileges`; the rest of `org-settings` and `attack-protection` need only `READ_ONLY_ADMIN` |
@@ -78,7 +79,7 @@ Some endpoints also need an Okta feature that not every org has, whatever the ro
 **`sessions get` needs DPoP off.** Okta rejects `GET /api/v1/sessions/{id}` from a DPoP-bound token with HTTP 400 `invalid_dpop_proof` ("'htu' claim in the DPoP proof JWT is invalid"), though the proof is built as for every other endpoint. The same call works with a bearer token (dev org, 2026-11-14). This is Okta's bug and may be fixed later, so the command stays. Choose one:
 
 - **DPoP (default, recommended):** leave `okta.sessions.read` out. Every other command works, and a stolen service token is useless without the server's in-memory DPoP key.
-- **Sessions:** turn off Require DPoP on the service app, set `OKTA_DPOP=false`, and grant `okta.sessions.read`. The token then works for anyone holding it until it expires. The setup tools don't support this yet: `okta.sessions.read` isn't in the table (its narrowest role is unchecked), so grant it and the role by hand, and `check` reports Require DPoP as `todo`.
+- **Sessions:** grant `okta.sessions.read`, turn off Require DPoP on the service app, and set `OKTA_DPOP=false`. The token then works for anyone holding it until it expires. The setup tools always turn Require DPoP on, so turn it off by hand afterwards: `check` then reports it as `todo`, and the next Terraform `apply` turns it back on.
 
 `check` needs the role the table names for the configured scopes, or a custom role in its place; narrower standard roles held alongside it are allowed. `apply` assigns Read-only Administrator and nothing broader: when the scopes need Org or Super Administrator, `apply` still assigns Read-only Administrator to an app it created, reports the broader role as `manual`, and you assign it in the admin console (Applications > the service app > Admin roles). Until then the commands that need it get 403. A scope not in the table is refused, and so is a role broader than the scopes need.
 
