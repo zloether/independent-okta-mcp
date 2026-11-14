@@ -1,17 +1,16 @@
 # independent-okta-mcp
 
-A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server for the Okta Management API. Users sign in with OAuth against an Okta custom authorization server (needs Okta's API Access Management add-on in production orgs; see [Prerequisites](docs/okta-setup.md#prerequisites)); their Okta group memberships map to roles in a version-controlled policy that decides which tools and commands each user may call. The server calls Okta with a read-only service app and caps every result by items, bytes and time. It ships as a single stateless container.
+A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server for the Okta Management API. Users sign in with Okta OAuth; their groups map to roles in a version-controlled policy that decides what each may call. Ships as one stateless container.
 
 **Status:** pre-alpha. Not usable yet; under active development.
 
-- [Design](docs/design/mcp-server.md)
-- [Implementation plan](docs/implementation-plan.md)
-- [Okta setup](docs/okta-setup.md)
+- [Okta setup](docs/okta-setup.md): prerequisites (API Access Management), clients, service app
 - [Runbook](docs/runbook.md): deploy, operate, rotate, kill switch
+- [Design](docs/design/mcp-server.md) · [Plan](docs/implementation-plan.md)
 
 ## Local dev mode (stdio)
 
-For trying the pilot domains against a dev org from an MCP client on your own machine. There is no authentication: the caller is the principal in a file, checked by the normal policy. Refused when `MCP_ENV=production`; the HTTP app never runs this way.
+Try it against a dev org from a local MCP client. No authentication: the caller is the principal in a file, checked by the normal policy. Refused when `MCP_ENV=production`.
 
 ```yaml
 # principal.yaml: who you are to the policy
@@ -31,7 +30,7 @@ uv run okta-mcp --stdio
 
 Add `--check` to validate the configuration and policy without serving (exit `0` or `2`).
 
-Use a read-only admin's API token, or the service app (`OKTA_CLIENT_ID`, `OKTA_PRIVATE_KEY_FILE`) instead of `OKTA_API_TOKEN_FILE`. In a client config, pass the same variables as the server's environment; set `MCP_CURSOR_KEY` to a fixed value there, or cursors stop working at each restart.
+Use a read-only admin's API token, or the service app (`OKTA_CLIENT_ID`, `OKTA_PRIVATE_KEY_FILE`). In a client config, pass the same variables as the server's environment, with a fixed `MCP_CURSOR_KEY` (cursors break on each restart otherwise).
 
 ## License
 

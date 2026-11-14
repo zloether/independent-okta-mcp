@@ -178,7 +178,9 @@ independent-okta-mcp/
 ├── uv.lock                      # committed
 ├── docs/
 │   ├── design/mcp-server.md     # this document
-│   ├── implementation-plan.md
+│   ├── implementation-plan.md   # order of work, status
+│   ├── decisions-log.md         # append-only decisions and review outcomes
+│   ├── agents/                  # task-specific agent guidance (AGENTS.md lists when to read)
 │   └── coverage/                # catalogue.yaml, report.md (§5.6)
 ├── src/okta_mcp/
 │   ├── __main__.py              # entrypoint: config, policy, registry; HTTP (uvicorn) or --stdio; --check loads all of it and exits
