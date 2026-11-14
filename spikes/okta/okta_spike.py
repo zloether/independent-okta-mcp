@@ -6,8 +6,9 @@ Run from the repo root with `uv run python spikes/okta/okta_spike.py <command> -
   discover    probe OIDC and RFC 8414 metadata URLs for a custom AS (V10)
   user-token  Authorization Code + PKCE over a loopback redirect; prints access-token
               header and claims, never the token itself (V1, V9, V11, V13)
-  service     private_key_jwt client credentials (+DPoP), then GET /api/v1/users?limit=1;
-              prints statuses and nonce behavior, never tokens or result bodies (V15)
+  service     private_key_jwt client credentials (+DPoP), then GET /api/v1/users?limit=1
+              (or each --path); prints statuses, nonce behavior, and a list's length or an
+              object's id/errorCode, never tokens or result bodies (V15, 2.10)
 """
 
 import argparse
@@ -232,31 +233,60 @@ def cmd_service(args: argparse.Namespace) -> None:
     if not isinstance(key, rsa.RSAPrivateKey):
         raise SystemExit("expected an RSA private key")
     dpop_key = None if args.no_dpop else ec.generate_private_key(ec.SECP256R1())
-    url = f"{org}/api/v1/users?limit=1"
     with httpx2.Client(timeout=10) as http:
         token = fetch_service_token(http, org, args.client_id, key, args.kid, args.scopes, dpop_key)
         print(f"token: type={token.token_type} nonce_required_at_token={token.nonce_required}")
         nonce = token.nonce
-        for attempt in (1, 2):
-            if dpop_key:
-                proof = dpop_proof(dpop_key, "GET", url, nonce, token.access_token)
-                headers = {"Authorization": f"DPoP {token.access_token}", "DPoP": proof}
-            else:
-                headers = {"Authorization": f"Bearer {token.access_token}"}
-            response = http.get(url, headers=headers)
-            new_nonce = response.headers.get("DPoP-Nonce")
-            print(
-                f"GET /api/v1/users attempt {attempt}: {response.status_code}"
-                f" www-authenticate={response.headers.get('WWW-Authenticate')!r}"
-                f" dpop-nonce-sent={new_nonce is not None}"
-                f" reused-token-nonce={nonce is not None and nonce == token.nonce}"
-            )
-            if response.status_code == 200:
-                print(f"users returned: {len(response.json())}")
-                return
-            if not dpop_key or new_nonce is None or new_nonce == nonce:
-                return
-            nonce = new_nonce
+        for path in args.path or ["/api/v1/users?limit=1"]:
+            response, nonce = probe(http, org + path, token, dpop_key, nonce)
+            if line := describe(response):
+                print(f"  {line}")
+
+
+def probe(
+    http: httpx2.Client,
+    url: str,
+    token: ServiceToken,
+    dpop_key: ec.EllipticCurvePrivateKey | None,
+    nonce: str | None,
+) -> tuple[httpx2.Response, str | None]:
+    """GET `url`, retrying once with a new DPoP nonce; returns the nonce to use next."""
+    path = url.split("/", 3)[3]
+    for attempt in (1, 2):
+        if dpop_key:
+            proof = dpop_proof(dpop_key, "GET", url, nonce, token.access_token)
+            headers = {"Authorization": f"DPoP {token.access_token}", "DPoP": proof}
+        else:
+            headers = {"Authorization": f"Bearer {token.access_token}"}
+        response = http.get(url, headers=headers)
+        new_nonce = response.headers.get("DPoP-Nonce")
+        print(
+            f"GET /{path} attempt {attempt}: {response.status_code}"
+            f" www-authenticate={response.headers.get('WWW-Authenticate')!r}"
+            f" dpop-nonce-sent={new_nonce is not None}"
+            f" reused-token-nonce={nonce is not None and nonce == token.nonce}"
+        )
+        retry = dpop_key is not None and response.status_code != 200 and new_nonce != nonce
+        nonce = new_nonce or nonce
+        if not retry or new_nonce is None:
+            break
+    return response, nonce
+
+
+def describe(response: httpx2.Response) -> str | None:
+    """Which resource answered, not what it holds: a list's length, an object's `id`, an
+    error's code and summary."""
+    json_body = "json" in response.headers.get("content-type", "")
+    body = response.json() if json_body and response.content else None
+    if isinstance(body, list):
+        return f"list of {len(body)}"
+    if not isinstance(body, dict):
+        return None
+    if response.status_code >= 400 and "errorCode" in body:
+        return f"errorCode={body['errorCode']!r} {body.get('errorSummary')!r}"
+    if response.status_code >= 400 and "error" in body:  # OAuth/DPoP error
+        return f"error={body['error']!r} {body.get('error_description')!r}"
+    return f"id={body.get('id')!r}"
 
 
 def main() -> None:
@@ -288,6 +318,7 @@ def main() -> None:
     p.add_argument("--kid", required=True)
     p.add_argument("--scopes", default="okta.users.read okta.groups.read")
     p.add_argument("--no-dpop", action="store_true")
+    p.add_argument("--path", action="append", help="GET this path instead (repeatable)")
     p.set_defaults(func=cmd_service)
 
     args = parser.parse_args()

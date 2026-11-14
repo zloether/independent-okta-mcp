@@ -154,7 +154,8 @@ def test_an_attribute_outside_the_roles_list_is_refused(engine: Engine) -> None:
             'profile.costCenter eq "42"',
             'profile.name sw "a" and profile.costCenter eq "42"',
             'profile.name sw "a" or (not (lastUpdated gt "2026-01-01T00:00:00.000Z"))',
-            # Names are matched exactly.
+            # Names are matched exactly. Okta folds their case (`PROFILE.LOGIN` searches
+            # `profile.login`, 3.2 dev-org check), so a case variant is refused, not widened.
             'Profile.name sw "a"',
             'profile.Name sw "a"',
             'profile sw "a"',

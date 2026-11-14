@@ -49,7 +49,8 @@ commands:
   list-log-stream-schemas:
     operation: listLogStreamSchemas
     summary: Log stream settings schemas
-    view: [id, title]
+    # Not `id`: live items carry `$id`, which the spec's schema doesn't declare (2026-11-13).
+    view: [title]
     data_classes: [org-config]
 
   get-log-stream-schema:

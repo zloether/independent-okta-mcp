@@ -23,5 +23,6 @@ clients = {
 
 service_public_jwk_file = "okta-mcp-service.jwk.json"
 service_scopes          = ["okta.users.read", "okta.groups.read"]
-# Adding okta.roles.read needs SUPER_ADMIN on the service app; see docs/okta-setup.md.
+# Some scopes need ORG_ADMIN or SUPER_ADMIN on the service app; see docs/okta-setup.md.
+# allow_org_admin   = true
 # allow_super_admin = true

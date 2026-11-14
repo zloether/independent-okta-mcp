@@ -8,12 +8,15 @@ import httpx2
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from okta_spike import (
+    ServiceToken,
     b64url,
     client_assertion,
+    describe,
     discovery_urls,
     dpop_proof,
     fetch_service_token,
     pkce_pair,
+    probe,
 )
 
 ORG = "https://example.okta.com"
@@ -110,6 +113,53 @@ def test_fetch_service_token_without_dpop() -> None:
         result = fetch_service_token(http, ORG, "0oaclient", rsa_key, "kid1", "s", None)
     assert result.token_type == "Bearer"  # noqa: S105
     assert result.nonce_required is False
+
+
+def test_probe_stops_on_200_and_keeps_its_new_nonce() -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(request.url.path)
+        return httpx2.Response(200, headers={"DPoP-Nonce": "n2"}, json=[])
+
+    token = ServiceToken("at", "DPoP", True, "n1")
+    with httpx2.Client(transport=httpx2.MockTransport(handler)) as http:
+        _, nonce = probe(
+            http, f"{ORG}/api/v1/users", token, ec.generate_private_key(ec.SECP256R1()), "n1"
+        )
+    assert calls == ["/api/v1/users"]
+    assert nonce == "n2"
+
+
+def test_probe_retries_once_with_a_new_nonce() -> None:
+    nonces: list[object] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonces.append(
+            jwt.decode(request.headers["DPoP"], options={"verify_signature": False})["nonce"]
+        )
+        return httpx2.Response(401, headers={"DPoP-Nonce": "n2"}, json={"error": "use_dpop_nonce"})
+
+    token = ServiceToken("at", "DPoP", True, "n1")
+    with httpx2.Client(transport=httpx2.MockTransport(handler)) as http:
+        probe(http, f"{ORG}/api/v1/users", token, ec.generate_private_key(ec.SECP256R1()), "n1")
+    assert nonces == ["n1", "n2"]
+
+
+def test_describe_prints_codes_only_for_errors() -> None:
+    def describe_(status: int, body: object) -> str | None:
+        return describe(httpx2.Response(status, json=body))
+
+    assert (
+        describe_(403, {"errorCode": "E0000006", "errorSummary": "No"})
+        == "errorCode='E0000006' 'No'"
+    )
+    assert describe_(400, {"error": "invalid_dpop_proof", "error_description": "htu"}) == (
+        "error='invalid_dpop_proof' 'htu'"
+    )
+    # A resource that happens to have these fields shows only its id.
+    assert describe_(200, {"id": "x", "error": "secret", "errorCode": "y"}) == "id='x'"
+    assert describe_(200, [1, 2]) == "list of 2"
 
 
 def test_b64url_roundtrip() -> None:
