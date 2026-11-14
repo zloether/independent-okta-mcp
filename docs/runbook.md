@@ -58,7 +58,7 @@ sudo chmod 0400 secrets/* policy.yaml
 
 `policy.yaml` and `secrets/` are git-ignored there. The container runs as uid 10001 and Compose mounts these files with their host owner and mode, so they must be readable by 10001 (§11.4).
 
-**Replacing a mounted file later** (policy, key, cursor key): Docker bind-mounts a single file by inode, and editors and `install` write a new inode. A plain `docker compose restart` keeps the old mount and so the old file. Always replace with `install`, then recreate the container:
+**Replacing a mounted file later** (policy, key, cursor key): Docker bind-mounts a single file by inode, and editors and `install` write a new one, so a running container keeps reading the old file until it restarts. Replace with `install`, which sets owner 10001 and mode 0400 in one step, then recreate the container, which also applies any change to the compose file:
 
 ```sh
 sudo install -o 10001 -g 10001 -m 0400 policy.new.yaml policy.yaml
@@ -72,7 +72,7 @@ Edit the `CHANGE` values in [`compose.example.yaml`](../docker/compose.example.y
 ```sh
 docker compose -f compose.example.yaml up -d --wait
 curl -s http://127.0.0.1:8080/healthz          # {"status":"ok"}
-curl -s http://127.0.0.1:8080/readyz           # {"status":"ready"}
+curl -s http://127.0.0.1:8080/readyz           # {"status":"ready"}; 503 for a few seconds while keys and token load
 ```
 
 These use the loopback port. With the shared-network option (§3.3), which publishes no port, run them from the proxy's container instead, against `http://okta-mcp:8080`. `docker compose ps` also shows the image's own health check (`healthy`) either way.
@@ -106,7 +106,7 @@ curl -s https://mcp.example.com/.well-known/oauth-protected-resource
 # both: resource = MCP_PUBLIC_URL, authorization_servers = [MCP_ISSUER]
 ```
 
-Then sign in from an MCP client as one test user per role. Check that `okta_status` shows the expected roles and that each tool list holds only that role's commands. Also check a user who is in an `mcp-okta-*` group that the policy doesn't name: they get a token but see only `okta_status`. A user in no `mcp-okta-*` group can't get a token at all, since the authorization server's rule admits role groups only. Client-by-client notes are in [`design/spike-findings.md`](design/spike-findings.md) (moving to `compatibility-matrix.md` in plan step 4.6).
+Then sign in from an MCP client as one test user per role. Check that `okta_status` shows the expected roles and that each tool list holds only that role's commands. Also check a user who is in a role group from the setup config that `policy.yaml` doesn't map (add one to the setup config for the test if needed): they get a token but see only `okta_status`, which says their groups map to no role. A user in none of the setup config's role groups can't get a token at all, because the authorization server's rule and the client app assignments list exactly those groups. That includes a hand-made `mcp-okta-*` group. Client-by-client notes are in [`design/spike-findings.md`](design/spike-findings.md) (moving to `compatibility-matrix.md` in plan step 4.6).
 
 ### 3.5 Tell your users
 
@@ -197,8 +197,8 @@ JSON lines on stderr (§13). Worth alerting on:
 
 | Event | Meaning |
 |---|---|
-| `service_token_failed` | The server couldn't get a service token: a key, role, scope or DPoP problem, or Okta is down. Calls keep working on the cached token until it expires (up to an hour), then fail until this clears. `/readyz` turns 503 at that point. Alert on it repeating, not on one line |
-| `jwks_fetch_failed` | A JWKS fetch failed. Keys already loaded keep serving for up to an hour after the last good fetch, then `/mcp` answers 503 and `/readyz` turns 503. At startup, nothing is served until the first fetch succeeds. Alert on it repeating |
+| `service_token_failed` | The server couldn't get a service token: a key, scope or DPoP problem, or Okta is down. A too-narrow admin role doesn't show here; it shows as the 401/403 warning below. The server asks for a new token only in the old one's last minute, so calls keep working for at most about a minute after the first line, then fail and `/readyz` turns 503 until this clears. Alert on repeats; one line followed by a successful token is a blip |
+| `jwks_fetch_failed` | A JWKS fetch failed. Keys already loaded keep serving for up to an hour after the last good fetch, then `/mcp` answers 503 and `/readyz` turns 503. At startup, `/mcp` answers 503 until the first fetch succeeds (`/healthz` and the PRM URLs still answer). Alert on repeats |
 | `okta_rate_limited` with `reason: over_max_wait` or `retry_failed`, often | The org's shared bucket is exhausted. Lower `MCP_REQUESTS_PER_MINUTE` or the service app's share |
 | `limiter_rejected` | One user hit `MCP_REQUESTS_PER_MINUTE` |
 | `Okta refused the service app's request: HTTP 401/403` (warning) | Usually the service app's admin role is too narrow for a command's scope; see the [scope table](okta-setup.md#service-app-scopes-and-admin-roles). With `E0000015` in the line, the org may lack the feature the command needs. Other Okta error codes aren't logged yet (plan 6.2) |
@@ -211,13 +211,13 @@ Run `uv run python scripts/okta-setup.py check --config okta-setup.yaml` on a sc
 
 ## 5. Kill switch
 
-In order of speed. Do as many as the incident needs (§11.4). Only step 1 takes effect at once. The others stop new tokens, not ones already issued, because the server checks tokens locally and Okta can't recall a token it has issued.
+In order of speed. Do as many as the incident needs (§11.4). Only step 1 takes effect at once. Steps 2–4 stop new tokens, not ones already issued, because the server checks user tokens locally and never learns that Okta revoked one.
 
 1. **Stop the server:** `docker compose -f compose.example.yaml down`, or remove the route at the proxy. This takes seconds and ends all MCP access.
 2. **Deactivate the service app** (Applications → the service app → Deactivate). This is the step for a leaked service key. Unverified: whether Okta also refuses service tokens issued before the deactivation, or lets them run out (up to an hour).
 3. **Rotate the service key** (§4.4) if the key may have leaked: delete its public key from the app. This stops new service tokens only. A token the thief already holds is bound to the thief's own DPoP key and stays valid for its lifetime, so do step 2 as well.
-4. **Cut user sign-in:** deactivate the `okta-mcp` authorization server, or remove the client apps from its access policy. Users' access tokens already issued keep passing the server's checks until they expire (≤ 30 minutes as set up), and the server keeps its cached signing keys for up to an hour. If that window matters, also do step 1. Under B, also revoke the affected users' tokens (§4.3).
-5. **Rotate `MCP_CURSOR_KEY`** (§4.5) if it may have leaked.
+4. **Cut user sign-in:** deactivate the `okta-mcp` authorization server, or remove the client apps from its access policy. Users' access tokens already issued keep passing the server's checks until they expire (≤ 30 minutes as set up). If that window matters, also do step 1. Under B, also revoke the affected users' tokens (§4.3).
+5. **Rotate the cursor key** (`secrets/cursor_key`, §4.5) if it may have leaked. Outstanding cursors stop working when the container is recreated.
 
 Afterward, review the audit log for the window, and Okta's System Log for the service app's client ID, for calls that didn't come through the server.
 

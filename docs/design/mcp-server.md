@@ -660,7 +660,7 @@ Validation at load (startup fails):
 
 All errors are reported at once. Patterns are expanded once, at load, against the registry the server runs with.
 
-Policy changes take effect when the process restarts with the new file (stateless, seconds); under Docker that means recreating the container, since a single-file bind mount keeps the old inode across a plain restart. Mount the file read-only.
+Policy changes take effect on restart (stateless, seconds). Mount the file read-only.
 
 ### 9.4 Enforcement points
 
@@ -757,7 +757,7 @@ Startup fails fast on missing/invalid values, unreadable key, invalid policy, or
 - **TLS** at a reverse proxy; container speaks HTTP on 8080, never exposed directly.
 - **Health:** `/healthz` (process up); `/readyz` (policy loaded, registry valid, JWKS loaded, service token obtained within the last refresh cycle — not fetched per probe: a background task asks for it every 30 s, and `/readyz` checks that an unexpired one is held). `/mcp` waits only for the JWKS, since a call fetches its own service token. Unauthenticated, data-free.
 - **Upgrades:** stateless; replace the container. Pin image tags and the MCP SDK.
-- **Secrets:** files; rotation = new secret + restart (service key, cursor key). Under Docker, recreate the container (`up -d --force-recreate`): a single-file bind mount keeps the old inode across a plain restart ([runbook](../runbook.md)).
+- **Secrets:** files; rotation = new secret + restart (service key, cursor key).
 - **Network exposure:** only the TLS proxy may reach the container's port. The app does not check which peer sent `X-Forwarded-*` (`MCP_TRUST_PROXY`); that is the network's job: no published port, or one bound to loopback (`127.0.0.1:8080:8080`; Docker's published ports bypass host firewalls such as ufw). Identity never comes from the client address (limits, audit and cursors key on `uid`), so a forged one mislabels a log line, nothing more.
 - **Compose example** ([`docker/compose.example.yaml`](../../docker/compose.example.yaml), plan 7.2): `read_only`, `cap_drop: [ALL]`, `no-new-privileges`, user 10001, port on `127.0.0.1` only (or none, with the proxy on a shared network), `MCP_TRUST_PROXY` off, cursor key and service key as file secrets, policy as a read-only bind with `create_host_path: false` (a missing file fails `up` instead of mounting an empty directory). Compose bind-mounts a file secret with the host file's owner and mode and ignores `uid`/`mode` for it, so the host files must be readable by uid 10001. `tests/test_compose_example.py` pins these statically; CI's `container` job also brings the file up with the built image (`tests/container/test_compose.py`: `up --wait` healthy, the hardening and read-only mounts in `docker inspect`, loopback-only binding, `/healthz` 200 through the published port).
 - **Replicas:** safe (stateless), but limiters and the service token are per replica.
