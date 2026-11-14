@@ -223,14 +223,16 @@ async def test_every_command_builds_its_template_path(spec: SpecIndex) -> None:
         assert url.raw_path.decode().partition("?")[0] == expected, cmd.name
 
 
-def test_path_values_are_encoded_with_no_safe_characters(spec: SpecIndex) -> None:
+def test_path_values_are_encoded_but_for_sub_delims_colon_and_at(spec: SpecIndex) -> None:
+    # Okta's DPoP `htu` check wants these literal: encoded, every one was a 400 (5.x smoke).
     get = _unpatterned(spec)["users get"]
     cases = {
-        "alice+test@example.com": "alice%2Btest%40example.com",
-        "josé@example.com": "jos%C3%A9%40example.com",
+        "alice+test@example.com": "alice+test@example.com",
+        "josé@example.com": "jos%C3%A9@example.com",
         # Lookalikes whose NFKC form passes are kept as sent.
         "\N{FULLWIDTH LATIN SMALL LETTER A}lice": "%EF%BD%81lice",
-        "a:b=d&e,f": "a%3Ab%3Dd%26e%2Cf",
+        "a:b=d&e,f!g$h'i(j)k*l": "a:b=d&e,f!g$h'i(j)k*l",
+        'a"b<c>d[e]f{g}h|i^j`k': "a%22b%3Cc%3Ed%5Be%5Df%7Bg%7Dh%7Ci%5Ej%60k",
         "..a": "..a",
         "x" * 256: "x" * 256,
     }
@@ -416,7 +418,7 @@ def test_build_request_refuses_me_on_an_unpatterned_user_path(spec: SpecIndex) -
     with pytest.raises(InvalidArguments, match="arg 'user' is the name of another endpoint"):
         build_request(get, {"user": "me"}, ORG)
     url, _ = build_request(get, {"user": "mel@example.com"}, ORG)
-    assert url == f"{ORG}/api/v1/users/mel%40example.com"
+    assert url == f"{ORG}/api/v1/users/mel@example.com"
 
 
 @pytest.mark.parametrize("args", [None, "x", ["group"], 5])

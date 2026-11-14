@@ -118,6 +118,16 @@ async def test_params_merged_into_url_query(params: dict[str, str] | None, query
 
 
 @pytest.mark.anyio
+async def test_htu_is_the_path_as_sent() -> None:
+    # Okta compares `htu` with literal sub-delims, `:` and `@` (exec.params._SEGMENT_SAFE).
+    okta = Okta()
+    c = client(okta, FakeTokenProvider(DPOP_TOKEN), dpop=DPoP())
+    await c.get(USERS + "/a+b:c@example.com%22")
+    assert okta.requests[0].url.raw_path == b"/api/v1/users/a+b:c@example.com%22"
+    assert okta.proof()["htu"] == USERS + "/a+b:c@example.com%22"
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "url",
     [

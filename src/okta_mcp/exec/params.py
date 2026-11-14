@@ -1,16 +1,19 @@
 """Request building from a command's arguments (design §6.4).
 
 Okta decodes `%2F` and collapses dot segments server-side, so percent-encoding alone doesn't keep
-a value inside its path segment: a path value is restricted first, then encoded with no safe
-characters. The rule applies whatever the argument's `pattern`, so it also covers "ID or login"
-parameters that have none. A value that stays inside its segment can still name another
-endpoint (`rules` as a group ID is `/api/v1/groups/rules`, the group-rules list), so the literal
-segments the spec has in the parameter's place (`Operation.reserved`, which also holds names Okta
-routes that the spec doesn't list, such as `me` after `/users/`) are refused as well, with any
-trailing dots (`me.`), and so is a reserved name followed by `.` and more (`oauth2.json`), in case
-Okta matches a suffix. Okta was seen not to for `me` and `rules` (`/users/me.json`,
-`/groups/rules.json` are literal values; 2.10 dev-org check), so those two take a suffix and a login
-such as `me.smith@…` resolves. Query values go out as a params mapping, never concatenated.
+a value inside its path segment: a path value is restricted first, then percent-encoded except
+for the sub-delimiters, `:` and `@` (`_SEGMENT_SAFE`). Those are literal in a path segment
+(RFC 3986 `pchar`), and Okta seems to compare a DPoP proof's `htu` with the path after decoding
+them: encoded, each got a 400, so no login could be looked up (5.1 dev-org smoke). The rule
+applies whatever the argument's `pattern`, so it also covers "ID or login" parameters that have
+none. A value that stays inside its segment can still name another endpoint (`rules` as a group
+ID is `/api/v1/groups/rules`, the group-rules list), so the literal segments the spec has in the
+parameter's place (`Operation.reserved`, which also holds names Okta routes that the spec doesn't
+list, such as `me` after `/users/`) are refused as well, with any trailing dots (`me.`), and so is
+a reserved name followed by `.` and more (`oauth2.json`), in case Okta matches a suffix. Okta
+was seen not to for `me` and `rules` (`/users/me.json`, `/groups/rules.json` are literal values;
+2.10 dev-org check), so those two take a suffix and a login such as `me.smith@…` resolves. Query
+values go out as a params mapping, never concatenated.
 """
 
 import re
@@ -34,6 +37,8 @@ _VAR = re.compile(r"\{([^}]*)\}")
 # `/users/me.json` E0000007, `/groups/rules.json` E0000008). Others stay refused with a suffix
 # until the live-org probes (plan 8.2.1) cover them.
 _SUFFIX_IS_LITERAL = frozenset({"me", "rules"})
+# RFC 3986 sub-delims (less `;`, refused above), `:` and `@`: none ends a segment or the path.
+_SEGMENT_SAFE = "!$&'()*+,=:@"
 
 
 def _path_problem(value: object, reserved: frozenset[str]) -> str | None:
@@ -60,12 +65,12 @@ def _path_problem(value: object, reserved: frozenset[str]) -> str | None:
 
 
 def path_segment(arg: str, value: object, reserved: frozenset[str]) -> str:
-    """`value` percent-encoded with no safe characters. Raises `InvalidArguments` naming `arg`,
+    """`value` percent-encoded but for `_SEGMENT_SAFE`. Raises `InvalidArguments` naming `arg`,
     never the value, if the value breaks the §6.4 character rule or is one of `reserved` (the
     parameter's `Operation.reserved` entry)."""
     if (problem := _path_problem(value, reserved)) is not None:
         raise InvalidArguments(f"arg {arg!r} {problem}")
-    return quote(str(value), safe="")
+    return quote(str(value), safe=_SEGMENT_SAFE)
 
 
 def build_url(org_url: str, template: str, segments: Mapping[str, str]) -> str:
@@ -122,7 +127,7 @@ def build_request(
     for name, value in args.items():
         arg = entry.args[name]
         if arg.path_param is not None:
-            segments[arg.path_param] = quote(value, safe="")
+            segments[arg.path_param] = quote(value, safe=_SEGMENT_SAFE)
         elif isinstance(value, list):
             items = [_query_value(v) for v in cast(list[object], value)]
             params[arg.param] = (
