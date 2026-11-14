@@ -1,5 +1,6 @@
 """Startup wiring and the MCP handlers (plan 4.1, design §4, §5.2, §5.5, §8.6)."""
 
+import io
 import json
 import logging
 import re
@@ -32,6 +33,7 @@ from okta_mcp.server import (
     Runtime,
     _tokens,  # pyright: ignore[reportPrivateUsage]
     build_runtime,
+    log_warnings,
     mcp_server,
 )
 
@@ -436,17 +438,19 @@ async def test_policy_warnings_are_logged(tmp_path: Path, caplog: pytest.LogCapt
     )
     config = load_config(env(tmp_path, MCP_POLICY_FILE=str(policy)))
     async with new_http_client() as http:
+        runtime = build_runtime(config, http)
         with caplog.at_level(logging.WARNING, logger="okta_mcp.server"):
-            build_runtime(config, http)
+            log_warnings(runtime)
     assert "policy: " in caplog.text
     assert "include_sensitive" in caplog.text
 
 
 @pytest.mark.anyio
-async def test_check_mode_leaves_warnings_and_audit_file_to_the_caller(
+async def test_build_runtime_logs_nothing_and_takes_a_sink(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """`okta-mcp --check` prints the warnings itself and must not create the audit file."""
+    """Warnings are the caller's to log (`--check` prints them); a given sink replaces
+    `MCP_AUDIT_LOG`, whose file is then not created."""
     policy = tmp_path / "policy.yaml"
     policy.write_text(
         "version: 1\nroles:\n  r:\n    groups: ['00g1readers000000000']\n"
@@ -456,7 +460,7 @@ async def test_check_mode_leaves_warnings_and_audit_file_to_the_caller(
     config = load_config(env(tmp_path, MCP_POLICY_FILE=str(policy), MCP_AUDIT_LOG=str(audit)))
     async with new_http_client() as http:
         with caplog.at_level(logging.WARNING, logger="okta_mcp.server"):
-            runtime = build_runtime(config, http, check=True)
+            runtime = build_runtime(config, http, sink=io.StringIO())
     assert "policy: " not in caplog.text
     assert any("include_sensitive" in w for w in runtime.warnings)
     assert not audit.exists()

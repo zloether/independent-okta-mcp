@@ -20,7 +20,7 @@ from okta_mcp.__main__ import (
     STDIO_NEEDS_DEV_MODE,
     main,
 )
-from okta_mcp.audit import audit_file_problem
+from okta_mcp.audit import OTHERS_CAN_ACCESS, probe_sink
 from okta_mcp.config import Config
 
 PILOT = Path(__file__).parent / "policy" / "fixtures" / "pilot.yaml"
@@ -346,9 +346,31 @@ def test_check_leaves_an_existing_audit_file_alone(
 ) -> None:
     audit = tmp_path / "audit.jsonl"
     audit.write_text("earlier\n")
+    audit.chmod(0o600)
     set_env(no_serving, http_env(tmp_path, MCP_AUDIT_LOG=str(audit)))
-    passed(capsys, main(["--check"]))
+    assert passed(capsys, main(["--check"])) == []
     assert audit.read_text() == "earlier\n"
+
+
+def test_check_warns_of_an_audit_file_others_can_read(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The warning startup would log, printed by the check instead."""
+    audit = tmp_path / "audit.jsonl"
+    audit.write_text("")
+    audit.chmod(0o644)
+    set_env(no_serving, http_env(tmp_path, MCP_AUDIT_LOG=str(audit)))
+    assert passed(capsys, main(["--check"])) == [f"warning: {OTHERS_CAN_ACCESS}"]
+
+
+def test_check_audit_error_matches_startup(
+    clean_env: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A directory the server can't open: the check and startup give the same line."""
+    set_env(clean_env, http_env(tmp_path, MCP_AUDIT_LOG=str(tmp_path)))
+    checked = failed(capsys, main(["--check"]), CHECK_FAILED)
+    started = failed(capsys, main([]))
+    assert checked == started == ["MCP_AUDIT_LOG: cannot open the file (IsADirectoryError)"]
 
 
 def test_check_audit_file_in_a_missing_directory(
@@ -356,31 +378,53 @@ def test_check_audit_file_in_a_missing_directory(
 ) -> None:
     audit = tmp_path / "missing" / "audit.jsonl"
     set_env(no_serving, http_env(tmp_path, MCP_AUDIT_LOG=str(audit)))
-    (line,) = failed(capsys, main(["--check"]), CHECK_FAILED)
-    assert line.startswith("MCP_AUDIT_LOG:")
+    assert failed(capsys, main(["--check"]), CHECK_FAILED) == [
+        "MCP_AUDIT_LOG: cannot open the file (FileNotFoundError)"
+    ]
     assert not audit.parent.exists()
 
 
 @pytest.mark.parametrize("target", ["stdout", "stderr"])
-def test_audit_file_problem_streams(target: str) -> None:
-    assert audit_file_problem(target) is None
+def test_probe_sink_streams(target: str) -> None:
+    assert probe_sink(target) is None
 
 
-def test_audit_file_problem(tmp_path: Path) -> None:
-    assert audit_file_problem(str(tmp_path / "new.jsonl")) is None
-    assert audit_file_problem(str(tmp_path)) is not None  # a directory
-    assert audit_file_problem(str(tmp_path / "no" / "new.jsonl")) is not None
+def test_probe_sink(tmp_path: Path) -> None:
+    new = tmp_path / "new.jsonl"
+    assert probe_sink(str(new)) is None
+    assert not new.exists()
+    with pytest.raises(IsADirectoryError):
+        probe_sink(str(tmp_path))
+    with pytest.raises(FileNotFoundError):
+        probe_sink(str(tmp_path / "no" / "new.jsonl"))
+
+
+def test_probe_sink_refuses_a_dangling_symlink(tmp_path: Path) -> None:
+    link = tmp_path / "audit.jsonl"
+    link.symlink_to(tmp_path / "elsewhere.jsonl")
+    with pytest.raises(FileNotFoundError):
+        probe_sink(str(link))
+    assert not (tmp_path / "elsewhere.jsonl").exists()
+
+
+def test_probe_sink_fifo_without_reader_does_not_block(tmp_path: Path) -> None:
+    fifo = tmp_path / "audit.fifo"
+    os.mkfifo(fifo)
+    with pytest.raises(OSError):
+        probe_sink(str(fifo))
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root can write anything")
-def test_audit_file_problem_unwritable(tmp_path: Path) -> None:
+def test_probe_sink_unwritable(tmp_path: Path) -> None:
     existing = tmp_path / "audit.jsonl"
     existing.write_text("")
     existing.chmod(0o400)
-    assert audit_file_problem(str(existing)) is not None
+    with pytest.raises(PermissionError):
+        probe_sink(str(existing))
     locked = tmp_path / "locked"
     locked.mkdir(mode=0o500)
     try:
-        assert audit_file_problem(str(locked / "new.jsonl")) is not None
+        with pytest.raises(PermissionError):
+            probe_sink(str(locked / "new.jsonl"))
     finally:
         locked.chmod(0o700)

@@ -49,8 +49,8 @@ def _fail(errors: Sequence[str], header: str = CANNOT_START) -> int:
     return STARTUP_FAILED
 
 
-def _run[T](run: Callable[[], Awaitable[T]], header: str) -> T | int:
-    """`run()`'s result, or the exit status after printing its startup errors."""
+def _run(run: Callable[[], Awaitable[int]], header: str) -> int:
+    """`run()`'s exit status, or 2 after printing its startup errors under `header`."""
     try:
         return anyio.run(run)
     # The loaders' errors, raised only before the transport opens. Anything else is a bug and
@@ -62,18 +62,22 @@ def _run[T](run: Callable[[], Awaitable[T]], header: str) -> T | int:
 
 
 def _serve(serve: Callable[[Config], Awaitable[None]], config: Config) -> int:
-    result = _run(lambda: serve(config), CANNOT_START)
-    return result if isinstance(result, int) else 0
+    async def run() -> int:
+        await serve(config)
+        return 0
+
+    return _run(run, CANNOT_START)
 
 
 def _check(config: Config, *, stdio: bool) -> int:
-    result = _run(lambda: check(config, stdio=stdio), CHECK_FAILED)
-    if isinstance(result, int):
-        return result
-    print(CHECK_PASSED)
-    for warning in result:
-        print(f"  warning: policy: {warning}")
-    return 0
+    async def run() -> int:
+        warnings = await check(config, stdio=stdio)
+        print(CHECK_PASSED)
+        for warning in warnings:
+            print(f"  warning: {warning}")
+        return 0
+
+    return _run(run, CHECK_FAILED)
 
 
 def _refusal(config: Config, *, stdio: bool) -> str | None:
