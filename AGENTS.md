@@ -67,6 +67,13 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 - **Never log** tokens, keys, or Okta result bodies.
 - Python ≥3.12, fully async (`anyio`, `httpx2`). Async tests use anyio's pytest plugin (`@pytest.mark.anyio`).
 
+## Documentation
+
+Write for one audience: humans or agents. Complete, not verbose; link instead of repeating.
+
+- **READMEs (humans):** as short as possible: what it is, how to start, where to read more. Depth goes in separate files under `docs/`, linked from the README.
+- **Agent docs:** token-efficient. This file is loaded every session, so it holds only rules every task needs. Task-specific guidance goes in its own file, linked here with when to read it, so it is loaded only when needed.
+
 ## Trust boundaries
 
 Mistakes in these paths are the hardest to undo (design §12.2). Code touching them must pass **`/security-review`** before it is considered complete; these steps are marked 🔒 in the plan.

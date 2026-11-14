@@ -29,7 +29,7 @@ OKTA_API_TOKEN_FILE=okta-token.txt \
 uv run okta-mcp --stdio
 ```
 
-Add `--check` (`uv run okta-mcp --stdio --check`, or `okta-mcp --check` for the HTTP server) to load the same configuration and policy and exit without serving: `0` with any warnings, or `2` with the reasons it wouldn't start.
+Add `--check` to validate the configuration and policy without serving (exit `0` or `2`).
 
 Use a read-only admin's API token, or the service app (`OKTA_CLIENT_ID`, `OKTA_PRIVATE_KEY_FILE`) instead of `OKTA_API_TOKEN_FILE`. In a client config, pass the same variables as the server's environment; set `MCP_CURSOR_KEY` to a fixed value there, or cursors stop working at each restart.
 
