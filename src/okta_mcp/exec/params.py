@@ -54,9 +54,7 @@ def _path_problem(value: object, reserved: frozenset[str]) -> str | None:
         # for the names seen not to (`me.smith@…` is a login).
         folded = form.casefold()
         head = folded.partition(".")[0]
-        if folded.rstrip(".") in reserved or (
-            head in reserved and head not in _SUFFIX_IS_LITERAL
-        ):
+        if folded.rstrip(".") in reserved or (head in reserved and head not in _SUFFIX_IS_LITERAL):
             return "is the name of another endpoint, not an ID"
     return None
 
