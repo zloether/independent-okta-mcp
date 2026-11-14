@@ -22,7 +22,7 @@ from okta_mcp.registry.spec import Operation
 USER_ID = re.compile(r"00u[A-Za-z0-9]{17}")
 """Matched with `fullmatch`, so a trailing newline doesn't pass."""
 _LOOKUP_PARAM = "id"
-_NOT_FOUND = "no user has that ID or exact login"
+NOT_FOUND = "no user has that ID or exact login"
 
 
 class NotFound(Exception):
@@ -77,7 +77,7 @@ class UserResolver:
         else:
             found = _user_id_of(json_body(response), value)
         if found is None:
-            raise NotFound(_NOT_FOUND)
+            raise NotFound(NOT_FOUND)
         cache[value] = found
         return found
 

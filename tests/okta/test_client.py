@@ -652,6 +652,17 @@ def test_http_client_settings() -> None:
 
 
 @pytest.mark.anyio
+async def test_okta_cookies_are_never_sent_back() -> None:
+    # 8.1 sweep: one client serves every principal and the token endpoint, so a cookie Okta
+    # set on one caller's response must not ride on the next request (or the token POST).
+    okta = Okta(httpx2.Response(200, headers={"Set-Cookie": "sid=s1; Path=/"}, json=[]))
+    c = client(okta)
+    await c.get(USERS)
+    await c.get(USERS)
+    assert [r.headers.get("Cookie") for r in okta.requests] == [None, None]
+
+
+@pytest.mark.anyio
 async def test_transport_error_not_chained() -> None:
     okta = Okta(httpx2.ConnectError("boom"))
     with pytest.raises(UpstreamError) as e:

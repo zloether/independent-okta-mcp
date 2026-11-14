@@ -14,7 +14,9 @@ The order of the steps is a security property:
    one this module doesn't know, is a refusal.
 5. Then, and only then, Okta: the `user_id` resolver (first calls only: a cursor holds resolved
    path params), then the request, under the call's deadline. A refused call sends nothing, so
-   the resolver can't tell a caller whether a login exists.
+   the resolver can't tell a caller whether a login exists; on an allowed call that looked a
+   login up, Okta's 404 gets the resolver's own `not_found` (`_not_found`), so it can't tell an
+   unknown login from an unassigned one.
 
 Every failure becomes a `Failure` with a §5.5 code and a message safe to return. Anything
 unexpected is `internal_error`, with the exception's type and frames, never its message, in the
@@ -54,7 +56,7 @@ from okta_mcp.exec.envelope import (
 )
 from okta_mcp.exec.output import columns
 from okta_mcp.exec.params import build_request, check_args
-from okta_mcp.exec.resolve import NotFound, UserResolver
+from okta_mcp.exec.resolve import NOT_FOUND, NotFound, UserResolver
 from okta_mcp.logs import log_internal
 from okta_mcp.okta import ratelimit
 from okta_mcp.okta.client import OktaClient, UpstreamError, json_body
@@ -188,6 +190,20 @@ class _Options:
     links: bool
     limit: int
     resume: Resume | None
+    lookups: dict[str, str] = field(default_factory=dict[str, str])
+    """The resolver's per-call cache: non-empty once it looked a login up on this call."""
+
+
+NOT_FOUND_HELD = NOT_FOUND + ", or what the call's other args name doesn't hold that user"
+"""`not_found` for a resolved command with another path param (`apps get-user`)."""
+
+
+def _not_found(command: Command) -> str:
+    """One `not_found` message per command, for the resolver's miss and for Okta's 404 after a
+    lookup alike, so a caller can't tell a login that exists nowhere from one that exists but
+    isn't, say, assigned to the app it named (8.1 sweep)."""
+    path_args = [a for a in command.entry.args.values() if a.path_param is not None]
+    return NOT_FOUND if len(path_args) == 1 else NOT_FOUND_HELD
 
 
 def _logged(name: object) -> str:
@@ -197,6 +213,10 @@ def _logged(name: object) -> str:
 async def _replay(items: list[tuple[Any, str, int]]) -> AsyncGenerator[tuple[Any, str, int]]:
     for item in items:
         yield item
+
+
+def _resolves(command: Command) -> bool:
+    return any(a.resolve is not None for a in command.entry.args.values())
 
 
 class Executor:
@@ -306,10 +326,19 @@ class Executor:
             case _:  # pyright: ignore[reportUnnecessaryComparison]
                 raise RuntimeError("unknown policy verdict")
         # 5. Okta, under the call's deadline.
-        with anyio.fail_after(self._call_timeout):
-            if command.is_list:
-                return Success(await self._list(call, command, options))
-            return Success(await self._item(command, options))
+        try:
+            with anyio.fail_after(self._call_timeout):
+                if command.is_list:
+                    return Success(await self._list(call, command, options))
+                return Success(await self._item(command, options))
+        except NotFound:
+            pass
+        except UpstreamError as e:
+            # Okta's own 404 after a lookup gets the resolver's answer. An ID given as is, or a
+            # cursor (which never resolves), keeps Okta's text: no lookup to give away.
+            if e.status != 404 or not options.lookups:
+                raise
+        raise NotFound(_not_found(command))
 
     def _options(self, call: Call, command: Command) -> _Options:
         check_args(command, call.args)
@@ -396,14 +425,15 @@ class Executor:
     def _unreadable(self, call: Call, command: Command) -> str:
         return f"{EXPRESSION}; {searchable(self._engine, call.principal, command)}"
 
-    async def _resolved(self, command: Command, args: dict[str, Any]) -> dict[str, Any]:
-        if not any(a.resolve is not None for a in command.entry.args.values()):
-            return args
+    async def _resolved(self, command: Command, options: _Options) -> dict[str, Any]:
+        if not _resolves(command):
+            return options.args
         # `__init__` refused a missing resolver while any command resolves.
-        return await cast(UserResolver, self._resolver).resolve(command, args, {})
+        resolver = cast(UserResolver, self._resolver)
+        return await resolver.resolve(command, options.args, options.lookups)
 
     async def _item(self, command: Command, options: _Options) -> str:
-        args = await self._resolved(command, options.args)
+        args = await self._resolved(command, options)
         url, params = build_request(command, args, self._org_url)
         response = await self._client.get(url, params)
         body = json_body(response)
@@ -449,7 +479,7 @@ class Executor:
             bound: Mapping[str, str] = resume.path_params
             warnings: tuple[str, ...] = (RESUMED_WARNING,)
         else:
-            resolved = await self._resolved(command, args)
+            resolved = await self._resolved(command, options)
             url, params = build_request(command, resolved, self._org_url)
             if unpaged:
                 # One page, links ignored. Read whole first, so the cut is judged on the page

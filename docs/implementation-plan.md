@@ -452,9 +452,9 @@ Verify: someone (or a fresh Claude session) follows the runbook on a clean machi
 
 ## Phase 8 — Hardening & release
 
-### 8.1 Security review sweep ◐
-- [ ] `/security-review` over all 🔒 paths together (cross-cutting issues)
-- [ ] Resolve or ticket every finding
+### 8.1 Security review sweep ☑
+- [x] `/security-review` over all 🔒 paths together (cross-cutting issues): four parallel reviewers by theme (identity → authorization, request building and URL following, data egress, credentials and deployment), 2026-11-14
+- [x] Resolve or ticket every finding (see the [decisions log](decisions-log.md))
 - [x] Narrow the `.` half of the reserved-literal rule in `exec/params.py` so logins such as `me.smith@…` resolve again: Okta doesn't strip suffixes (`me.json` is a literal), but does strip matrix parameters, so `;` stays refused (2.10 dev-org check, 2026-11-13) 🔒
 
 ### 8.2 Compatibility matrix & E2E ☐
@@ -474,7 +474,7 @@ Live checks of what only Okta decides: the service token, routing, response shap
   1. Service token: nonce retry, `DPoP` token type (a `Bearer` downgrade fails), second call served from the cache
   2. Every registry command once through the executor: no `E0000006` (keeps V6 current), every view field present, paged lists follow `next`
   3. Schema drift and secret canary: live keys vs the pinned spec's schema; fail on a new key that looks secret- or credential-like or is not covered by `scrub.yaml` (keeps V14 current); report other new keys
-  4. Path-routing probes from the 2.10 dev-org check (`me;x`, `.json` suffixes, `groups/rules`), plus what the 8.1 change allowed or still refuses untested: `me.smith@<a test login domain>`, other reserved names with a suffix (`apps/export.csv`, `policies/simulate.json`: if Okta routes them as literals, `_SUFFIX_IS_LITERAL` in `exec/params.py` can become a rule for all names), and a trailing dot (`me.`, `groups/rules.`). The 8.1 change merged before these ran (user decision, 2026-11-14)
+  4. Path-routing probes from the 2.10 dev-org check (`me;x`, `.json` suffixes, `groups/rules`), plus what the 8.1 change allowed or still refuses untested: `me.smith@<a test login domain>`, other reserved names with a suffix (`apps/export.csv`, `policies/simulate.json`: if Okta routes them as literals, `_SUFFIX_IS_LITERAL` in `exec/params.py` can become a rule for all names), a trailing dot (`me.`, `groups/rules.`), and a leading dot on `users get` (`/users/.json`; 8.1 sweep). The 8.1 change merged before these ran (user decision, 2026-11-14)
   5. The image with the live service app and a policy, user tokens from the local test issuer: one `tools/call` per role
 - [ ] **Not in CI:** 429 behavior and V16 (a shared bucket), Okta sign-in / MFA / refresh (4.6, 8.2 manual), anything that writes
 

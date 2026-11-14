@@ -602,11 +602,33 @@ class Setup:
         else:
             self.ok(what)
 
+    def _others(
+        self, kind: str, items: list[dict[str, Any]], ours: str
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """The first item named `ours`, and whether any other ACTIVE one was reported, a second
+        one named `ours` included. Okta applies the first that matches, by priority, so another
+        one can issue tokens on this server that ours doesn't bound. While one is there, ours
+        isn't trusted: nothing is created in or added to it."""
+        mine = next((i for i in items if i["name"] == ours), None)
+        found = False
+        for item in items:
+            if item is not mine and item.get("status") == "ACTIVE":
+                found = True
+                self.problem(
+                    f"{kind} {item['name']!r}",
+                    ("a second one with this name" if item["name"] == ours else "not managed")
+                    + f" on the authorization server this tool dedicates to okta-mcp: it can "
+                    f"issue tokens {ours!r} doesn't bound; remove it",
+                )
+        return mine, found
+
     def _policy(self, base: str, client_ids: list[str]) -> None:
         what = f"access policy {POLICY_NAME!r}"
-        policy = next(
-            (p for p in self.okta.get(f"{base}/policies") if p["name"] == POLICY_NAME), None
+        policy, others = self._others(
+            "access policy", self.okta.get(f"{base}/policies"), POLICY_NAME
         )
+        if others:
+            return  # not trusted: nothing created, no clients or groups added
         if policy is None:
             if not client_ids:
                 if self.apply:
@@ -659,7 +681,9 @@ class Setup:
         )
         what = f"policy rule {RULE_NAME!r}"
         group_ids = list(self.group_ids.values())
-        rule = next((r for r in self.okta.get(path) if r["name"] == RULE_NAME), None)
+        rule, others = self._others("policy rule", self.okta.get(path), RULE_NAME)
+        if others:
+            return  # not trusted: nothing created, no groups added
         if rule is None:
             if not group_ids:
                 if self.apply:
@@ -703,6 +727,16 @@ class Setup:
         if cfg.scope not in scopes and "*" not in scopes:
             issues.append(f"scope {cfg.scope} is not included")
         token = rule["actions"]["token"]
+        # A token inline hook can rewrite custom claims, `groups` included, after the claim
+        # expression has run: whoever runs the hook could give any user any role.
+        if hook := token.get("inlineHook"):
+            hook_id = hook.get("id") if isinstance(hook, dict) else None
+            issues.append(
+                f"runs token inline hook {hook_id!r}; a hook can rewrite the groups claim, so "
+                "remove it (Security > API > the authorization server > Access Policies > the rule)"
+                if isinstance(hook_id, str)
+                else "runs a token inline hook; a hook can rewrite the groups claim, so remove it"
+            )
         lifetime = token["accessTokenLifetimeMinutes"]
         if lifetime > cfg.access_token_minutes:
             issues.append(
@@ -837,6 +871,8 @@ class Setup:
             self.kid = ours[0].get("kid", self.kid)
         if len(keys) > len(ours):
             issues.append("has public keys other than the configured one; remove them")
+        if settings.get("jwks_uri"):
+            issues.append("has a jwks_uri: Okta could take keys from it; remove it")
         if app["status"] != "ACTIVE":
             issues.append(f"status is {app['status']}")
         for issue in issues:

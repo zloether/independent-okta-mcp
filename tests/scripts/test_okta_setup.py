@@ -823,6 +823,122 @@ def test_rule_with_problems_gets_no_new_groups(config: Path, tamper, message: st
     assert message in capsys.readouterr().out
 
 
+def test_rule_with_a_token_inline_hook_gets_no_new_groups(config: Path, capsys) -> None:
+    # 8.1 sweep: a token inline hook can rewrite custom claims, `groups` included, after the
+    # claim expression ran, so its owner could put any role group in any token.
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    rule = okta.find(*rules_path(okta), name=setup.RULE_NAME)
+    rule["actions"]["token"]["inlineHook"] = {"id": "cal1emaKYZTWRYYRRTSK"}
+    add_group(config)
+    capsys.readouterr()
+    okta.writes.clear()
+
+    assert run(okta, "check", config) == 1
+    assert "runs token inline hook 'cal1emaKYZTWRYYRRTSK'" in capsys.readouterr().out
+    assert run(okta, "apply", config, "--yes") == 1
+    assert not [p for _, p in okta.writes if "/rules" in p]
+
+
+def _other_rule(status: str = "ACTIVE") -> dict[str, Any]:
+    return {
+        "id": "0pr1emaKYZTWRYYRRTSK",
+        "name": "other",
+        "priority": 1,
+        "status": status,
+        "type": "RESOURCE_ACCESS",
+        "conditions": {
+            "grantTypes": {"include": ["authorization_code"]},
+            "people": {"groups": {"include": ["EVERYONE"]}},
+            "scopes": {"include": ["*"]},
+        },
+        "actions": {"token": {"accessTokenLifetimeMinutes": 1440}},
+    }
+
+
+def test_another_active_rule_in_the_policy_is_reported(config: Path, capsys) -> None:
+    # Okta applies the first matching rule by priority: a sibling bypasses every bound the
+    # managed rule sets (lifetimes, refresh, groups).
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    okta.items(*rules_path(okta)).insert(0, _other_rule())
+    capsys.readouterr()
+    assert run(okta, "check", config) == 1
+    out = capsys.readouterr().out
+    assert "policy rule 'other'" in out and "remove it" in out
+
+
+def test_a_sibling_rule_blocks_new_groups(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    okta.items(*rules_path(okta)).insert(0, _other_rule())
+    add_group(config)
+    okta.writes.clear()
+    assert run(okta, "apply", config, "--yes") == 1
+    assert not [p for _, p in okta.writes if "/rules" in p or "/policies" in p]
+
+
+def test_a_second_rule_with_the_managed_name_is_reported(config: Path, capsys) -> None:
+    # Name reuse doesn't hide a sibling: only the first rule with the name is the managed one.
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    rules = okta.items(*rules_path(okta))
+    rules.append({**_other_rule(), "name": setup.RULE_NAME})
+    capsys.readouterr()
+    assert run(okta, "check", config) == 1
+    assert "a second one with this name" in capsys.readouterr().out
+
+
+def test_an_inline_hook_without_an_id_is_still_reported(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    rule = okta.find(*rules_path(okta), name=setup.RULE_NAME)
+    rule["actions"]["token"]["inlineHook"] = {"name": "x\x1b[2J"}
+    capsys.readouterr()
+    assert run(okta, "check", config) == 1
+    out = capsys.readouterr().out
+    assert "runs a token inline hook" in out and "\x1b" not in out
+
+
+def test_an_inactive_other_rule_is_not_reported(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    okta.items(*rules_path(okta)).insert(0, _other_rule("INACTIVE"))
+    capsys.readouterr()
+    assert run(okta, "check", config) == 0
+    assert "'other'" not in capsys.readouterr().out
+
+
+def test_another_active_policy_on_the_server_is_reported(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    policies = rules_path(okta)[:-2]
+    okta.items(*policies).insert(
+        0,
+        {
+            "id": "00p1emaKYZTWRYYRRTSK",
+            "name": "other",
+            "priority": 1,
+            "status": "ACTIVE",
+            "conditions": {"clients": {"include": ["ALL_CLIENTS"]}},
+        },
+    )
+    capsys.readouterr()
+    assert run(okta, "check", config) == 1
+    out = capsys.readouterr().out
+    assert "access policy 'other'" in out and "remove it" in out
+
+
+def test_service_app_with_a_jwks_uri_is_reported(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config) == 0
+    svc = okta.find("api", "v1", "apps", label="okta-mcp service")
+    svc["settings"]["oauthClient"]["jwks_uri"] = "https://keys.example.com/jwks"
+    capsys.readouterr()
+    assert run(okta, "check", config) == 1
+    assert "jwks_uri" in capsys.readouterr().out
+
+
 def test_rule_without_offline_access_is_reported_but_trusted(config: Path, capsys) -> None:
     okta = FakeOkta()
     assert run(okta, "apply", config) == 0

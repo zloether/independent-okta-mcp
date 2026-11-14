@@ -353,3 +353,28 @@ def test_shipped_scrub_has_design_paths() -> None:
         "sharedSecret",
     ):
         assert tuple(path.lower().split(".")) in RULES.paths
+
+
+_PRIVATE_JWK = {
+    "kty": "RSA",
+    "kid": "k1",
+    "n": "PUBLIC-n",
+    "e": "AQAB",
+    **{m: "PRIVATE" for m in ("d", "p", "q", "dp", "dq", "qi")},
+    "oth": [{"r": "PRIVATE", "d": "PRIVATE", "t": "PRIVATE"}],
+}
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"settings": {"oauthClient": {"jwks": {"keys": [_PRIVATE_JWK, _PRIVATE_JWK]}}}},
+        {"keys": [_PRIVATE_JWK]},  # apps get-connection-jwks
+        _PRIVATE_JWK,  # apps get-jwk
+        {"keys": [{"kty": "oct", "kid": "s1", "k": "PRIVATE"}]},
+    ],
+)
+def test_private_jwk_members_are_redacted_in_every_shape(item: dict[str, Any]) -> None:
+    out = json.dumps(render(item, RULES, links=False, cols=None))
+    assert "PRIVATE" not in out
+    assert "PUBLIC-n" in out or '"oct"' in out

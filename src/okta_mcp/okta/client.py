@@ -14,6 +14,7 @@ import logging
 import re
 from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
+from http.cookiejar import Cookie, CookieJar, DefaultCookiePolicy
 from typing import Any
 
 import anyio
@@ -94,15 +95,28 @@ def _log_give_up(reason: GiveUp) -> None:
     )
 
 
+class _NoCookies(DefaultCookiePolicy):
+    """Stores and sends no cookie."""
+
+    def set_ok(self, cookie: Cookie, request: object) -> bool:
+        return False
+
+    def return_ok(self, cookie: Cookie, request: object) -> bool:
+        return False
+
+
 def new_http_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx2.AsyncClient:
     """The one `AsyncClient` for Okta, shared with the token provider. TLS is verified against the
     system trust store, and redirects are never followed: a followed redirect would replay the
-    client assertion or a token off the org."""
+    client assertion or a token off the org. Cookies are refused: the client serves every
+    principal, so a cookie Okta set on one caller's response would ride on everyone's requests
+    and on the token POST. (A bare `CookieJar`: httpx2 copies a `Cookies` into its own jar.)"""
     return httpx2.AsyncClient(
         verify=True,
         follow_redirects=False,
         timeout=httpx2.Timeout(30, connect=10),
         transport=transport,
+        cookies=CookieJar(policy=_NoCookies()),
     )
 
 
