@@ -1,6 +1,6 @@
 # Example policy (design §9.3). Copy it, then replace the group IDs with your org's role-group
 # IDs; keep each group's name in a comment, since the claim carries IDs only. Mount it read-only
-# (MCP_POLICY_FILE); changes take effect on restart. tests/policy/test_example.py loads it against
+# (MCP_POLICY_FILE); changes take effect when the container is recreated (docs/runbook.md). tests/policy/test_example.py loads it against
 # the full registry, so a renamed command fails CI rather than a deploy.
 #
 # Rules in brief:
