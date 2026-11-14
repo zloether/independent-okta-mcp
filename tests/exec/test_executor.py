@@ -1090,15 +1090,45 @@ async def test_log_lines_carry_no_unbounded_caller_data(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("value", ["me.json", "me.", "ME;x", "me;", "a;b@example.com"])
-async def test_me_with_a_suffix_or_matrix_param_is_refused(
+@pytest.mark.parametrize("value", ["me.", "ME..", "ME;x", "me;", "a;b@example.com"])
+async def test_me_with_trailing_dots_or_matrix_param_is_refused(
     ex: Executor, okta: Okta, value: str
 ) -> None:
-    # S1: in case Okta matches `/users/me.json` or `/users/me;x` as `/users/me`.
+    # S1: Okta routes `/users/me;x` as `/users/me`; `me.` is untested, so refused too.
     for command in ("get", "get-groups"):
         out = await run(ex, who(READERS), "users", command, args={"user": value})
         failed(out, Code.INVALID_ARGUMENTS)
     assert okta.requests == []
+
+
+@pytest.mark.anyio
+async def test_login_starting_with_me_dot_resolves(ex: Executor, okta: Okta) -> None:
+    # 8.1: `/users/me.smith@…` is a literal login on Okta, not `/users/me`.
+    login = "me.smith@example.com"
+    okta.alice["profile"]["login"] = login
+
+    def answer(request: httpx2.Request) -> httpx2.Response | None:
+        if unquote(request.url.path) == f"/api/v1/users/{login}":
+            return httpx2.Response(200, json=okta.alice)
+        return None
+
+    okta.override = answer
+    out = await run(ex, who(READERS), "users", "get-groups", args={"user": login})
+    assert out["count"] == 10
+    paths = [unquote(r.url.path) for r in okta.requests]
+    assert paths.count(f"/api/v1/users/{login}") == 1  # the lookup, by login
+    assert "/api/v1/users/me" not in paths
+    assert f"/api/v1/users/{okta.alice['id']}/groups" in paths  # then the resolved ID
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("value", ["me.json", "me.smith@example.com"])
+async def test_users_get_sends_a_suffixed_me_as_a_literal(
+    ex: Executor, okta: Okta, value: str
+) -> None:
+    # 8.1: `users get` sends its value unresolved; the segment must be the whole value.
+    await run(ex, who(READERS), "users", "get", args={"user": value})
+    assert [unquote(r.url.path) for r in okta.requests] == [f"/api/v1/users/{value}"]
 
 
 @pytest.mark.anyio
