@@ -443,6 +443,26 @@ async def test_policy_warnings_are_logged(tmp_path: Path, caplog: pytest.LogCapt
 
 
 @pytest.mark.anyio
+async def test_check_mode_leaves_warnings_and_audit_file_to_the_caller(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`okta-mcp --check` prints the warnings itself and must not create the audit file."""
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(
+        "version: 1\nroles:\n  r:\n    groups: ['00g1readers000000000']\n"
+        "    allow: {groups: ['*']}\n    include_sensitive: ['*']\n"
+    )
+    audit = tmp_path / "audit.jsonl"
+    config = load_config(env(tmp_path, MCP_POLICY_FILE=str(policy), MCP_AUDIT_LOG=str(audit)))
+    async with new_http_client() as http:
+        with caplog.at_level(logging.WARNING, logger="okta_mcp.server"):
+            runtime = build_runtime(config, http, check=True)
+    assert "policy: " not in caplog.text
+    assert any("include_sensitive" in w for w in runtime.warnings)
+    assert not audit.exists()
+
+
+@pytest.mark.anyio
 async def test_invalid_policy_fails_startup(tmp_path: Path) -> None:
     policy = tmp_path / "policy.yaml"
     policy.write_text("version: 1\nroles:\n  r:\n    groups: [mcp-okta-readers]\n")

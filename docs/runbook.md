@@ -127,10 +127,21 @@ docker compose -f compose.example.yaml up -d --wait
 ### 4.2 Policy change
 
 1. Edit `policy.yaml` in version control, and get it reviewed. The policy decides who reads what, so treat a change like an access grant.
-2. Keep a copy of the old file. Install the new one and recreate the container (the commands under §3.1, "Replacing a mounted file"), then check `/readyz`.
-3. If the container exits with status `2`, the policy didn't load, and the reasons are in the logs (`docker compose logs okta-mcp`). Put the old file back the same way. The server never starts with a partly valid policy (fail closed), so a bad file is an outage, not a widening. There is no offline check command yet, so make policy changes when a short outage is acceptable.
+2. Check it before it goes live. From the `docker/` directory, put the new file beside the live one as `policy.new.yaml`, readable by uid 10001, and run `okta-mcp --check` in a one-off container of the same service, so it sees the same variables, secrets and user as the server:
 
-There is no hot reload, and no `tools/list` change notification. Clients pick up the new tool lists when their cached list expires (§11.4). Warnings at startup (for example, a role that grants nothing because its deny covers its allow, or `search_attributes` no allowed command can use) don't stop the server. Read the startup log after every change.
+   ```sh
+   sudo install -o 10001 -g 10001 -m 0400 /path/to/reviewed/policy.yaml policy.new.yaml
+   docker compose -f compose.example.yaml run --rm \
+     -v ./policy.new.yaml:/etc/okta-mcp/policy.new.yaml:ro \
+     -e MCP_POLICY_FILE=/etc/okta-mcp/policy.new.yaml \
+     okta-mcp --check
+   ```
+
+   `--check` loads the configuration, the service key, the registry, the scrub rules and the policy exactly as startup does, then exits without serving, opening a port or calling Okta. It doesn't create the audit file; it checks that the file could be opened. Exit `0` prints `okta-mcp: check passed` and any policy warnings on stdout; exit `2` prints `okta-mcp: check failed` and the same reasons startup would give on stderr. The running server is untouched either way. Fix the file until it passes, and read every warning. `run` publishes no port, so it doesn't clash with the running server.
+3. Keep a copy of the old file. Install the checked one as `policy.yaml` and recreate the container (the commands under §3.1, "Replacing a mounted file"), then check `/readyz`.
+4. If the container still exits with status `2` (for example, a variable changed between the check and the restart), the reasons are in the logs (`docker compose logs okta-mcp`). Put the old file back the same way. The server never starts with a partly valid policy (fail closed), so a bad file is an outage, not a widening.
+
+There is no hot reload, and no `tools/list` change notification. Clients pick up the new tool lists when their cached list expires (§11.4). Warnings (for example, a role that grants nothing because its deny covers its allow, or `search_attributes` no allowed command can use) don't stop the server or fail the check; `--check` prints them, and the server logs them at startup.
 
 A group ID that no role names grants nothing. Adding a user to a new Okta group does nothing until the policy names that group's ID.
 

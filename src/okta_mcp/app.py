@@ -43,10 +43,12 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from okta_mcp.audit import audit_file_problem
+from okta_mcp.auth.devmode import dev_principal
 from okta_mcp.auth.metadata import PRM_PATH, RequireToken, prm_routes
 from okta_mcp.auth.principal import Principal, VerifiedToken
 from okta_mcp.auth.verifier import JWTVerifier
-from okta_mcp.config import MCP_PATH, Config
+from okta_mcp.config import MCP_PATH, Config, ConfigError
 from okta_mcp.logs import log_internal
 from okta_mcp.okta.client import new_http_client
 from okta_mcp.okta.token import keep_fresh
@@ -330,3 +332,25 @@ async def serve_http(config: Config, transport: httpx2.AsyncBaseTransport | None
             log.info("serving %s on %s:%d", MCP_PATH, config.host, config.port)
             await uvicorn.Server(uvicorn_config(config, app)).serve()
             tg.cancel_scope.cancel()
+
+
+def _no_network(request: httpx2.Request) -> httpx2.Response:
+    raise RuntimeError("okta-mcp --check sends no requests")
+
+
+async def check(config: Config, *, stdio: bool) -> tuple[str, ...]:
+    """`okta-mcp --check`: build what serving would, for the transport `stdio` picks, without
+    serving or calling Okta or the issuer, and return the policy's warnings. Raises what
+    `serve_http` or `serve_stdio` would raise before serving, plus `ConfigError` for an audit
+    file that couldn't be opened. Run it in the server's own environment (same variables,
+    mounts and user) to check a policy before the restart that would load it."""
+    if stdio:
+        dev_principal(config)  # first, as in `serve_stdio`
+    async with new_http_client(httpx2.MockTransport(_no_network)) as http:
+        runtime = build_runtime(config, http, stdio=stdio, check=True)
+        if not stdio:
+            build_app(runtime, config, JWTVerifier(http, config))
+    problem = audit_file_problem(config.audit_log)
+    if problem is not None:
+        raise ConfigError([problem])
+    return runtime.warnings

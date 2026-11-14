@@ -6,15 +6,21 @@ import sys
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from mcp import Client, StdioServerParameters
 
 from okta_mcp import __main__ as entry
 from okta_mcp.__main__ import (
+    CANNOT_START,
+    CHECK_FAILED,
+    CHECK_PASSED,
     HTTP_REFUSES_DEV_MODE,
     STARTUP_FAILED,
     STDIO_NEEDS_DEV_MODE,
     main,
 )
+from okta_mcp.audit import audit_file_problem
 from okta_mcp.config import Config
 
 PILOT = Path(__file__).parent / "policy" / "fixtures" / "pilot.yaml"
@@ -64,12 +70,12 @@ def set_env(monkeypatch: pytest.MonkeyPatch, values: dict[str, str]) -> None:
         monkeypatch.setenv(name, value)
 
 
-def failed(capsys: pytest.CaptureFixture[str], code: int) -> list[str]:
+def failed(capsys: pytest.CaptureFixture[str], code: int, header: str = CANNOT_START) -> list[str]:
     assert code == STARTUP_FAILED
     out, err = capsys.readouterr()
     assert out == ""
     first, *rest = err.splitlines()
-    assert first == "okta-mcp: cannot start"
+    assert first == header
     return [line.strip() for line in rest]
 
 
@@ -197,3 +203,184 @@ async def test_stdio_serves_the_dev_principal(tmp_path: Path) -> None:
     assert status.structured_content["user"] == "dev@example.com"
     assert status.structured_content["roles"] == ["directory-reader"]
     assert "okta://guide/groups" in [r.uri for r in resources.resources]
+
+
+# --- --check ------------------------------------------------------------------------------
+
+WARNS = (
+    "version: 1\nroles:\n  r:\n    groups: ['00g1readers000000000']\n"
+    "    allow: {groups: ['*']}\n    include_sensitive: ['*']\n"
+)
+
+
+def write_key(path: Path) -> Path:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return path
+
+
+def http_env(tmp_path: Path, **extra: str) -> dict[str, str]:
+    values = env(tmp_path, dev=False, **extra)
+    write_key(Path(values["OKTA_PRIVATE_KEY_FILE"]))
+    return values
+
+
+@pytest.fixture
+def no_serving(clean_env: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    """`--check` must never reach a transport."""
+
+    async def refuse(config: Config) -> None:
+        raise AssertionError("--check served")
+
+    clean_env.setattr(entry, "serve_http", refuse)
+    clean_env.setattr(entry, "serve_stdio", refuse)
+    return clean_env
+
+
+def passed(capsys: pytest.CaptureFixture[str], code: int) -> list[str]:
+    assert code == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    first, *rest = out.splitlines()
+    assert first == CHECK_PASSED
+    return [line.strip() for line in rest]
+
+
+def test_check_http_passes(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    set_env(no_serving, http_env(tmp_path))
+    assert passed(capsys, main(["--check"])) == []
+
+
+def test_check_prints_policy_warnings(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Warnings go to stdout once, not also to the log; they don't fail the check."""
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(WARNS)
+    set_env(no_serving, http_env(tmp_path, MCP_POLICY_FILE=str(policy)))
+    lines = passed(capsys, main(["--check"]))
+    assert lines
+    assert all(line.startswith("warning: policy: ") for line in lines)
+    assert any("include_sensitive" in line for line in lines)
+
+
+def test_check_bad_key(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The key is read, as serving reads it; this one isn't a PEM key."""
+    set_env(no_serving, env(tmp_path, dev=False))
+    (line,) = failed(capsys, main(["--check"]), CHECK_FAILED)
+    assert line.startswith("OKTA_PRIVATE_KEY_FILE:")
+
+
+def test_check_bad_policy(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    policy = tmp_path / "policy.yaml"
+    policy.write_text("version: 2\nroles: {}\n")
+    set_env(no_serving, http_env(tmp_path, MCP_POLICY_FILE=str(policy)))
+    errors = failed(capsys, main(["--check"]), CHECK_FAILED)
+    assert errors
+    assert all(e.startswith("policy.yaml: ") for e in errors)
+
+
+def test_check_config_errors(
+    no_serving: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert failed(capsys, main(["--check"]), CHECK_FAILED)
+
+
+def test_check_http_refuses_dev_mode(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Checked for the transport that would serve: HTTP refuses dev mode, so does its check."""
+    set_env(no_serving, env(tmp_path))
+    assert failed(capsys, main(["--check"]), CHECK_FAILED) == [HTTP_REFUSES_DEV_MODE]
+
+
+def test_check_stdio_needs_dev_mode(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    set_env(no_serving, http_env(tmp_path))
+    assert failed(capsys, main(["--check", "--stdio"]), CHECK_FAILED) == [STDIO_NEEDS_DEV_MODE]
+
+
+def test_check_stdio_passes(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    set_env(no_serving, env(tmp_path))
+    assert main(["--check", "--stdio"]) == 0
+    out, err = capsys.readouterr()
+    assert "test-ssws-token" not in out + err
+    assert out.splitlines() == [CHECK_PASSED]
+
+
+def test_check_stdio_bad_principal_file(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    set_env(no_serving, env(tmp_path))
+    (tmp_path / "principal.yaml").write_text("uid: someone\nsub: dev@example.com\ngroups: []\n")
+    (line,) = failed(capsys, main(["--check", "--stdio"]), CHECK_FAILED)
+    assert line.startswith("MCP_DEV_PRINCIPAL_FILE:")
+
+
+def test_check_does_not_create_the_audit_file(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit = tmp_path / "audit.jsonl"
+    set_env(no_serving, http_env(tmp_path, MCP_AUDIT_LOG=str(audit)))
+    passed(capsys, main(["--check"]))
+    assert not audit.exists()
+
+
+def test_check_leaves_an_existing_audit_file_alone(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit = tmp_path / "audit.jsonl"
+    audit.write_text("earlier\n")
+    set_env(no_serving, http_env(tmp_path, MCP_AUDIT_LOG=str(audit)))
+    passed(capsys, main(["--check"]))
+    assert audit.read_text() == "earlier\n"
+
+
+def test_check_audit_file_in_a_missing_directory(
+    no_serving: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    audit = tmp_path / "missing" / "audit.jsonl"
+    set_env(no_serving, http_env(tmp_path, MCP_AUDIT_LOG=str(audit)))
+    (line,) = failed(capsys, main(["--check"]), CHECK_FAILED)
+    assert line.startswith("MCP_AUDIT_LOG:")
+    assert not audit.parent.exists()
+
+
+@pytest.mark.parametrize("target", ["stdout", "stderr"])
+def test_audit_file_problem_streams(target: str) -> None:
+    assert audit_file_problem(target) is None
+
+
+def test_audit_file_problem(tmp_path: Path) -> None:
+    assert audit_file_problem(str(tmp_path / "new.jsonl")) is None
+    assert audit_file_problem(str(tmp_path)) is not None  # a directory
+    assert audit_file_problem(str(tmp_path / "no" / "new.jsonl")) is not None
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can write anything")
+def test_audit_file_problem_unwritable(tmp_path: Path) -> None:
+    existing = tmp_path / "audit.jsonl"
+    existing.write_text("")
+    existing.chmod(0o400)
+    assert audit_file_problem(str(existing)) is not None
+    locked = tmp_path / "locked"
+    locked.mkdir(mode=0o500)
+    try:
+        assert audit_file_problem(str(locked / "new.jsonl")) is not None
+    finally:
+        locked.chmod(0o700)

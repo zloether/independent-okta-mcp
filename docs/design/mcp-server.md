@@ -180,7 +180,7 @@ independent-okta-mcp/
 │   ├── implementation-plan.md
 │   └── coverage/                # catalogue.yaml, report.md (§5.6)
 ├── src/okta_mcp/
-│   ├── __main__.py              # entrypoint: config, policy, registry; HTTP (uvicorn) or --stdio
+│   ├── __main__.py              # entrypoint: config, policy, registry; HTTP (uvicorn) or --stdio; --check loads all of it and exits
 │   ├── config.py                # env parsing + validation (fail fast)
 │   ├── server.py                # startup wiring + MCP handlers, per-request principal; stdio serve
 │   ├── logs.py                  # stderr logging, request ID, what dependencies may log

@@ -126,6 +126,20 @@ def open_sink(target: str, *, stdio: bool) -> Sink:
     return os.fdopen(fd, "a", encoding="utf-8", buffering=1)
 
 
+def audit_file_problem(target: str) -> str | None:
+    """What `open_sink` would fail on for `target`, without creating the file
+    (`okta-mcp --check`). `None` for `stdout`, `stderr` or a file this process could append to,
+    or create in an existing directory."""
+    if target in ("stdout", "stderr"):
+        return None
+    path = Path(target)
+    if path.exists():
+        ok = path.is_file() and os.access(path, os.W_OK)
+    else:
+        ok = path.parent.is_dir() and os.access(path.parent, os.W_OK | os.X_OK)
+    return None if ok else "MCP_AUDIT_LOG: cannot open the file for appending"
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 

@@ -62,9 +62,9 @@ def _get(path: str) -> int:
 
 
 @pytest.fixture(scope="module")
-def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, Any]]:
+def project(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """The files the example expects next to it (policy, secrets), readable by uid 10001 as its
-    header says, then `up --wait`: the image's HEALTHCHECK must report healthy."""
+    header says, and the test override."""
     d = tmp_path_factory.mktemp("compose")
     (d / "secrets").mkdir()
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -84,6 +84,13 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, Any]]:
     (d / "override.yaml").write_text(
         f"services:\n  okta-mcp:\n    image: {IMAGE}\n    environment:\n{env}"
     )
+    return d
+
+
+@pytest.fixture(scope="module")
+def stack(project: Path) -> Iterator[dict[str, Any]]:
+    """`up --wait`: the image's HEALTHCHECK must report healthy."""
+    d = project
     up = _compose(d, "up", "--detach", "--no-build", "--wait", "--wait-timeout", "45", check=False)
     try:
         cid = _compose(d, "ps", "--quiet", "okta-mcp").stdout.strip()
@@ -127,3 +134,44 @@ def test_serves_health_through_the_published_port(stack: dict[str, Any]) -> None
     assert _get("/healthz") == 200
     # The placeholder issuer is behind a proxy that doesn't exist: not ready (§11.3).
     assert _get("/readyz") == 503
+
+
+def _check(project: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    """`okta-mcp --check` the way the runbook runs it (§4.2): a one-off container of the same
+    service, so the same variables, mounts and user, with no published port."""
+    return _compose(
+        project, "run", "--rm", "--pull", "never", *extra, "okta-mcp", "--check", check=False
+    )
+
+
+def _candidate(project: Path, text: str) -> tuple[str, ...]:
+    """The runbook's candidate-policy mount: beside the live one, picked by MCP_POLICY_FILE."""
+    path = project / "policy.new.yaml"
+    path.write_text(text)
+    path.chmod(0o444)
+    return (
+        "--volume",
+        f"{path}:/etc/okta-mcp/policy.new.yaml:ro",
+        "--env",
+        "MCP_POLICY_FILE=/etc/okta-mcp/policy.new.yaml",
+    )
+
+
+def test_check_passes_with_the_example(project: Path) -> None:
+    result = _check(project)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[0] == "okta-mcp: check passed"
+
+
+def test_check_fails_a_bad_candidate_policy(project: Path) -> None:
+    result = _check(project, *_candidate(project, "version: 2\nroles: {}\n"))
+    assert result.returncode == 2
+    lines = result.stderr.splitlines()
+    assert "okta-mcp: check failed" in lines
+    assert any(line.strip().startswith("policy.new.yaml: ") for line in lines)
+
+
+def test_check_passes_a_good_candidate_policy(project: Path) -> None:
+    good = (DOCKER / "policy.example.yaml").read_text()
+    result = _check(project, *_candidate(project, good))
+    assert result.returncode == 0, result.stderr
