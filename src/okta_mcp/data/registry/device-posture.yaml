@@ -4,7 +4,8 @@ description: Read device posture checks (read-only).
 # device assurance: org configuration. Custom checks' IDs are `dch` + 17 in the spec's examples,
 # but no example shows a built-in check's ID, so only the character set is fixed; `default`, the
 # reserved segment after /device-posture-checks/, is refused by the reserved-segment check
-# (design §6.4). The spec declares no paging for either list (unverified live, plan 5.6).
+# (design §6.4). The spec declares no paging for either list, but the dev org paged
+# `list-defaults` at 50 (2026-11-13; open in plan 5.6).
 commands:
   list:
     operation: listDevicePostureChecks

@@ -238,38 +238,55 @@ def cmd_service(args: argparse.Namespace) -> None:
         print(f"token: type={token.token_type} nonce_required_at_token={token.nonce_required}")
         nonce = token.nonce
         for path in args.path or ["/api/v1/users?limit=1"]:
-            url = org + path
-            for attempt in (1, 2):
-                if dpop_key:
-                    proof = dpop_proof(dpop_key, "GET", url, nonce, token.access_token)
-                    headers = {"Authorization": f"DPoP {token.access_token}", "DPoP": proof}
-                else:
-                    headers = {"Authorization": f"Bearer {token.access_token}"}
-                response = http.get(url, headers=headers)
-                new_nonce = response.headers.get("DPoP-Nonce")
-                print(
-                    f"GET {path} attempt {attempt}: {response.status_code}"
-                    f" www-authenticate={response.headers.get('WWW-Authenticate')!r}"
-                    f" dpop-nonce-sent={new_nonce is not None}"
-                    f" reused-token-nonce={nonce is not None and nonce == token.nonce}"
-                )
-                if response.status_code == 200 or not dpop_key:
-                    break
-                if new_nonce is None or new_nonce == nonce:
-                    break
-                nonce = new_nonce
-            # Which resource answered, not what it holds: a list's length, an object's `id`,
-            # an error's `errorCode` and summary.
-            json_body = "json" in response.headers.get("content-type", "")
-            body = response.json() if json_body and response.content else None
-            if isinstance(body, list):
-                print(f"  list of {len(body)}")
-            elif isinstance(body, dict) and "errorCode" in body:
-                print(f"  errorCode={body['errorCode']!r} {body.get('errorSummary')!r}")
-            elif isinstance(body, dict) and "error" in body:  # OAuth/DPoP error
-                print(f"  error={body['error']!r} {body.get('error_description')!r}")
-            elif isinstance(body, dict):
-                print(f"  id={body.get('id')!r}")
+            response, nonce = probe(http, org + path, token, dpop_key, nonce)
+            if line := describe(response):
+                print(f"  {line}")
+
+
+def probe(
+    http: httpx2.Client,
+    url: str,
+    token: ServiceToken,
+    dpop_key: ec.EllipticCurvePrivateKey | None,
+    nonce: str | None,
+) -> tuple[httpx2.Response, str | None]:
+    """GET `url`, retrying once with a new DPoP nonce; returns the nonce to use next."""
+    path = url.split("/", 3)[3]
+    for attempt in (1, 2):
+        if dpop_key:
+            proof = dpop_proof(dpop_key, "GET", url, nonce, token.access_token)
+            headers = {"Authorization": f"DPoP {token.access_token}", "DPoP": proof}
+        else:
+            headers = {"Authorization": f"Bearer {token.access_token}"}
+        response = http.get(url, headers=headers)
+        new_nonce = response.headers.get("DPoP-Nonce")
+        print(
+            f"GET /{path} attempt {attempt}: {response.status_code}"
+            f" www-authenticate={response.headers.get('WWW-Authenticate')!r}"
+            f" dpop-nonce-sent={new_nonce is not None}"
+            f" reused-token-nonce={nonce is not None and nonce == token.nonce}"
+        )
+        retry = dpop_key is not None and response.status_code != 200 and new_nonce != nonce
+        nonce = new_nonce or nonce
+        if not retry or new_nonce is None:
+            break
+    return response, nonce
+
+
+def describe(response: httpx2.Response) -> str | None:
+    """Which resource answered, not what it holds: a list's length, an object's `id`, an
+    error's code and summary."""
+    json_body = "json" in response.headers.get("content-type", "")
+    body = response.json() if json_body and response.content else None
+    if isinstance(body, list):
+        return f"list of {len(body)}"
+    if not isinstance(body, dict):
+        return None
+    if response.status_code >= 400 and "errorCode" in body:
+        return f"errorCode={body['errorCode']!r} {body.get('errorSummary')!r}"
+    if response.status_code >= 400 and "error" in body:  # OAuth/DPoP error
+        return f"error={body['error']!r} {body.get('error_description')!r}"
+    return f"id={body.get('id')!r}"
 
 
 def main() -> None:

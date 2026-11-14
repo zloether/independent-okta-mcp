@@ -882,11 +882,13 @@ class Setup:
         else:
             if role != READ_ONLY_ADMIN:
                 needs = [
-                    s for s in self.cfg.service_app.scopes if SCOPE_ROLES[s] != READ_ONLY_ADMIN
+                    f"{s} needs {SCOPE_ROLES[s]}"
+                    for s in self.cfg.service_app.scopes
+                    if SCOPE_ROLES[s] != READ_ONLY_ADMIN
                 ]
                 self.problem(
                     f"role {role}",
-                    f"{', '.join(needs)} needs it; assign it by hand (this tool never assigns it)",
+                    f"{', '.join(needs)}; assign it by hand (this tool never assigns it)",
                 )
                 role = READ_ONLY_ADMIN  # enough for the other scopes until then
             if role not in roles:

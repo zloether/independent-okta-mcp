@@ -75,7 +75,7 @@ The service app needs the highest role in the table among its scopes, so each de
 
 Some endpoints also need an Okta feature that not every org has, whatever the role: `groups get-owners`, `apps list-cwo-connections` and `devices get-os-accounts` return HTTP 401 (`E0000015`) on orgs without it. `org-settings list-support-cases` returned 403 even under Super Administrator in the dev org, which has no Okta support contract (the likely cause; untested on an org with one).
 
-`check` accepts the role the table names for the configured scopes, any narrower standard role in the table, or a custom role. `apply` assigns Read-only Administrator and nothing broader: when the scopes need Org or Super Administrator, `apply` still assigns Read-only Administrator to an app it created, reports the broader role as `manual`, and you assign it in the admin console (Applications > the service app > Admin roles). Until then the commands that need it get 403. A scope not in the table is refused, and so is a role broader than the scopes need.
+`check` needs the role the table names for the configured scopes, or a custom role in its place; narrower standard roles held alongside it are allowed. `apply` assigns Read-only Administrator and nothing broader: when the scopes need Org or Super Administrator, `apply` still assigns Read-only Administrator to an app it created, reports the broader role as `manual`, and you assign it in the admin console (Applications > the service app > Admin roles). Until then the commands that need it get 403. A scope not in the table is refused, and so is a role broader than the scopes need.
 
 ## Before you start
 

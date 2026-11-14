@@ -399,7 +399,7 @@ def test_roles_scope_needs_super_admin_which_apply_never_assigns(config: Path, c
     }
     roles = okta.items("oauth2", "v1", "clients", service["id"], "roles")
     assert [r["type"] for r in roles] == ["READ_ONLY_ADMIN"]
-    assert "[manual] role SUPER_ADMIN: okta.roles.read needs it; assign it by hand" in (
+    assert "[manual] role SUPER_ADMIN: okta.roles.read needs SUPER_ADMIN; assign it by hand" in (
         capsys.readouterr().out
     )
 
@@ -415,7 +415,7 @@ def test_schemas_scope_needs_org_admin_which_apply_never_assigns(config: Path, c
     service = okta.find("api", "v1", "apps", label="okta-mcp service")
     roles = okta.items("oauth2", "v1", "clients", service["id"], "roles")
     assert [r["type"] for r in roles] == ["READ_ONLY_ADMIN"]
-    assert "[manual] role ORG_ADMIN: okta.schemas.read needs it; assign it by hand" in (
+    assert "[manual] role ORG_ADMIN: okta.schemas.read needs ORG_ADMIN; assign it by hand" in (
         capsys.readouterr().out
     )
 
@@ -434,7 +434,10 @@ def test_super_admin_scope_outranks_org_admin_scope(config: Path, capsys) -> Non
     # Until then the Org Admin scope's commands fail too, so the message names it.
     assert run(FakeOkta(), "apply", config) == 1
     out = capsys.readouterr().out
-    assert "role SUPER_ADMIN: okta.schemas.read, okta.orgs.read needs it" in out
+    assert (
+        "role SUPER_ADMIN: okta.schemas.read needs ORG_ADMIN, okta.orgs.read needs SUPER_ADMIN;"
+        in out
+    )
 
 
 def test_narrower_role_than_the_scopes_need_is_reported(config: Path, capsys) -> None:

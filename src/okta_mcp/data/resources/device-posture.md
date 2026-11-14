@@ -13,7 +13,7 @@ All commands are normal, none are sensitive.
   platform, type, variableName). The list is not filtered.
 - `okta_device_posture get` returns one check by `check`, including its `query`.
 - `okta_device_posture list-defaults` returns the checks Okta defines. Their `type` is always
-  `BUILTIN`.
+  `BUILTIN`, and they have no `id`, so `get` can't fetch them.
 
 ## Reading a posture check
 
@@ -31,8 +31,7 @@ All commands are normal, none are sensitive.
 
 - `list` returns only custom checks. Use `list-defaults` for the built-in ones.
 - A check is a definition, not a result. Which devices pass it is not shown here.
-- A custom check's ID usually starts with `dch`. Use the `id` that `list` or `list-defaults`
-  returns.
+- A custom check's ID usually starts with `dch`. Use the `id` that `list` returns.
 
 ## Related domains
 
