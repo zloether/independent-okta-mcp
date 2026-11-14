@@ -147,6 +147,8 @@ def _check(project: Path, *extra: str) -> subprocess.CompletedProcess[str]:
 def _candidate(project: Path, text: str) -> tuple[str, ...]:
     """The runbook's candidate-policy mount: beside the live one, picked by MCP_POLICY_FILE."""
     path = project / "policy.new.yaml"
+    # Replace, don't overwrite: the last test left it 0444, and CI doesn't run as root.
+    path.unlink(missing_ok=True)
     path.write_text(text)
     path.chmod(0o444)
     return (
