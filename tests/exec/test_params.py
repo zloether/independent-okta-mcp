@@ -220,7 +220,7 @@ async def test_every_command_builds_its_template_path(spec: SpecIndex) -> None:
         okta = Okta()
         args = _path_args(cmd)
         await _call(okta, cmd, {**_required_query(cmd), **args})
-        expected = cmd.operation.path
+        expected = cmd.op().path
         for n, v in args.items():
             expected = expected.replace(
                 f"{{{cmd.entry.args[n].param}}}", path_segment(n, v, frozenset())

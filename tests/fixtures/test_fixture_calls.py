@@ -89,7 +89,7 @@ def _single_page(body: Any) -> Any:
 
 
 def _template(command: Command) -> re.Pattern[str]:
-    parts = re.split(r"\{[^}]+\}", command.operation.path)
+    parts = re.split(r"\{[^}]+\}", command.op().path)
     return re.compile("[^/]+".join(re.escape(p) for p in parts) + "$")
 
 

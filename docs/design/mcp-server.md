@@ -14,6 +14,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 
 | r4 position | Now | Reason |
 |---|---|---|
+| Composite handlers after v1 (§5.6) | The handler mechanism and `diagnostics login-failures` land before v1.0 (plan 9.1); new `diagnostics` domain | User decision, 2026-11-14: helpdesk needs login diagnosis without read access to logs, policies and users |
 | A path value only had to stay inside its segment (§6.4) | A value equal to a literal segment the spec has in the parameter's place is also **rejected** (§6.4 item 5) | `rules` as a group ID is `/api/v1/groups/rules` (`listGroupRules`); `export` as an app ID is the apps CSV export. 74 of the spec's 319 GET operations have such a sibling, and 319 of 328 path parameters have no spec `pattern` |
 | "Restrict who can create or rename `mcp-okta-*` groups" (§8.2) | The control that matters is **membership** of the role groups (§8.2, §12.1, R7) | Policy matches group IDs, so a new or renamed group grants nothing; adding yourself to an existing role group grants the role |
 | Client apps' sign-in strength not mentioned | Client apps need an authentication policy with MFA (§8.2, Appendix C) | A password-only sign-in would be the only factor in front of an org-wide read |
@@ -159,7 +160,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 
 ### Design principles
 
-1. **Data, not code, for commands.** Every v1 command is a registry entry (operation, params, pagination, classification). Code exists only for post-v1 composite handlers.
+1. **Data, not code, for commands.** Every v1 command is a registry entry (operation, params, pagination, classification). Code exists only for composite handlers (§5.6), whose registry entry still names every operation they call.
 2. **The spec is the contract.** Every registry entry names an Okta `operationId`; path, method, parameters and required scopes come from the pinned spec, and CI fails if the entry and spec disagree.
 3. **Stateless.** Principal from the bearer token; tool lists derived from it; cursors signed and self-contained.
 4. **Fail closed.** No groups claim, unknown roles, unclassified commands, scope-less operations, invalid policy → nothing exposed.
@@ -192,7 +193,8 @@ independent-okta-mcp/
 │   ├── policy/{model,engine,loader,expression}.py
 │   ├── registry/{model,loader,spec}.py   # load YAML, resolve against spec, build JSON Schemas
 │   ├── okta/{client,token,dpop,paginate,ratelimit}.py
-│   ├── exec/{executor,params,envelope,cursor,output,resolve}.py
+│   ├── exec/{executor,params,envelope,cursor,output,resolve,composite}.py
+│   ├── handlers/                # composite command handlers (§5.6)
 │   ├── tools.py                 # per-principal tool definitions
 │   ├── resources.py
 │   ├── audit.py
@@ -313,7 +315,13 @@ The okta-skills catalogue (minus ai-agents) is the v1 checklist. Commands fall i
 |---|---|---|---|
 | **Simple** — one GET operation, optional pagination, per-item passthrough | Registry entry only | `users get`, `users get-factors <user>`, `users get-enrollments <user>`, `groups list`, `apps get-users`, `network-zones list` | v1 (bulk of the catalogue) |
 | **Resolved** — simple, but a user argument may be a login that must become an ID first | Registry entry + `resolve: user_id` | `users get-groups <login>` | v1 |
-| **Composite** — several operations, fan-out, aggregation, or reshaping | Python handler in `src/okta_mcp/handlers/` | `logs login-failures`, `logs timeline`, `logs list --member-of/--count-by`, `logs diagnose`, batch `get-factors`/`get-enrollments` over `ids[]`, `policies get-rules` over many policies | After v1, on demand |
+| **Composite** — several operations, fan-out, aggregation, or reshaping | Registry entry with `handler:` and `uses:` + Python handler in `src/okta_mcp/handlers/` | `diagnostics login-failures` (plan 9.1); later `logs timeline`, `logs list --member-of/--count-by`, batch `get-factors`/`get-enrollments` over `ids[]`, `policies get-rules` over many policies | On demand; the first ships before v1.0 (plan 9.1) |
+
+**Composite commands.** A registry entry names a `handler` instead of an `operation`, and lists in `uses` every operation the handler may call: `required` (their scopes are the command's scope sets, so the §9.4 capability gate applies as for any command) and `optional` (a handler checks `available` first and reports a check it couldn't make under `skipped`, so an org that doesn't grant, say, `okta.devicePostureChecks.read` still gets the rest). Each must be a GET in the pinned spec with oauth2 scopes; the loader checks this as it does `operation` (check 1, check 3). Classification is the entry's `data_classes`, covering everything the handler passes on; a handler command is excluded from check 5 (shared operations). Args map to no spec parameter: each declares its `type`, `pattern`, `allowed_values`, `required`, `max_length` and a `description` for `okta_help`, and takes no `path_param`, `query`, `resolve` or `arg_rule`. No `view`, paging, `select`, `links`, `limit` or `cursor`: the handler returns one already-reduced object, which the executor scrubs (`scrub.yaml`) and holds to `MCP_MAX_BYTES` like a single resource, in the usual `untrusted` envelope.
+
+The handler reaches Okta only through `exec/composite.Context`, bound to its command: `user` (the resolver's lookup and rules, returning the whole user), `get` and `items` (the same URL builder with the §6.4 path rule and reserved segments, the same GET-only client and the same paginator; `after` is the paginator's). A call to an operation not in `uses`, or with a query param the operation doesn't declare, is a bug (`RuntimeError`, `internal_error`). The policy check runs before the handler, exactly as for a simple command; a handler adds no authorization of its own. Concurrency is the handler's (`anyio` task groups), bounded by the principal's in-flight share and `MCP_OKTA_MAX_INFLIGHT` in the client, and the call's deadline is `MCP_CALL_TIMEOUT`. The executor refuses to start if a handler command's handler isn't in `okta_mcp.handlers.HANDLERS`.
+
+**`diagnostics` domain.** Cross-domain diagnoses for roles that shouldn't read the underlying domains. A role granted `diagnostics login-failures` alone gets attributes derived from the user's failed sign-ins (cause, counts, IPs with geo, apps, device signals, risk, policy and rule IDs and names), never the events, policies or other users. It is sensitive (`audit-log`, `risk`, `mfa-state`), so a role must name it. Plan 9.1 has its slices: failure triage first, then policy evaluation per policy type, then device assurance and posture checks.
 
 **Resolver rules.** Only `user_id` exists (`exec/resolve.py`). A value matching `^00u[A-Za-z0-9]{17}$` is used as-is; anything else is looked up with `getUser` (Okta accepts an exact login on that endpoint, but also a login shortname), and the user returned must have exactly that `profile.login`, compared case-insensitively as Okta does, with an ID of that shape; a 404 or any other user is `not_found`, whose message never holds the value. When the resolver looked a login up, Okta's own 404 on the request that follows gets the same `not_found` message as a lookup miss (one message per command, naming the other args only for commands that have another path param), so `apps get-user` with a login can't tell a caller whether the login exists elsewhere in the org (plan 8.1). An ID given as is, or a cursor resume, keeps Okta's 404 text. The request count (one for an unknown login, two for a known one) still differs. The value goes into the lookup's path through the §6.4 rule, which refuses `me` (and `me.`, `me;…`) with `invalid_arguments` before any request: `/api/v1/users/me` is the token's own user, and `me` is in `getUser`'s reserved set (§6.4 item 5). A `resolve` arg takes no `pattern` or `allowed_values` (load error), because the resolved ID is validated against the arg's schema again when the request is built. Lookups are cached per call. Group and app commands take IDs; Okta's `q=` name search is a prefix match and would make `groups get-members Sales` ambiguous. The resolver runs **after** the policy check (so it cannot serve as an existence oracle for commands the caller may not use), and `getUser`'s scopes are added to each of a resolved command's derived scope sets.
 
@@ -611,6 +619,7 @@ roles:
       users:  ["*", get-factors, get-enrollments]
       groups: ["*"]
       apps:   [list, get, get-users, get-groups]
+      diagnostics: [login-failures]
     search_attributes: [profile.login, profile.email, profile.firstName, profile.lastName, status, profile.name]
 
   directory-reader:
@@ -813,6 +822,7 @@ Recorded in `AGENTS.md`. Code in these paths must pass `/security-review` before
 - `src/okta_mcp/policy/`, `registry/*.yaml` classification fields, the data-class table, `scrub.yaml` (who may call what; what leaves the server)
 - `src/okta_mcp/exec/params.py` and URL building, with the reserved path literals in `src/okta_mcp/registry/spec.py` (path-parameter injection, sibling-endpoint aliasing)
 - `src/okta_mcp/exec/resolve.py` (runs Okta lookups on user input)
+- `src/okta_mcp/exec/composite.py`, `src/okta_mcp/handlers/`, `registry/*.yaml` `uses` lists (composite commands: which operations a handler reaches, and what of their data leaves the server)
 - `src/okta_mcp/exec/cursor.py`, `src/okta_mcp/okta/paginate.py` (token-attached URL following)
 - `src/okta_mcp/okta/token.py`, `src/okta_mcp/okta/dpop.py` (service credential handling)
 - `Dockerfile`, `docker/compose.example.yaml` (runtime privileges)

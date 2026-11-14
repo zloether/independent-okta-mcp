@@ -20,7 +20,7 @@ G1 = "00g1secanalyst000000"
 
 
 def _commands(registry: Registry, domain: str) -> dict[str, str]:
-    return {n: c.operation.operation_id for n, c in registry.domains[domain].commands.items()}
+    return {n: c.op().operation_id for n, c in registry.domains[domain].commands.items()}
 
 
 def test_commands(registry: Registry) -> None:
@@ -78,7 +78,7 @@ def test_logs_list_args(registry: Registry) -> None:
     assert set(cmd.entry.args) == {"since", "until", "filter", "sort_order"}
     # Keyword search can match fields results redact; `after` is the paging token.
     exposed = {a.param for a in cmd.entry.args.values()}
-    assert {"q", "after", "limit"} <= set(cmd.operation.params)
+    assert {"q", "after", "limit"} <= set(cmd.op().params)
     assert not exposed & {"q", "after", "limit"}
     rule = cmd.entry.args["filter"].arg_rule
     assert rule is not None and rule.attribute_expression

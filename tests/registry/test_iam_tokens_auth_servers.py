@@ -21,7 +21,7 @@ DOMAINS = ("iam", "oauth-client-roles", "api-tokens", "authorization-servers")
 
 
 def _commands(registry: Registry, domain: str) -> dict[str, str]:
-    return {n: c.operation.operation_id for n, c in registry.domains[domain].commands.items()}
+    return {n: c.op().operation_id for n, c in registry.domains[domain].commands.items()}
 
 
 def test_commands(registry: Registry) -> None:
@@ -115,7 +115,7 @@ def test_normal_commands_return_no_scrubbed_field(registry: Registry) -> None:
         for cmd in registry.domains[domain].commands.values():
             if cmd.sensitivity != "normal":
                 continue
-            response = cmd.operation.response
+            response = cmd.op().response
             fields = set(response.fields) | {f for v in response.item_fields.values() for f in v}
             hits = sorted(f for f in fields if scrubbed(f, always) or string_hit(f, fields))
             assert not hits, (cmd.domain, cmd.name, hits)
@@ -157,7 +157,7 @@ def test_iam_lists_are_wrapped(registry: Registry) -> None:
 
 def test_resource_server_keys_are_read_wrapped(registry: Registry) -> None:
     cmd = registry.domains["authorization-servers"].commands["list-resource-server-keys"]
-    assert cmd.operation.response.kind == "list"
+    assert cmd.op().response.kind == "list"
     override = cmd.entry.response_override
     assert override is not None and override.kind == "wrapped"
     assert cmd.entry.items_key == "keys" and cmd.is_list
@@ -165,7 +165,7 @@ def test_resource_server_keys_are_read_wrapped(registry: Registry) -> None:
 
 def test_apps_list_jwks_waits_for_a_recording(registry: Registry) -> None:
     # Spec, spec example and okta-skills disagree on its shape (5.4 rows in docs/decisions-log.md).
-    ops = {c.operation.operation_id for c in registry.domains["apps"].commands.values()}
+    ops = {c.op().operation_id for c in registry.domains["apps"].commands.values()}
     assert "listJwk" not in ops
 
 
@@ -196,7 +196,7 @@ def test_api_token_id_shape(registry: Registry) -> None:
     cmd = registry.domains["api-tokens"].commands["get"]
     validate_args(cmd, {"token": "00T1emaKYZTWRYYRRTSK"})
     # `current` is the spec's literal for the calling token.
-    assert "current" in cmd.operation.reserved["apiTokenId"]
+    assert "current" in cmd.op().reserved["apiTokenId"]
     for bad in ("current", "CURRENT", "00u1emaKYZTWRYYRRTSK", "00T1emaKYZTWRYYRRTS", ""):
         with pytest.raises(InvalidArguments, match="arg 'token'"):
             validate_args(cmd, {"token": bad})
@@ -243,7 +243,7 @@ def test_filters_and_expands(registry: Registry) -> None:
         assert q.arg_rule is not None and q.arg_rule.reviewed, name
     # The scope filter's attributes aren't documented, so only `q` is offered.
     scopes = servers["list-scopes"]
-    assert "filter" in scopes.operation.params
+    assert "filter" in scopes.op().params
     assert not any(a.param == "filter" for a in scopes.entry.args.values())
     for name in AS_TOKENS:
         assert servers[name].entry.args["expand"].allowed_values == ("scope",)
@@ -259,7 +259,7 @@ def test_filters_and_expands(registry: Registry) -> None:
     _, params = build_request(associated, {"server": AUS, "trusted": True}, ORG)
     assert params == {"trusted": "true", "limit": "200"}
     # Okta 400s without `trusted` (5.4 dev-org smoke); the spec doesn't flag it.
-    assert not associated.operation.params["trusted"].required
+    assert not associated.op().params["trusted"].required
     with pytest.raises(InvalidArguments, match="trusted"):
         validate_args(associated, {"server": AUS, "q": "okta"})
 

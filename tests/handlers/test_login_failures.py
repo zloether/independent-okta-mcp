@@ -758,3 +758,22 @@ def test_the_registry_pattern_is_the_handler_s(registry: Registry) -> None:
     command = registry.domains["diagnostics"].commands["login-failures"]
     for arg in ("since", "until"):
         assert command.entry.args[arg].pattern == lf.TIMESTAMP
+
+
+def test_a_helpdesk_principal_sees_only_the_diagnosis(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    from okta_mcp.resources import Resources
+    from okta_mcp.tools import Tools
+
+    ex = make(registry, spec, org)
+    engine = ex._engine  # pyright: ignore[reportPrivateUsage]
+    resources = Resources(registry, engine)
+    tools = Tools(
+        registry=registry, engine=engine, executor=ex, max_items=1000, guides=resources.guides
+    )
+    listed = {t.name: t for t in tools.list_tools(helpdesk())}
+    assert set(listed) == {"okta_diagnostics", "okta_help", "okta_status"}
+    description = listed["okta_diagnostics"].description or ""
+    assert "login-failures <user> [options]" in description
+    assert "okta://guide/diagnostics" in description

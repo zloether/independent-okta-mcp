@@ -62,7 +62,7 @@ def test_valid_registry_loads(spec: SpecIndex) -> None:
     assert users.description == "Read users."
     get, groups = users.commands["get"], users.commands["get-groups"]
     assert (get.is_list, groups.is_list) == (False, True)
-    assert get.operation.path == "/api/v1/users/{id}"
+    assert get.op().path == "/api/v1/users/{id}"
     assert get.sensitivity == "normal"
     assert groups.scope_sets == (frozenset({"okta.users.read"}),)
 

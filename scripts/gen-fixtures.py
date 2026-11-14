@@ -122,7 +122,7 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     (`listOAuth2ResourceServerJsonWebKeys`) or for an object schema whose example is the bare
     list (`listOktaSupportCases`)."""
     synth = Synth(spec, f"{command.domain}.{command.name}")
-    op = cast(dict[str, Any], spec["paths"][command.operation.path]["get"])
+    op = cast(dict[str, Any], spec["paths"][command.op().path]["get"])
     ok = synth.deref(op.get("responses", {}).get("200", {}))
     content = cast(dict[str, Any], ok.get("content", {}).get("application/json", {}))
     # An empty list or object exercises nothing; such an example falls back to the schema.
@@ -136,14 +136,14 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
         value = None if value is _OMIT else value
     # Under an array schema, only a value that looks like one item is wrapped: a wrapper or
     # error object stays exactly as it is, unfilled, so the fixture test fails on it.
-    spec_list = command.operation.response.kind == "list"
+    spec_list = command.op().response.kind == "list"
     if spec_list and not isinstance(value, list) and _item_like(value, command):
         value = [value]
     # And the reverse: under an object schema, a one-item list of an object is that object
     # (`getOAuth2Claim`'s example is the list example). Longer lists stay, and fail the test.
     one = cast(list[Any], value) if isinstance(value, list) else []
     if (
-        command.operation.response.kind == "object"
+        command.op().response.kind == "object"
         and command.entry.response_override is None
         and len(one) == 1
         and _item_like(one[0], command)
@@ -157,7 +157,7 @@ def body(spec: Mapping[str, Any], command: Command) -> Any:
     # A wrapped list: by override, or by a wrapper schema whose example is the bare list
     # (`listOktaSupportCases`; the schema wins).
     wrapped = override is not None and override.kind == "wrapped"
-    by_schema = override is None and command.operation.response.kind == "object"
+    by_schema = override is None and command.op().response.kind == "object"
     if isinstance(value, list) and command.entry.items_key is not None and (wrapped or by_schema):
         value = {command.entry.items_key: value}
     return Neutralizer()(value)
@@ -167,7 +167,7 @@ def _item_like(value: Any, command: Command) -> bool:
     if not isinstance(value, dict):
         return False
     # `_links` and `_embedded` sit on wrappers too, so they prove nothing.
-    tops = {f.split(".")[0] for f in command.operation.response.fields} - {"_links", "_embedded"}
+    tops = {f.split(".")[0] for f in command.op().response.fields} - {"_links", "_embedded"}
     return bool(set(cast(dict[str, Any], value)) & tops)
 
 
@@ -214,7 +214,7 @@ def _blank(cell: Any) -> bool:
 def fixture(spec: Mapping[str, Any], command: Command) -> dict[str, Any]:
     return {
         "source": "generated",
-        "operation": command.operation.operation_id,
+        "operation": command.op().operation_id,
         "body": body(spec, command),
     }
 

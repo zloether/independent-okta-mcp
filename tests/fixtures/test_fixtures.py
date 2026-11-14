@@ -63,7 +63,7 @@ def _blank(cell: Any) -> bool:
 
 def _item_fields(command: Command) -> frozenset[str]:
     """Declared fields of one list item: the wrapped list's for an `items_key` command."""
-    response = command.operation.response
+    response = command.op().response
     override = command.entry.response_override
     if command.entry.items_key is not None and not (override and override.kind == "wrapped"):
         return response.item_fields.get(command.entry.items_key, frozenset())
@@ -75,7 +75,7 @@ def test_fixture_fits_command(command: Command) -> None:
     doc = _load(command)
     assert set(doc) == {"source", "operation", "body"}
     assert doc["source"] in ("generated", "recorded")
-    assert doc["operation"] == command.operation.operation_id
+    assert doc["operation"] == command.op().operation_id
     body = doc["body"]
     entry = command.entry
     if not command.is_list:

@@ -30,7 +30,7 @@ Other commands: `uv sync` (install), `uv run okta-mcp` (serve HTTP), `--stdio` (
 ## Conventions
 
 - **Read-only invariant.** The server never writes to Okta: the registry loader rejects non-GET operations and the Okta client exposes only `get`. Add no code path in `src/` that sends any other method. Only `scripts/okta-setup.py`, run separately by an Okta admin, creates objects; it never deletes or loosens anything.
-- **Registry first.** A command is a YAML entry in `src/okta_mcp/data/registry/` naming an `operationId` from the pinned spec, not code. Every entry is classified (`data_classes`); sensitivity is derived, never declared. Code is only for post-v1 composite handlers.
+- **Registry first.** A command is a YAML entry in `src/okta_mcp/data/registry/` naming an `operationId` from the pinned spec, not code. Every entry is classified (`data_classes`); sensitivity is derived, never declared. Code is only for composite handlers (`handler:` + `uses:`, design §5.6), which reach Okta only through `exec/composite.Context`.
 - **Fail closed.** Unknown roles, unclassified commands, scope-less operations or an invalid policy expose nothing. No fallbacks that widen access.
 - **Tests with every change.** HTTP is mocked. Fixtures use only `example.okta.com` (the org) and `*.example.com` (other hosts, emails).
 - **Never log** tokens, keys or Okta result bodies.
@@ -54,6 +54,7 @@ Hardest to undo (design §12.2); changes need `/security-review`, and their plan
 - `src/okta_mcp/policy/`, registry classification fields, the data-class → sensitivity table, `data/scrub.yaml`: who may call what, what leaves the server
 - `exec/params.py` and URL building, reserved path literals in `registry/spec.py`: path injection, sibling-endpoint aliasing
 - `exec/resolve.py`: Okta lookups on user input
+- `exec/composite.py`, `handlers/`, registry `uses` lists: what a composite command reaches and returns
 - `exec/cursor.py`, `okta/paginate.py`: token-attached URL following
 - `okta/token.py`, `okta/dpop.py`: service credentials
 - `Dockerfile`, `docker/compose.example.yaml`: runtime privileges

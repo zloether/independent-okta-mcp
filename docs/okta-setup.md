@@ -41,7 +41,7 @@ Okta answers a service-app request only when the token's scope **and** the app's
 
 | Scope | Narrowest standard role | Commands that need it |
 |---|---|---|
-| `okta.users.read` | `READ_ONLY_ADMIN` | Resolving a login to a user ID (any command with a `user` argument); `org-settings list-yubikey-tokens`, `get-yubikey-token` (role unverified for these) |
+| `okta.users.read` | `READ_ONLY_ADMIN` | Resolving a login to a user ID (any command with a `user` argument); `org-settings list-yubikey-tokens`, `get-yubikey-token` (role unverified for these); `diagnostics login-failures` |
 | `okta.groups.read` | `READ_ONLY_ADMIN` | `groups` |
 | `okta.networkZones.read` | `READ_ONLY_ADMIN` | `network-zones` |
 | `okta.apps.read` | `READ_ONLY_ADMIN` | `apps`, except the grant and interclient commands |
@@ -49,7 +49,7 @@ Okta answers a service-app request only when the token's scope **and** the app's
 | `okta.policies.read` | `READ_ONLY_ADMIN` | `policies` |
 | `okta.authenticators.read` | `READ_ONLY_ADMIN` | `authenticators` |
 | `okta.behaviors.read` | `READ_ONLY_ADMIN` | `behaviors` |
-| `okta.logs.read` | `READ_ONLY_ADMIN` | `logs` |
+| `okta.logs.read` | `READ_ONLY_ADMIN` | `logs`; `diagnostics login-failures` |
 | `okta.threatInsights.read` | `READ_ONLY_ADMIN` | `security get-threat-insight-config` |
 | `okta.apiTokens.read` | `READ_ONLY_ADMIN` | `api-tokens` |
 | `okta.authorizationServers.read` | `READ_ONLY_ADMIN` | `authorization-servers` |
@@ -69,6 +69,8 @@ Okta answers a service-app request only when the token's scope **and** the app's
 | `okta.appGrants.read` | `SUPER_ADMIN` | `apps list-grants`, `get-grant` |
 | `okta.securityEventsProviders.read` | `SUPER_ADMIN` | `security list-event-providers`, `get-event-provider` |
 | `okta.roles.read` | `SUPER_ADMIN` | `groups list-roles`, `get-role`, `list-role-app-targets`, `list-role-group-targets`; `iam`; `oauth-client-roles` |
+
+`diagnostics` commands read several domains. They need only the scopes in the table rows that name them; the other scopes they can use are optional. Without one, the command still runs and lists the check it skipped (and the scope it would need) in its result. `diagnostics login-failures` also uses `okta.apps.read` (whether the user is assigned to the app that refused them), so grant it unless you want that check off.
 
 The table was found in a dev org (2026-11-13) by running each command under Read-only Administrator, then Org Administrator, then Super Administrator. A role is the one every command under the scope needs; where only some of a scope's commands need it, the last column says which.
 
