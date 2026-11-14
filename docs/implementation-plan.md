@@ -409,7 +409,7 @@ Design: §6.5, §13 · Depends: 2.4, 4.5
 - [x] Per-principal Okta-request limiter enforced in the HTTP path; `rate_limited` errors
 - [x] Per-principal share of the in-flight slots (e.g. at most half of `MCP_OKTA_MAX_INFLIGHT`): ten slow System Log calls from one user fit inside `MCP_REQUESTS_PER_MINUTE` and hold every slot (2026-11-10 review)
 - [x] Back off after a failed service-token request (a few seconds, served from the stored error): today every tool call during an outage or a bad key sends its own token POST, and those aren't charged to the per-principal limiter
-- [ ] Log Okta's `errorCode` on an upstream 401/403 (a fixed Okta string, not result data), so an operator can tell a missing admin role (`E0000006`) from a missing feature (`E0000015`); today every 403 gets one fixed message and no code (2026-11-13 V6 sweep)
+- [x] Log Okta's `errorCode` on an upstream 401/403 (a fixed Okta string, not result data), so an operator can tell a missing admin role (`E0000006`) from a missing feature (`E0000015`); today every 403 gets one fixed message and no code (2026-11-13 V6 sweep)
 - [ ] V16: cap the service app's rate-limit share in the dev org and confirm 429s arrive at the cap; record the value for the runbook (needs the dev org)
 - [x] Structured operational logs with `request_id`; 429/retry/limiter/truncation/JWKS events
 - [x] Tests: integration test trips the limiter; log events emitted

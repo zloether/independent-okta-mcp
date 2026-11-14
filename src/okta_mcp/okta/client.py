@@ -11,6 +11,7 @@ caller's (`anyio.fail_after`); cancelling one aborts the request in flight and f
 """
 
 import logging
+import re
 from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import Any
@@ -34,6 +35,7 @@ log = logging.getLogger(__name__)
 
 _SUMMARY_MAX = 500
 _FEATURE_OFF = "E0000015"
+_ERROR_CODE = re.compile(r"E[0-9]{7}")
 
 
 class OriginError(Exception):
@@ -57,16 +59,20 @@ def json_body(response: httpx2.Response) -> Any:
         return None
 
 
+def _error_code(response: httpx2.Response) -> str | None:
+    """Okta's `errorCode` (`E` and seven ASCII digits), or None. A fixed Okta string, so it may
+    be logged; anything else in that field is Okta data and isn't returned."""
+    match json_body(response):
+        case {"errorCode": str(code)} if _ERROR_CODE.fullmatch(code):
+            return code
+        case _:
+            return None
+
+
 def _feature_off(response: httpx2.Response) -> bool:
     """Okta's "feature not enabled on the org" error (e.g. group owners), which says nothing
     about the token. A token challenge alongside it means the token was refused too."""
-    if "WWW-Authenticate" in response.headers:
-        return False
-    match json_body(response):
-        case {"errorCode": str(code)}:
-            return code == _FEATURE_OFF
-        case _:
-            return False
+    return "WWW-Authenticate" not in response.headers and _error_code(response) == _FEATURE_OFF
 
 
 def _log_retry(wait: float) -> None:
@@ -261,8 +267,17 @@ class OktaClient:
 
     def _error(self, response: httpx2.Response) -> UpstreamError:
         status = response.status_code
+        if status in (401, 403):
+            # The code tells a too-narrow admin role (E0000006) from a missing feature
+            # (E0000015) for the operator; the caller's message names only the latter.
+            code = _error_code(response)
+            log.warning(
+                "Okta refused the service app's request: HTTP %d %s",
+                status,
+                code or "(no errorCode)",
+                extra=event("okta_refused", status=status, error_code=code),
+            )
         if status in (401, 403) and _feature_off(response):
-            log.warning("Okta refused the service app's request: HTTP %d %s", status, _FEATURE_OFF)
             return UpstreamError(
                 status,
                 f"Okta refused the request (HTTP {status}, {_FEATURE_OFF}): the org may not have "
@@ -270,7 +285,6 @@ class OktaClient:
                 "it; contact the MCP administrator",
             )
         if status in (401, 403):
-            log.warning("Okta refused the service app's request: HTTP %d", status)
             return UpstreamError(
                 status, f"Okta refused the request (HTTP {status}); contact the MCP administrator"
             )
