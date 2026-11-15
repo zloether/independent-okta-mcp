@@ -57,7 +57,8 @@ users, use `get-users` instead.
   `search_attributes`. `co` works only on profile.displayName, profile.serialNumber,
   profile.imei, profile.meid, profile.udid and profile.sid. See `okta://reference/filters`.
 - An empty list means nothing matched the `search`.
-- `list` takes no `expand`, and `fields` is not available.
+- `list` takes no `expand`, and `fields` is not available. For a device's users, use
+  `get-users`.
 - To list a user's devices, use `okta_users get-devices`, not `list` with a search.
 - IDs are 20 characters. A device ID starts with `guo`, an OS account ID with `dao`.
 - Okta can map devices with a non-unique `profile.udid` to one record with a shared `id`.

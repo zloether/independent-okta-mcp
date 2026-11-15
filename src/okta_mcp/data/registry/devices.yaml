@@ -12,7 +12,7 @@ description: Read devices, their users and OS accounts (read-only).
 commands:
   # `search` names device properties (`profile.*`, `id`, `status`, `lastUpdated`): the engine
   # checks the attributes named (design §9.2). No `expand`: `user`/`userSummary` embed what
-  # `get-users` returns, which a policy may refuse; `capabilities` has no declared shape.
+  # `get-users` returns, which a policy may refuse; `capabilities` has no declared shape in `DeviceList._embedded`.
   # `fields` is not exposed (`select` does that, after scrubbing).
   list:
     operation: listDevices
@@ -41,8 +41,8 @@ commands:
 
   # `expand` can embed the OS account's linked enrollments (Platform SSO, Desktop MFA) and their
   # offline factors (types, security-key serial numbers): MFA state, so passing it at all raises
-  # the call to sensitive. Not `users`: it may embed what `get-users` returns, which a policy may
-  # refuse.
+  # the call to sensitive. Not `users`: the spec doesn't declare what it embeds, and it may be what
+  # `get-users` returns, which a policy may refuse.
   get-os-accounts:
     operation: listDeviceOSAccounts
     summary: OS accounts on a device
