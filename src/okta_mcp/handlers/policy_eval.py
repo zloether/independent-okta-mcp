@@ -17,160 +17,53 @@ expressions aren't evaluated; device assurance is `device_eval`'s (slice 3).
 import ipaddress
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
+from okta_mcp.handlers import device_eval
+from okta_mcp.handlers.eval_model import (
+    Denial,
+    Facts,
+    Missing,
+    Row,
+    any3,
+    as_dict,
+    as_list,
+    at,
+    clip,
+    device_os,
+    either,
+    policy_os,
+    row,
+    status,
+    str_ids,
+    str_of,
+    summary,
+    targets,
+    time_of,
+)
 from okta_mcp.handlers.geo import COUNTRIES, US_STATES
 
-Row = dict[str, Any]
+__all__ = [
+    "Denial",
+    "Facts",
+    "Missing",
+    "Row",
+    "any3",
+    "as_dict",
+    "as_list",
+    "at",
+    "clip",
+    "either",
+    "row",
+    "status",
+    "str_ids",
+    "summary",
+    "targets",
+    "time_of",
+]
 CANDIDATES_SHOWN = 5
-_TEXT_MAX = 200
-_LIST_MAX = 20
-
-
-@dataclass(frozen=True)
-class Missing:
-    """A lookup the handler couldn't make; `reason` is safe to return."""
-
-    reason: str
-
-
-@dataclass
-class Facts:
-    """What the evaluation reads, fetched once per call. Each lookup is its value or `Missing`."""
-
-    user: Mapping[str, Any]
-    zones: Mapping[str, Mapping[str, Any]] | Missing
-    groups_now: frozenset[str] | Missing
-    groups_complete: bool
-    """False when the user's group list was cut: a group not found is then undecided."""
-    membership_events: Sequence[Mapping[str, Any]] | Missing
-    """`group.user_membership.*` events on the user since the oldest denial, newest first."""
-    authenticators: Mapping[str, Mapping[str, Any]] | Missing
-    """By authenticator key."""
-    methods: Mapping[str, Mapping[str, Mapping[str, Any]] | Missing] = field(
-        default_factory=dict[str, Mapping[str, Mapping[str, Any]] | Missing]
-    )
-    """Authenticator ID → method type → method."""
-    enrollments: Sequence[Mapping[str, Any]] | Missing = Missing("not read")
-    assurance: Mapping[str, Mapping[str, Any] | Missing] = field(
-        default_factory=dict[str, Mapping[str, Any] | Missing]
-    )
-    """Device assurance policy ID → the policy (slice 3)."""
-    posture_checks: Mapping[str, Mapping[str, Any]] | Missing | None = None
-    """Posture check variable name → its definition; None when no policy needs one."""
-
-
-@dataclass
-class Denial:
-    """One DENY event and what belongs to it."""
-
-    event: Mapping[str, Any]
-    at: datetime | None
-    verify_events: Sequence[Mapping[str, Any]] | Missing
-    verify_by: str | None
-    mfa_policy: Mapping[str, Any] | None = None
-    groups_at: frozenset[str] | None = None
-    groups_note: str | None = None
-
-    @property
-    def device(self) -> Mapping[str, Any]:
-        device = self.event.get("device")
-        return cast(Mapping[str, Any], device) if isinstance(device, dict) else {}
-
-
-# --- rows ----------------------------------------------------------------------------------
-
-
-def row(check: str, required: Any, actual: Any, ok: bool | None, note: str | None = None) -> Row:
-    out: Row = {"check": check, "required": clip(required), "actual": clip(actual), "pass": ok}
-    if note:
-        out["note"] = note
-    return out
-
-
-def _bare(r: Row) -> Row:
-    return {k: v for k, v in r.items() if k != "pass"}
-
-
-def any3(oks: Iterable[bool | None]) -> bool | None:
-    """Tri-state OR: one True wins; else None if any is None; else False."""
-    values = list(oks)
-    return True if True in values else (None if None in values else False)
-
-
-def status(rows: Sequence[Row]) -> str:
-    if any(r["pass"] is False for r in rows):
-        return "blocked"
-    return "undetermined" if any(r["pass"] is None for r in rows) else "would_allow"
-
-
-def summary(rows: Sequence[Row]) -> dict[str, Any]:
-    """Only what isn't a pass: failing and undecided rows, and how many passed."""
-    out: dict[str, Any] = {}
-    # The list says the verdict, so rows go out without `pass` (a null would be pruned anyway).
-    if failing := [_bare(r) for r in rows if r["pass"] is False]:
-        out["failing"] = failing
-    if undecided := [_bare(r) for r in rows if r["pass"] is None]:
-        out["undecided"] = undecided
-    out["passed"] = sum(r["pass"] is True for r in rows)
-    return out
-
-
-# --- event helpers -------------------------------------------------------------------------
-
-
-def at(value: Any, path: str) -> Any:
-    for key in path.split("."):
-        if not isinstance(value, dict):
-            return None
-        value = cast(dict[str, Any], value).get(key)
-    return value
-
-
-def targets(event: Mapping[str, Any]) -> list[dict[str, Any]]:
-    raw = event.get("target")
-    if not isinstance(raw, list):
-        return []
-    return [cast(dict[str, Any], t) for t in cast(list[Any], raw) if isinstance(t, dict)]
-
-
-def _str(value: object) -> str:
-    return value if isinstance(value, str) else ""
-
-
-def as_dict(value: object) -> dict[str, Any]:
-    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
-
-
-def as_list(value: object) -> list[Any]:
-    return cast(list[Any], value) if isinstance(value, list) else []
-
-
-def str_ids(value: object) -> list[str]:
-    return [v for v in as_list(value) if isinstance(v, str)]
-
-
-def clip(value: Any) -> Any:
-    if isinstance(value, str):
-        return value if len(value) <= _TEXT_MAX else value[: _TEXT_MAX - 1] + "…"
-    if isinstance(value, list):
-        items = [clip(v) for v in cast(list[Any], value)[:_LIST_MAX]]
-        more = len(cast(list[Any], value)) - _LIST_MAX
-        return [*items, f"… (+{more})"] if more > 0 else items
-    if isinstance(value, dict):
-        return {k: clip(v) for k, v in cast(dict[str, Any], value).items()}
-    return value
-
-
-def time_of(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 # --- network zones -------------------------------------------------------------------------
@@ -179,7 +72,7 @@ def time_of(value: object) -> datetime | None:
 def _ip_in(ip: str, entry: Mapping[str, Any]) -> bool | None:
     try:
         address = ipaddress.ip_address(ip)
-        value = _str(entry.get("value"))
+        value = str_of(entry.get("value"))
         if entry.get("type") == "RANGE":
             lo, hi = (ipaddress.ip_address(x.strip()) for x in value.split("-", 1))
             if lo.version != address.version or hi.version != address.version:
@@ -191,15 +84,15 @@ def _ip_in(ip: str, entry: Mapping[str, Any]) -> bool | None:
 
 
 def _location_hit(locations: list[Any], event: Mapping[str, Any]) -> bool | None:
-    country = _str(at(event, "client.geographicalContext.country"))
+    country = str_of(at(event, "client.geographicalContext.country"))
     code = COUNTRIES.get(country.lower()) or (country.upper() if len(country) == 2 else None)
-    state = _str(at(event, "client.geographicalContext.state")).lower()
+    state = str_of(at(event, "client.geographicalContext.state")).lower()
     region = US_STATES.get(state) if code == "US" else None
     hits: list[bool | None] = []
     for raw in locations:
         loc = as_dict(raw)
-        want = _str(loc.get("country")).upper()
-        want_region = _str(loc.get("region")).split("-")[-1].upper()
+        want = str_of(loc.get("country")).upper()
+        want_region = str_of(loc.get("region")).split("-")[-1].upper()
         if code is None:
             hits.append(None)
         elif want != code:
@@ -222,8 +115,8 @@ def _service_hit(categories: list[Any], event: Mapping[str, Any]) -> bool | None
         return None
     detail = cast(dict[str, Any], details)
     services = [as_dict(s) for s in as_list(detail.get("ipServiceCategories"))]
-    operators = [_str(s.get("operator")).upper() for s in services]
-    kinds = [_str(s.get("type")).lower() for s in services]
+    operators = [str_of(s.get("operator")).upper() for s in services]
+    kinds = [str_of(s.get("type")).lower() for s in services]
     anonymous = [bool(s.get("isAnonymous")) for s in services]
     tor = "tor" in kinds or any("TOR" in o.split("_") for o in operators)
     known = {
@@ -237,7 +130,7 @@ def _service_hit(categories: list[Any], event: Mapping[str, Any]) -> bool | None
     }
     hits: list[bool | None] = []
     for raw in categories:
-        category = _str(raw)
+        category = str_of(raw)
         if category in known:
             hits.append(known[category])
         else:
@@ -264,10 +157,10 @@ def zone_hit(zone: Mapping[str, Any], event: Mapping[str, Any]) -> bool | None:
         return False  # a policy's inactive zone never matches
     kind = zone.get("type")
     if kind == "IP":
-        ip = _str(at(event, "client.ipAddress"))
+        ip = str_of(at(event, "client.ipAddress"))
         gateways = [as_dict(g) for g in as_list(zone.get("gateways"))]
         return any3(_ip_in(ip, g) for g in gateways) if ip else None
-    if _str(at(event, "client.zone")) and at(event, "client.zone") == zone.get("name"):
+    if str_of(at(event, "client.zone")) and at(event, "client.zone") == zone.get("name"):
         return True
     if kind == "DYNAMIC_V2":
         include = _criteria(
@@ -303,8 +196,8 @@ def zone_hit(zone: Mapping[str, Any], event: Mapping[str, Any]) -> bool | None:
 
 
 def _network(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
-    ip = _str(at(d.event, "client.ipAddress"))
-    zone = _str(at(d.event, "client.zone"))
+    ip = str_of(at(d.event, "client.ipAddress"))
+    zone = str_of(at(d.event, "client.zone"))
     actual = {
         k: v
         for k, v in (
@@ -334,7 +227,7 @@ def _network(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
             if side == "include"
             else (False if True in hits else (None if None in hits else True))
         )
-        names = [_str(z.get("name")) or i if z else i for z, i in zip(found, ids, strict=True)]
+        names = [str_of(z.get("name")) or i if z else i for z, i in zip(found, ids, strict=True)]
         note = None
         if ok is None:
             note = "a zone couldn't be decided from the event's IP, geo, ASN or IP-service data"
@@ -408,7 +301,7 @@ def _users_listed(ids: set[str], uid: object, prefix: str = "") -> dict[str, Any
 
 
 def _user_type(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
-    type_id = _str(at(facts.user, "type.id")) or None
+    type_id = str_of(at(facts.user, "type.id")) or None
     rows: list[Row] = []
     note = "the user's type as of now" if type_id else "the user object carries no type"
     if inc := str_ids(cond.get("include")):
@@ -451,34 +344,14 @@ def _device(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
             continue
         rows.append(row(f"device.{name}", wanted, actual, actual == wanted))
     if ids := str_ids(as_dict(cond.get("assurance")).get("include")):
-        # Here, not at the top: device_eval builds on this module's rows.
-        from okta_mcp.handlers.device_eval import assurance
-
-        rows += assurance(ids, d, facts)
+        rows += device_eval.assurance(ids, d, facts)
     return rows
 
 
-_UA_OS = (
-    ("mac", "OSX"),
-    ("windows", "WINDOWS"),
-    ("ios", "IOS"),
-    ("iphone", "IOS"),
-    ("ipad", "IOS"),
-    ("android", "ANDROID"),
-    ("chrome", "CHROMEOS"),
-    ("linux", "LINUX"),
-)
-_COND_OS = {"MACOS": "OSX", "MAC": "OSX", "CHROME_OS": "CHROMEOS"}
-
-
 def _platform(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
-    os_actual = _str(d.device.get("os_platform")).upper()
-    os_actual = _COND_OS.get(os_actual, os_actual)
-    if not os_actual:
-        agent = _str(at(d.event, "client.userAgent.os")).lower()
-        os_actual = next((v for k, v in _UA_OS if k in agent), "")
+    os_actual = device_os(d)
     kind = {"computer": "DESKTOP", "mobile": "MOBILE"}.get(
-        _str(at(d.event, "client.device")).lower()
+        str_of(at(d.event, "client.device")).lower()
     )
     actual = {"os": os_actual or None, "type": kind}
     if not os_actual and not kind:
@@ -487,9 +360,9 @@ def _platform(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
         ]
 
     def match(entry: Mapping[str, Any]) -> bool | None:
-        want_os = _str(as_dict(entry.get("os")).get("type")).upper() or "ANY"
-        want_os = _COND_OS.get(want_os, want_os)
-        want_kind = _str(entry.get("type")).upper() or "ANY"
+        want_os = str_of(as_dict(entry.get("os")).get("type")).upper() or "ANY"
+        want_os = policy_os(want_os)
+        want_kind = str_of(entry.get("type")).upper() or "ANY"
         oks: list[bool | None] = [
             True if want_os == "ANY" else (None if not os_actual else want_os == os_actual),
             True if want_kind == "ANY" else (None if not kind else want_kind == kind),
@@ -504,7 +377,7 @@ def _platform(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
         hit = any3(match(e) for e in entries)
         ok = hit if side == "include" else (None if hit is None else not hit)
         wanted = [
-            f"{_str(as_dict(e.get('os')).get('type')) or 'ANY'}/{_str(e.get('type')) or 'ANY'}"
+            f"{str_of(as_dict(e.get('os')).get('type')) or 'ANY'}/{str_of(e.get('type')) or 'ANY'}"
             for e in entries
         ]
         versioned = any(as_dict(e.get("os")).get("version") for e in entries)
@@ -524,15 +397,15 @@ _RISK_LEVEL = re.compile(r"level=(\w+)")
 
 
 def event_risk(event: Mapping[str, Any]) -> str | None:
-    level = _str(at(event, "securityContext.risk.level"))
+    level = str_of(at(event, "securityContext.risk.level"))
     if not level:
-        match = _RISK_LEVEL.search(_str(at(event, "debugContext.debugData.risk")))
+        match = _RISK_LEVEL.search(str_of(at(event, "debugContext.debugData.risk")))
         level = match[1] if match else ""
     return level.upper() or None
 
 
 def _risk_score(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
-    want = _str(cond.get("level")).upper() or "ANY"
+    want = str_of(cond.get("level")).upper() or "ANY"
     actual = event_risk(d.event)
     if want == "ANY":
         return [row("riskScore.level", "ANY", actual, True)]
@@ -551,7 +424,7 @@ def _risk_behaviors(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Ro
     seen = sorted(
         {
             m.strip()
-            for m in _BEHAVIOR.findall(_str(at(d.event, "debugContext.debugData.behaviors")))
+            for m in _BEHAVIOR.findall(str_of(at(d.event, "debugContext.debugData.behaviors")))
         }
     )
     return [
@@ -569,7 +442,7 @@ _EL_ATTRIBUTE = re.compile(r"\buser\.(?:profile\.)?([A-Za-z_][A-Za-z0-9_]*)(\()?
 
 
 def _el(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
-    expression = _str(cond.get("condition"))
+    expression = str_of(cond.get("condition"))
     names = sorted({m[1] for m in _EL_ATTRIBUTE.finditer(expression) if not m[2]})
     # Attribute names only, never the user's values: this command doesn't grant profile reads.
     return [
@@ -586,10 +459,10 @@ def _el(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
 def _app(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
     apps = [t for t in targets(d.event) if t.get("type") == "AppInstance"]
     app: dict[str, Any] = apps[0] if apps else {}
-    app_id = _str(app.get("id")) or None
+    app_id = str_of(app.get("id")) or None
 
     def ids(side: str) -> set[str]:
-        return {_str(as_dict(a).get("id")) for a in as_list(cond.get(side))} - {""}
+        return {str_of(as_dict(a).get("id")) for a in as_list(cond.get(side))} - {""}
 
     rows: list[Row] = []
     if inc := ids("include"):
@@ -609,7 +482,7 @@ def _app(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
 
 
 def _auth_context(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
-    kind = _str(cond.get("authType")).upper() or "ANY"
+    kind = str_of(cond.get("authType")).upper() or "ANY"
     if kind == "ANY":
         return [row("authContext.authType", "ANY", None, True)]
     return [
@@ -618,10 +491,10 @@ def _auth_context(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]
 
 
 def _identity_provider(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
-    provider = _str(cond.get("provider")).upper() or "ANY"
+    provider = str_of(cond.get("provider")).upper() or "ANY"
     if provider == "ANY":
         return [row("identityProvider", "ANY", None, True)]
-    actual = _str(at(d.event, "authenticationContext.authenticationProvider")) or None
+    actual = str_of(at(d.event, "authenticationContext.authenticationProvider")) or None
     return [
         row(
             "identityProvider",
@@ -715,8 +588,8 @@ def _slot(part: Mapping[str, Any], per_method: bool = False) -> _Slot:
     return _Slot(
         tuple(
             (
-                _str(m.get("key")),
-                _str(m.get("method")) or None,
+                str_of(m.get("key")),
+                str_of(m.get("method")) or None,
                 _required(m if per_method else part),
             )
             for m in methods
@@ -724,7 +597,7 @@ def _slot(part: Mapping[str, Any], per_method: bool = False) -> _Slot:
         frozenset(t.lower() for t in str_ids(part.get("types"))),
         tuple(str_ids(part.get("methods"))),
         _required(part),
-        tuple((_str(x.get("key")), _str(x.get("method")) or None) for x in excluded),
+        tuple((str_of(x.get("key")), str_of(x.get("method")) or None) for x in excluded),
     )
 
 
@@ -764,7 +637,9 @@ def _verified_props(d: Denial, key: str | None) -> set[str] | None:
             if t.get("type") == "AuthenticatorMethod" and (
                 key is None or detail.get("authenticatorKey") == key
             ):
-                return set(re.findall(r"[A-Z_]+", _str(detail.get("methodUsedVerifiedProperties"))))
+                return set(
+                    re.findall(r"[A-Z_]+", str_of(detail.get("methodUsedVerifiedProperties")))
+                )
     return None
 
 
@@ -772,7 +647,7 @@ def _used_keys(d: Denial) -> set[str] | None:
     if isinstance(d.verify_events, Missing) or not d.verify_events:
         return None
     return {
-        _str(as_dict(t.get("detailEntry")).get("authenticatorKey"))
+        str_of(as_dict(t.get("detailEntry")).get("authenticatorKey"))
         for e in d.verify_events
         for t in targets(e)
         if t.get("type") == "AuthenticatorMethod"
@@ -811,20 +686,6 @@ def _enrolled_before(e: Mapping[str, Any], d: Denial) -> bool:
     return not (created and d.at and created > d.at)
 
 
-def either(groups: list[tuple[str, list[Row]]], check: str, required: str) -> list[Row]:
-    """Alternatives: one fully met satisfies; else the closest one's rows."""
-    met = next((name for name, rows in groups if status(rows) == "would_allow"), None)
-    if met is not None:
-        return [row(check, required, f"met by {met}", True)]
-    return min(
-        (rows for _, rows in groups),
-        key=lambda rows: (
-            sum(r["pass"] is False for r in rows),
-            sum(r["pass"] is None for r in rows),
-        ),
-    )
-
-
 def _methods_for(auth_id: str, facts: Facts) -> Mapping[str, Mapping[str, Any]] | Missing:
     return facts.methods.get(auth_id, Missing("authenticator methods weren't read"))
 
@@ -836,17 +697,17 @@ def _candidate_rows(
     rows: list[Row] = []
     if d.mfa_policy is not None:
         settings = {
-            _str(as_dict(a).get("key")): as_dict(a)
+            str_of(as_dict(a).get("key")): as_dict(a)
             for a in as_list(at(d.mfa_policy, "settings.authenticators"))
         }
-        self_enroll = _str(at(settings.get(key, {}), "enroll.self")) or None
+        self_enroll = str_of(at(settings.get(key, {}), "enroll.self")) or None
         rows.append(
             row(
                 f"{what}: enrollment policy allows it",
                 "enroll.self is not NOT_ALLOWED",
                 self_enroll or "not in the policy",
                 self_enroll not in (None, "NOT_ALLOWED"),
-                f"enrollment policy {_str(d.mfa_policy.get('id'))}",
+                f"enrollment policy {str_of(d.mfa_policy.get('id'))}",
             )
         )
     else:
@@ -873,7 +734,7 @@ def _candidate_rows(
         )
     )
     if auth is not None and method:
-        methods = _methods_for(_str(auth.get("id")), facts)
+        methods = _methods_for(str_of(auth.get("id")), facts)
         found = methods.get(method) if not isinstance(methods, Missing) else None
         rows.append(
             row(
@@ -940,7 +801,7 @@ def _slot_rows(slot: _Slot, d: Denial, facts: Facts) -> list[Row]:
     enrollments = facts.enrollments
     enrolled = (
         {
-            _str(e.get("type"))
+            str_of(e.get("type"))
             for e in enrollments
             if e.get("status") == "ACTIVE" and _enrolled_before(e, d)
         }
@@ -982,7 +843,7 @@ def _methods_enabled(
 ) -> tuple[bool | None, str | None]:
     want = {m.lower() for m in wanted}
     keys = {
-        _str(e.get("key"))
+        str_of(e.get("key"))
         for e in enrollments
         if e.get("status") == "ACTIVE" and e.get("type") in allowed
     }
@@ -994,7 +855,7 @@ def _methods_enabled(
         auth = auths.get(key)
         if auth is None:
             return None, "an enrolled authenticator isn't in the org's list"
-        methods = _methods_for(_str(auth.get("id")), facts)
+        methods = _methods_for(str_of(auth.get("id")), facts)
         if isinstance(methods, Missing):
             return None, methods.reason
         results.append(
@@ -1051,8 +912,8 @@ def authenticator_ids_named(rule: Mapping[str, Any]) -> set[str]:
 
 def access(rule: Mapping[str, Any]) -> str | None:
     return (
-        _str(at(rule, "actions.appSignOn.access"))
-        or _str(at(rule, "actions.signon.access"))
+        str_of(at(rule, "actions.appSignOn.access"))
+        or str_of(at(rule, "actions.signon.access"))
         or None
     )
 
@@ -1062,7 +923,7 @@ def _brief(rule: Mapping[str, Any]) -> dict[str, Any]:
         k: v
         for k, v in (
             ("id", rule.get("id")),
-            ("name", clip(_str(rule.get("name"))) or None),
+            ("name", clip(str_of(rule.get("name"))) or None),
             ("priority", rule.get("priority")),
         )
         if v is not None
@@ -1077,12 +938,12 @@ def diagnose_rule(
     facts: Facts,
 ) -> dict[str, Any]:
     """Why one rule the event names did what it did. `rules` in priority order."""
-    kind_of_policy = _str(policy.get("type"))
+    kind_of_policy = str_of(policy.get("type"))
     action = access(rule)
     out: dict[str, Any] = {
         "policy": {
             "id": policy.get("id"),
-            "name": clip(_str(policy.get("name"))),
+            "name": clip(str_of(policy.get("name"))),
             "type": kind_of_policy,
         },
         "rule": _brief(rule) | ({"access": action} if action else {}),
@@ -1165,9 +1026,9 @@ def groups_at(
         published = time_of(e.get("published"))
         if t is None or published is None or published <= t:
             break
-        added = _str(e.get("eventType")).endswith(".add")
+        added = str_of(e.get("eventType")).endswith(".add")
         for target in targets(e):
-            if "Group" in _str(target.get("type")) and (gid := _str(target.get("id"))):
+            if "Group" in str_of(target.get("type")) and (gid := str_of(target.get("id"))):
                 (groups.discard if added else groups.add)(gid)
     return frozenset(groups)
 
@@ -1199,7 +1060,7 @@ def password_policy(
     """The password policy that applies to the user (first active one by priority whose groups
     include theirs and whose provider is theirs), and only the settings the causes concern:
     lockout for wrong passwords and lockouts, age for an expired password."""
-    provider = _str(at(user, "credentials.provider.type")) or "OKTA"
+    provider = str_of(at(user, "credentials.provider.type")) or "OKTA"
 
     def priority(p: Mapping[str, Any]) -> int:
         value = p.get("priority")
@@ -1209,7 +1070,7 @@ def password_policy(
     chosen: Mapping[str, Any] | None = None
     undecided = False
     for p in ordered:
-        wanted_provider = _str(at(p, "conditions.authProvider.provider")) or "OKTA"
+        wanted_provider = str_of(at(p, "conditions.authProvider.provider")) or "OKTA"
         if wanted_provider != provider:
             continue
         include = set(str_ids(at(p, "conditions.people.groups.include")))
@@ -1233,7 +1094,7 @@ def password_policy(
         )
         return {"evaluated": False, "note": note}
     out: dict[str, Any] = {
-        "policy": {"id": chosen.get("id"), "name": clip(_str(chosen.get("name")))}
+        "policy": {"id": chosen.get("id"), "name": clip(str_of(chosen.get("name")))}
     }
     if not complete:
         out["note"] = (
@@ -1265,7 +1126,7 @@ def password_policy(
                 else "doesn't unlock by itself: an admin or self-service unlock is needed"
             )
             rows.append(row("password.lockout.autoUnlockMinutes", "unlock", unlock, None, text))
-    if "password_expired" in causes or _str(user.get("status")) == "PASSWORD_EXPIRED":
+    if "password_expired" in causes or str_of(user.get("status")) == "PASSWORD_EXPIRED":
         age = as_dict(at(chosen, "settings.password.age"))
         max_days = age.get("maxAgeDays")
         changed = time_of(user.get("passwordChanged"))

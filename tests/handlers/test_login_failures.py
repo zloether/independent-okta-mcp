@@ -1537,3 +1537,35 @@ async def test_an_assurance_id_that_isn_t_one_is_never_sent(
     org.events = [mac_deny()]
     await diagnose(ex)
     assert not any(p.startswith("/api/v1/device-assurances") for p in org.paths)
+
+
+@pytest.mark.anyio
+async def test_assurance_of_a_rule_found_by_scanning_is_read(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=DEVICE_SCOPES)
+    device_policy(org, posture=False)
+    pid = "00p1emaKYZTWRYYRRTSK"
+    org.policies[pid] = {"id": pid, "name": "Default Policy", "type": "OKTA_SIGN_ON"}
+    org.rules[pid] = [
+        {
+            "id": "0pr1emaKYZTWRYYRRTSK",
+            "priority": 1,
+            "status": "ACTIVE",
+            "actions": {"signon": {"access": "DENY"}},
+            "conditions": {"device": {"assurance": {"include": [ASSURANCE]}}},
+        }
+    ]
+    deny = mac_deny()
+    deny["target"] = [
+        {
+            "id": "0pr1emaKYZTWRYYRRTSK",
+            "type": "Rule",
+            "detailEntry": {"policyName": "Default Policy"},
+        }
+    ]
+    org.events = [deny]
+    out = await diagnose(ex)
+    (rule,) = out["policy_evaluation"][0]["rules"]
+    assert any("osVersion.minimum" in r["check"] for r in rule["failing"])
+    assert f"/api/v1/device-assurances/{ASSURANCE}" in org.paths

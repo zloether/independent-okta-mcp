@@ -98,8 +98,60 @@ def test_any_one_listed_policy_suffices() -> None:
 
 
 def test_no_platform_on_the_event_is_undecided() -> None:
-    (row,) = de.assurance([AID], denial({}), facts(mac()))
+    (row,) = de.assurance([AID], denial({"registered": True}), facts(mac()))
     assert row["pass"] is None and "platform" in row["note"]
+
+
+def test_no_device_at_all_fails_like_device_registered() -> None:
+    (row,) = de.assurance([AID], denial(None), facts(mac()))
+    assert row["pass"] is False and "no device" in row["note"]
+
+
+def test_the_platform_falls_back_to_the_user_agent() -> None:
+    d = denial({"registered": True}, client={"userAgent": {"os": "Mac OS X"}})
+    (row,) = de.assurance([AID], d, facts(mac(osVersion={"minimum": "1"})))
+    assert row["check"] == "assurance 'Mac baseline': osVersion.minimum"  # applied, not skipped
+
+
+@pytest.mark.parametrize(
+    ("wanted", "actual", "expected"),
+    [
+        (["BIOMETRIC"], "PASSCODE", False),
+        (["PASSCODE"], "BIOMETRIC", None),
+        (["PASSCODE"], "NONE", False),
+    ],
+)
+def test_screen_lock_strength(wanted: list[str], actual: str, expected: bool | None) -> None:
+    rows = de.assurance(
+        [AID],
+        denial({**MAC, "screen_lock_type": actual}),
+        facts(mac(screenLockType={"include": wanted})),
+    )
+    assert [r["pass"] for r in rows] == [expected]
+
+
+def test_an_ended_grace_period_isn_t_noted() -> None:
+    policy = mac(
+        osVersion={"minimum": "15"},
+        gracePeriod={"type": "BY_DATE_TIME", "expiry": "2026-01-01T00:00:00Z"},
+    )
+    (row,) = de.assurance([AID], denial(MAC), facts(policy))
+    assert "note" not in row
+
+
+def test_posture_values_and_null_results() -> None:
+    policy = mac(devicePostureChecks={"include": [{"variableName": "fw", "values": ["1", "2"]}]})
+    (row,) = de.assurance([AID], denial({**MAC, "fw": "2"}), facts(policy, posture={}))
+    assert row["pass"] is True
+    (row,) = de.assurance([AID], denial({**MAC, "fw": None}), facts(policy, posture={}))
+    assert row["pass"] is None
+
+
+def test_a_partial_definition_list_is_said() -> None:
+    f = facts(mac(devicePostureChecks={"include": [FIREWALL]}), posture={})
+    f.posture_incomplete = "the builtin posture check list wasn't fully read"
+    (row,) = de.assurance([AID], denial({**MAC, "macOSFirewall": "0"}), f)
+    assert row["note"] == "the builtin posture check list wasn't fully read"
 
 
 def test_a_policy_not_read_is_undecided_with_the_reason() -> None:
@@ -185,10 +237,10 @@ def test_an_integrator_error_fails_third_party_signals() -> None:
 def test_a_grace_period_is_noted_on_a_failure() -> None:
     policy = mac(
         osVersion={"minimum": "15"},
-        gracePeriod={"type": "BY_DATE", "expiry": "2026-12-01T00:00:00Z"},
+        gracePeriod={"type": "BY_DATE_TIME", "expiry": "2026-12-01T00:00:00Z"},
     )
     (row,) = de.assurance([AID], denial(MAC), facts(policy))
-    assert "grace period (BY_DATE: 2026-12-01T00:00:00Z)" in row["note"]
+    assert "grace period (BY_DATE_TIME: 2026-12-01T00:00:00Z)" in row["note"]
 
 
 # --- advanced posture checks -----------------------------------------------------------------

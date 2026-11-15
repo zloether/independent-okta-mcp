@@ -22,12 +22,17 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any, cast
 
-from okta_mcp.handlers import policy_eval as pe
+from okta_mcp.handlers import eval_model as pe
 
 # Events say OSX where assurance policies say MACOS (the other names match).
 _PLATFORM = {"OSX": "MACOS", "MAC": "MACOS", "CHROME_OS": "CHROMEOS"}
 _GENERIC_ERROR = re.compile(r"genericError\([^)]*\)")
 _SEARCH_DEPTH = 6
+# Known orderings, weakest first: a value below every listed one fails; above, undecided.
+_STRENGTH: dict[str, dict[str, int]] = {
+    "screenLockType": {"NONE": 0, "PASSCODE": 1, "BIOMETRIC": 2},
+    "diskEncryptionType": {"NONE": 0},
+}
 
 
 def version(text: object) -> tuple[int, ...]:
@@ -37,9 +42,9 @@ def version(text: object) -> tuple[int, ...]:
 
 
 def _platform(d: pe.Denial) -> str:
-    name = pe.as_dict(d.event.get("device")).get("os_platform")
-    upper = name.upper() if isinstance(name, str) else ""
-    return _PLATFORM.get(upper, upper)
+    """The device's platform as assurance policies name it (`MACOS`, not `OSX`)."""
+    found = pe.device_os(d)
+    return _PLATFORM.get(found, found)
 
 
 def _device_detail(d: pe.Denial) -> dict[str, Any]:
@@ -56,11 +61,16 @@ def integrator_errors(d: pe.Denial) -> list[str]:
     return sorted(set(_GENERIC_ERROR.findall(text)))[:5]
 
 
-def _grace(policy: Mapping[str, Any]) -> str | None:
+def _grace(policy: Mapping[str, Any], d: pe.Denial) -> str | None:
     grace = pe.as_dict(policy.get("gracePeriod"))
     if not grace:
         return None
     kind, expiry = grace.get("type"), grace.get("expiry")
+    if kind == "BY_DATE_TIME":
+        ends = pe.time_of(expiry)
+        if ends is not None and d.at is not None and ends <= d.at:
+            return None  # ended before the denial: it can't be why
+    # BY_DURATION counts from when the device fell out of compliance, which isn't visible.
     return (
         f"the policy has a grace period ({kind}: {expiry}): a non-compliant device may be let "
         "in until it ends"
@@ -134,14 +144,21 @@ def _included(
     actual = d.device.get(field)
     if not isinstance(actual, str):
         return [pe.row(f"{label}: {key}", wanted, None, None, "the event's device doesn't say")]
-    ok = actual.upper() in {w.upper() for w in wanted}
+    if actual.upper() in {w.upper() for w in wanted}:
+        return [pe.row(f"{label}: {key}", wanted, actual, True)]
+    rank = _STRENGTH.get(key, {})
+    have = rank.get(actual.upper())
+    weakest = min((rank[w.upper()] for w in wanted if w.upper() in rank), default=None)
+    if actual.upper() == "NONE" or (have is not None and weakest is not None and have < weakest):
+        return [pe.row(f"{label}: {key}", wanted, actual, False, "weaker than every listed value")]
+    # Okta may count a stronger value (BIOMETRIC for PASSCODE) as meeting the requirement.
     return [
         pe.row(
             f"{label}: {key}",
             wanted,
             actual,
-            ok,
-            None if ok else "compared exactly; Okta may accept a stronger value",
+            None,
+            "not one of the listed values; Okta may accept a stronger one",
         )
     ]
 
@@ -236,6 +253,8 @@ def _posture(
                 # What the user is told to do; helpdesk can repeat it.
                 if remedy := pe.at(definition, "remediationSettings.message.customText"):
                     required["remediation"] = remedy
+            elif facts.posture_incomplete:
+                note = facts.posture_incomplete
             else:
                 note = "no posture check has this variable name now"
         elif isinstance(definitions, pe.Missing):
@@ -244,10 +263,15 @@ def _posture(
         actual: Any = None
         for source in sources.values():
             found, actual = _find(source, name)
-            if found:
+            if found and actual is not None:
                 break
+            found = False  # a null result was not reported
+        options: list[Any] = (
+            pe.as_list(cast(object, wanted)) if isinstance(wanted, list) else [wanted]
+        )
         if found:
-            rows.append(pe.row(check, required, actual, _same(actual, wanted), note))
+            ok = any(_same(actual, w) for w in options)
+            rows.append(pe.row(check, required, actual, ok, note))
         elif errors:
             rows.append(
                 pe.row(
@@ -270,7 +294,7 @@ def _policy_rows(policy: Mapping[str, Any], d: pe.Denial, facts: pe.Facts) -> li
     rows = _os_version(label, policy, d.device.get("os_version"))
     rows += _included(label, "diskEncryptionType", "disk_encryption_type", policy, d)
     rows += _included(label, "screenLockType", "screen_lock_type", policy, d)
-    if isinstance(policy.get("secureHardwarePresent"), bool) and policy["secureHardwarePresent"]:
+    if policy.get("secureHardwarePresent") is True:
         rows.append(_flag(label, "secureHardwarePresent", "secure_hardware_present", True, d))
     if policy.get("jailbreak") is False:
         rows.append(_flag(label, "jailbreak", "jailbreak", False, d))
@@ -281,13 +305,24 @@ def _policy_rows(policy: Mapping[str, Any], d: pe.Denial, facts: pe.Facts) -> li
         for e in pe.as_list(pe.as_dict(policy.get("devicePostureChecks")).get("include"))
     ]
     rows += _posture(label, posture, d, facts)
-    if (grace := _grace(policy)) and any(r["pass"] is not True for r in rows):
+    if (grace := _grace(policy, d)) and any(r["pass"] is not True for r in rows):
         rows = [{**r, "note": f"{r['note']}; {grace}" if r.get("note") else grace} for r in rows]
     return rows
 
 
 def assurance(ids: list[str], d: pe.Denial, facts: pe.Facts) -> list[pe.Row]:
     """`conditions.device.assurance.include`: the device must meet ONE listed policy."""
+    if not d.device and not pe.device_os(d):
+        # Consistent with device.registered: no device signals, no assurance policy met.
+        return [
+            pe.row(
+                "device.assurance",
+                {"one_of": ids},
+                None,
+                False,
+                "the event carries no device: no assurance policy can be met",
+            )
+        ]
     platform = _platform(d)
     groups: list[tuple[str, list[pe.Row]]] = []
     for aid in ids:

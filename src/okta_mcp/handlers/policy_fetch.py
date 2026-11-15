@@ -321,7 +321,7 @@ async def evaluate(
             for a in pe.assurance_ids_named(pe.as_dict(r))
         }
     )
-    assurance: dict[str, Any] = {}
+    assurance: dict[str, Mapping[str, Any] | pe.Missing] = {}
 
     async def get_assurance(aid: str) -> None:
         if not _ASSURANCE_ID.fullmatch(aid):
@@ -329,11 +329,12 @@ async def evaluate(
                 "device assurance", "an assurance ID in a rule isn't one"
             )
             return
-        assurance[aid] = await _guard(
+        found = await _guard(
             store,
             "device assurance",
             lambda: ctx.get("getDeviceAssurancePolicy", {"deviceAssuranceId": aid}),
         )
+        assurance[aid] = found if isinstance(found, pe.Missing) else pe.as_dict(found)
 
     async with anyio.create_task_group() as tg:
         for pid in scan:
@@ -345,6 +346,22 @@ async def evaluate(
                 tg.start_soon(get_methods, aid)
         for aid in assurance_ids[:_ASSURANCE]:
             tg.start_soon(get_assurance, aid)
+    # Rules placed by scanning were read in this wave: their assurance policies next.
+    more_ids = sorted(
+        {
+            a
+            for pid in scan
+            for r in _list(rules.get(pid))
+            for a in pe.assurance_ids_named(pe.as_dict(r))
+        }
+        - set(assurance_ids)
+    )
+    budget = max(0, _ASSURANCE - len(assurance_ids))
+    if more_ids[:budget]:
+        async with anyio.create_task_group() as tg:
+            for aid in more_ids[:budget]:
+                tg.start_soon(get_assurance, aid)
+    assurance_ids += more_ids
     for aid in assurance_ids[_ASSURANCE:]:
         assurance[aid] = store.missing(
             "device assurance", f"more than {_ASSURANCE} assurance policies"
@@ -353,8 +370,9 @@ async def evaluate(
     # Wave 3, only when an assurance policy requires advanced posture checks: their
     # definitions (custom and built-in), for names and remediation text. An org without
     # posture checks makes no request here and needs no scope for them.
-    read = [a for a in _assurance_map(assurance).values() if not isinstance(a, pe.Missing)]
+    read = [a for a in assurance.values() if not isinstance(a, pe.Missing)]
     posture: Mapping[str, Mapping[str, Any]] | pe.Missing | None = None
+    posture_incomplete: str | None = None
     if device_eval.posture_check_names(read):
         found_checks: dict[str, Any] = {}
 
@@ -369,6 +387,12 @@ async def evaluate(
         lists: list[list[Any]] = [
             cast(list[Any], v) for v in found_checks.values() if isinstance(v, list)
         ]
+        partial = [k for k, v in found_checks.items() if isinstance(v, pe.Missing)]
+        partial += [k for k in ("custom", "builtin") if f"posture:{k}" in cut]
+        if partial:
+            posture_incomplete = (
+                f"the {' and '.join(sorted(set(partial)))} posture check list wasn't fully read"
+            )
         if lists:
             posture = {
                 _s(c.get("variableName")): c
@@ -401,8 +425,9 @@ async def evaluate(
             aid: (_by_type(m) if not isinstance(m, pe.Missing) else m) for aid, m in methods.items()
         },
         enrollments=enrolled,
-        assurance=_assurance_map(assurance),
+        assurance=assurance,
         posture_checks=posture,
+        posture_incomplete=posture_incomplete,
     )
     verify = shared.get("verify", pe.Missing("not read"))
     out = [_evaluate_group(g, verify, policy, rules, scan, facts, cut) for g in chosen]
@@ -586,13 +611,6 @@ def _match_verify(event: Mapping[str, Any], found: Any) -> tuple[Any, str | None
         if matched:
             return matched, by
     return [], None
-
-
-def _assurance_map(found: Mapping[str, Any]) -> dict[str, Mapping[str, Any] | pe.Missing]:
-    out: dict[str, Mapping[str, Any] | pe.Missing] = {}
-    for aid, value in found.items():
-        out[aid] = value if isinstance(value, pe.Missing) else pe.as_dict(value)
-    return out
 
 
 def _window(found: Any, t: datetime | None) -> Any:
