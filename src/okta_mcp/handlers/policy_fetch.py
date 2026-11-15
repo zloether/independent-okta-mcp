@@ -25,6 +25,7 @@ from typing import Any, cast
 import anyio
 
 from okta_mcp.exec.composite import Context, Unavailable
+from okta_mcp.handlers import device_eval
 from okta_mcp.handlers import policy_eval as pe
 from okta_mcp.logs import log_internal
 from okta_mcp.okta.client import UpstreamError
@@ -47,6 +48,9 @@ _MEMBERSHIP_EVENTS = 200
 _VERIFY_EVENTS = 50
 _VERIFY_LOOKBACK = timedelta(minutes=30)
 _METHODS = 10
+_ASSURANCE_ID = re.compile(r"dae[A-Za-z0-9]{17}")
+_ASSURANCE = 20
+_POSTURE = 200
 _PASSWORD_CAUSES = frozenset({"invalid_credentials", "locked_out", "password_expired"})
 
 
@@ -308,6 +312,29 @@ async def evaluate(
             50,
         )
 
+    # Device assurance policies the rules name (slice 3); IDs from Okta, shape-checked.
+    assurance_ids = sorted(
+        {
+            a
+            for pid in policy_ids
+            for r in _list(rules.get(pid))
+            for a in pe.assurance_ids_named(pe.as_dict(r))
+        }
+    )
+    assurance: dict[str, Any] = {}
+
+    async def get_assurance(aid: str) -> None:
+        if not _ASSURANCE_ID.fullmatch(aid):
+            assurance[aid] = store.missing(
+                "device assurance", "an assurance ID in a rule isn't one"
+            )
+            return
+        assurance[aid] = await _guard(
+            store,
+            "device assurance",
+            lambda: ctx.get("getDeviceAssurancePolicy", {"deviceAssuranceId": aid}),
+        )
+
     async with anyio.create_task_group() as tg:
         for pid in scan:
             if pid not in rules:
@@ -316,6 +343,41 @@ async def evaluate(
             ids = [_s(auths[k].get("id")) for k in sorted(wanted_keys) if k in auths]
             for aid in [a for a in ids if _AUTHENTICATOR_ID.fullmatch(a)][:_METHODS]:
                 tg.start_soon(get_methods, aid)
+        for aid in assurance_ids[:_ASSURANCE]:
+            tg.start_soon(get_assurance, aid)
+    for aid in assurance_ids[_ASSURANCE:]:
+        assurance[aid] = store.missing(
+            "device assurance", f"more than {_ASSURANCE} assurance policies"
+        )
+
+    # Wave 3, only when an assurance policy requires advanced posture checks: their
+    # definitions (custom and built-in), for names and remediation text. An org without
+    # posture checks makes no request here and needs no scope for them.
+    read = [a for a in _assurance_map(assurance).values() if not isinstance(a, pe.Missing)]
+    posture: Mapping[str, Mapping[str, Any]] | pe.Missing | None = None
+    if device_eval.posture_check_names(read):
+        found_checks: dict[str, Any] = {}
+
+        async def checks(key: str, operation: str) -> None:
+            found_checks[key] = await fetch_list(
+                "device posture checks", f"posture:{key}", operation, None, None, _POSTURE
+            )
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(checks, "custom", "listDevicePostureChecks")
+            tg.start_soon(checks, "builtin", "listDefaultDevicePostureChecks")
+        lists: list[list[Any]] = [
+            cast(list[Any], v) for v in found_checks.values() if isinstance(v, list)
+        ]
+        if lists:
+            posture = {
+                _s(c.get("variableName")): c
+                for items in lists
+                for c in (pe.as_dict(x) for x in items)
+                if _s(c.get("variableName"))
+            }
+        else:
+            posture = next(v for v in found_checks.values() if isinstance(v, pe.Missing))
 
     # Facts.
     raw_groups = shared.get("groups")
@@ -339,6 +401,8 @@ async def evaluate(
             aid: (_by_type(m) if not isinstance(m, pe.Missing) else m) for aid, m in methods.items()
         },
         enrollments=enrolled,
+        assurance=_assurance_map(assurance),
+        posture_checks=posture,
     )
     verify = shared.get("verify", pe.Missing("not read"))
     out = [_evaluate_group(g, verify, policy, rules, scan, facts, cut) for g in chosen]
@@ -522,6 +586,13 @@ def _match_verify(event: Mapping[str, Any], found: Any) -> tuple[Any, str | None
         if matched:
             return matched, by
     return [], None
+
+
+def _assurance_map(found: Mapping[str, Any]) -> dict[str, Mapping[str, Any] | pe.Missing]:
+    out: dict[str, Mapping[str, Any] | pe.Missing] = {}
+    for aid, value in found.items():
+        out[aid] = value if isinstance(value, pe.Missing) else pe.as_dict(value)
+    return out
 
 
 def _window(found: Any, t: datetime | None) -> Any:

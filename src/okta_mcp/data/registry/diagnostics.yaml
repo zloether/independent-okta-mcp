@@ -32,5 +32,6 @@ commands:
       optional:
         [getApplicationUser, listAuthenticatorEnrollments, listUserBlocks,
          getPolicy, listPolicies, listPolicyRules, listNetworkZones, listUserGroups,
-         listAuthenticators, listAuthenticatorMethods]
+         listAuthenticators, listAuthenticatorMethods,
+         getDeviceAssurancePolicy, listDevicePostureChecks, listDefaultDevicePostureChecks]
     data_classes: [audit-log, pii, risk, mfa-state, org-config]

@@ -196,12 +196,12 @@ def test_device_without_a_device_object() -> None:
     assert [r["pass"] for r in rows] == [False, True]
 
 
-def test_device_assurance_is_left_for_slice_3() -> None:
-    e = ev(device={"registered": True, "managed": True})
+def test_device_assurance_not_read_is_undecided() -> None:
+    e = ev(device={"registered": True, "managed": True, "os_platform": "MACOS"})
     cond = {"device": {"registered": True, "assurance": {"include": ["dae1"]}}}
     rows = pe.conditions(cond, denial(e), facts())
     assert rows[0]["pass"] is True
-    assert rows[1]["check"] == "device.assurance" and rows[1]["pass"] is None
+    assert rows[1]["check"] == "assurance dae1" and rows[1]["pass"] is None
 
 
 def test_platform_from_the_user_agent() -> None:
