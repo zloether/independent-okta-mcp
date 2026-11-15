@@ -25,7 +25,7 @@ import json
 import logging
 import re
 from collections import Counter
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -178,8 +178,8 @@ async def run(ctx: Context, args: Mapping[str, Any]) -> dict[str, Any]:
     checks: list[dict[str, Any]] = [_status_check(user)]
     skipped: list[dict[str, str]] = []
     shared: dict[str, Any] = {}
-    await _follow_ups(ctx, uid, user, groups, checks, skipped, shared)
     # Slice 2: the policies behind the denials, and the password policy behind password causes.
+    # Its first wave runs alongside the follow-ups; only its second waits for their enrollments.
     denials = [
         e.raw
         for cause in ("sign_on_policy_deny", "other_policy_deny")
@@ -187,13 +187,35 @@ async def run(ctx: Context, args: Mapping[str, Any]) -> dict[str, Any]:
         for e in groups[cause].events
     ]
     denials.sort(key=lambda raw: _str(raw.get("published")), reverse=True)
-    evaluations, password, missing = await policy_fetch.evaluate(
-        ctx,
-        user,
-        denials,
-        {cause: len(g.events) for cause, g in groups.items()},
-        shared.get("enrollments", pe.Missing(_NOT_READ)),
-        now,
+    followed = anyio.Event()
+
+    async def enrollments() -> Sequence[Mapping[str, Any]] | pe.Missing:
+        await followed.wait()
+        return shared.get("enrollments", pe.Missing(_NOT_READ))
+
+    async def follow() -> None:
+        try:
+            await _follow_ups(ctx, uid, user, groups, checks, skipped, shared)
+        finally:
+            followed.set()
+
+    found: dict[str, Any] = {}
+
+    async def policies() -> None:
+        found["value"] = await policy_fetch.evaluate(
+            ctx,
+            user,
+            denials,
+            {cause: len(g.events) for cause, g in groups.items()},
+            enrollments,
+            now,
+        )
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(follow)
+        tg.start_soon(policies)
+    evaluations, password, missing = cast(
+        tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, str]], found["value"]
     )
     result["causes"] = [g.render() for g in sorted(groups.values(), key=_order)]
     result["checks"] = checks
@@ -778,9 +800,10 @@ def _headline(
     head = (
         f"Most likely: {CAUSES[first.cause][1]} ({count} event{'s' if count != 1 else ''}){tail}."
     )
-    if first.cause in ("sign_on_policy_deny", "other_policy_deny"):
+    if first.cause in ("sign_on_policy_deny", "other_policy_deny") and evaluations:
+        # The newest denial's own reason only, never an older one's.
         reason = next(
-            (r["reason"] for e in evaluations for r in e.get("rules", ()) if r.get("reason")), None
+            (r["reason"] for r in evaluations[0].get("rules", ()) if r.get("reason")), None
         )
         if reason:
             head += f" Newest denial: {reason}."
@@ -815,7 +838,57 @@ def _fit(result: dict[str, Any], max_bytes: int) -> dict[str, Any]:
         if len(evaluations) > 1:
             del evaluations[1:]
 
-    steps += [one_candidate, no_undecided, newest_only]
+    def summary_only() -> None:
+        # Last resort: the evaluation's verdicts without their rows.
+        result["policy_evaluation"] = [
+            {k: e[k] for k in ("rule_ids", "count", "last_seen") if k in e}
+            | {
+                "rules": [
+                    {k: r[k] for k in ("policy", "rule", "kind", "reason") if k in r}
+                    for r in cast(list[dict[str, Any]], e.get("rules", []))
+                ]
+            }
+            for e in evaluations[:1]
+        ]
+
+    def drop_evaluation() -> None:
+        result.pop("policy_evaluation", None)
+        result["policy_evaluation_omitted"] = "too large for the size limit"
+
+    def fewer_causes() -> None:
+        causes = cast(list[dict[str, Any]], result.get("causes", []))
+        for c in causes:
+            for name in _EXTRACT:
+                c.pop(name, None)
+        result.pop("password_policy", None)
+
+    def minimal() -> None:
+        # Near the smallest MCP_MAX_BYTES: the answer, and what it rests on, in one line each.
+        kept = {
+            "headline": result.get("headline"),
+            "user": {
+                k: v
+                for k, v in cast(dict[str, Any], result.get("user", {})).items()
+                if k in ("id", "status")
+            },
+            "causes": [
+                {k: c[k] for k in ("cause", "count") if k in c}
+                for c in cast(list[dict[str, Any]], result.get("causes", []))
+            ],
+            "note": "most detail was dropped to fit the size limit (MCP_MAX_BYTES)",
+        }
+        result.clear()
+        result.update(kept)
+
+    steps += [
+        one_candidate,
+        no_undecided,
+        newest_only,
+        summary_only,
+        drop_evaluation,
+        fewer_causes,
+        minimal,
+    ]
     for step in steps:
         if size() <= budget:
             return result

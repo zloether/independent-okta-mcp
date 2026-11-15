@@ -1227,3 +1227,170 @@ async def test_a_small_budget_trims_detail_instead_of_failing(
     assert out["trimmed"] is True
     (rule,) = out["policy_evaluation"][0]["rules"]
     assert len(rule["candidates"]) == 1 and rule["candidates_total"] == 5
+
+
+# --- slice 2 code review regressions --------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_a_failed_policy_read_with_a_scanned_rule_does_not_crash(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    pid = "00p1emaKYZTWRYYRRTSK"
+    org.policies[pid] = {"id": pid, "name": "Default Policy", "type": "OKTA_SIGN_ON"}
+    org.rules[pid] = [
+        {
+            "id": "0pr1emaKYZTWRYYRRTSK",
+            "priority": 1,
+            "status": "ACTIVE",
+            "actions": {"signon": {"access": "DENY"}},
+        }
+    ]
+    org.override = lambda r: (
+        httpx2.Response(500, json={}) if r.url.path == f"/api/v1/policies/{pid}" else None
+    )
+    org.events = [
+        event(
+            "policy.evaluate_sign_on",
+            "DENY",
+            "x",
+            targets=[
+                {"id": "rul1", "type": "Rule", "detailEntry": {"policyId": pid}},
+                {
+                    "id": "0pr1emaKYZTWRYYRRTSK",
+                    "type": "Rule",
+                    "detailEntry": {"policyName": "Default Policy"},
+                },
+            ],
+        )
+    ]
+    out = await diagnose(ex)
+    (evaluation,) = out["policy_evaluation"]
+    # The listed policy stands in for the failed read: the scanned rule is diagnosed.
+    assert [r["rule"]["id"] for r in evaluation["rules"]] == ["0pr1emaKYZTWRYYRRTSK"]
+
+
+@pytest.mark.anyio
+async def test_cut_membership_changes_make_a_group_miss_undecided(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    access_policy(org)
+    org.membership_events = [
+        {
+            "published": "2026-11-14T11:00:00.000Z",
+            "eventType": "group.user_membership.add",
+            "target": [{"type": "UserGroup", "id": f"00g{i:017d}"}],
+        }
+        for i in range(250)
+    ]
+    org.events = [catch_all_deny()]
+    out = await diagnose(ex)
+    evaluation = out["policy_evaluation"][0]
+    assert "more group membership changes" in evaluation["groups_note"]
+    (candidate,) = evaluation["rules"][0]["candidates"]
+    assert "people.include" in {r["check"] for r in candidate.get("undecided", [])}
+
+
+@pytest.mark.anyio
+async def test_one_verify_query_serves_every_denial(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    access_policy(org)
+    other = catch_all_deny(at="2026-11-14T08:00:00.000Z")
+    other["target"][1]["id"] = "0oa2emaKYZTWRYYRRTSK"  # another app: another denial group
+    org.events = [catch_all_deny(), other]
+    out = await diagnose(ex)
+    assert len(out["policy_evaluation"]) == 2
+    verify = [r for r in org.requests if "user.authentication.verify" in r.url.query.decode()]
+    assert len(verify) == 1
+    query = parse_qs(verify[0].url.query.decode())
+    assert query["since"] == ["2026-11-14T07:30:00.000Z"]
+
+
+@pytest.mark.anyio
+async def test_the_headline_never_borrows_an_older_denial_s_reason(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    access_policy(org)
+    older = catch_all_deny(at="2026-11-14T08:00:00.000Z")
+    newest = event(
+        "policy.evaluate_sign_on",
+        "DENY",
+        "x",
+        targets=[
+            {
+                "id": "rulXemaKYZTWRYYRRTSK",
+                "type": "Rule",
+                "detailEntry": {"policyId": "rst1emaKYZTWRYYRRTSK"},
+            },  # not in the policy now
+        ],
+    )
+    org.events = [newest, older]
+    out = await diagnose(ex)
+    assert out["policy_evaluation"][1]["rules"][0].get("reason")
+    assert "Newest denial" not in out["headline"]
+
+
+@pytest.mark.anyio
+async def test_wave_one_runs_alongside_the_follow_ups(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    import anyio
+
+    access_policy(org)
+    org.events = [catch_all_deny()]
+    seen_policy = anyio.Event()
+    first = Org.__call__
+
+    async def gated(self: Org, request: httpx2.Request) -> httpx2.Response:
+        if request.url.path.startswith("/api/v1/policies"):
+            seen_policy.set()
+        if request.url.path.endswith("/authenticator-enrollments"):
+            with anyio.fail_after(5):
+                await seen_policy.wait()  # sequential waves would never get here in time
+        return await first(self, request)
+
+    Org.__call__ = gated  # pyright: ignore[reportAttributeAccessIssue]
+    try:
+        out = await diagnose(make(registry, spec, org, scopes=POLICY_SCOPES))
+    finally:
+        Org.__call__ = first  # pyright: ignore[reportAttributeAccessIssue]
+    assert out["policy_evaluation"][0]["rules"][0]["kind"] == "no_allow_rule_matched"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("max_bytes", [1500, 3000, 6000])
+async def test_any_budget_gets_an_answer(
+    registry: Registry, spec: SpecIndex, org: Org, max_bytes: int
+) -> None:
+    access_policy(org)
+    org.user["status"] = "LOCKED_OUT"
+    org.rules["rst1emaKYZTWRYYRRTSK"] = [
+        {
+            **org.rules["rst1emaKYZTWRYYRRTSK"][0],
+            "id": f"rul{i}emaKYZTWRYYRRTSK",
+            "priority": i,
+            "name": "r" * 150,
+        }
+        for i in range(5)
+    ] + [{**org.rules["rst1emaKYZTWRYYRRTSK"][1], "priority": 9}]
+    org.events = [
+        catch_all_deny(),
+        *[
+            event(
+                "user.session.start",
+                reason="INVALID_CREDENTIALS",
+                at=f"2026-11-14T09:{i:02d}:00.000Z",
+            )
+            for i in range(20)
+        ],
+    ]
+    small = make(registry, spec, org, scopes=POLICY_SCOPES)
+    small._max_bytes = max_bytes  # pyright: ignore[reportPrivateUsage]
+    out = await small.execute(Call(helpdesk(), "diagnostics", "login-failures", args={"user": UID}))
+    assert isinstance(out, Success), out
+    assert json.loads(out.text)["item"]["headline"]

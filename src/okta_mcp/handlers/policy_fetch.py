@@ -18,7 +18,7 @@ of the expected shape go into a path.
 import logging
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -131,10 +131,12 @@ async def evaluate(
     user: Mapping[str, Any],
     deny_events: Sequence[Mapping[str, Any]],
     causes: Mapping[str, int],
-    enrollments: Sequence[Mapping[str, Any]] | pe.Missing,
+    enrollments: Callable[[], Awaitable[Sequence[Mapping[str, Any]] | pe.Missing]],
     now: datetime,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, str]]:
-    """(per-denial evaluations, the password policy section or None, skipped lookups)."""
+    """(per-denial evaluations, the password policy section or None, skipped lookups).
+    `enrollments` waits for the user's enrollments, which the slice-1 follow-up reads: wave 1
+    runs alongside it, and only wave 2 waits."""
     uid = cast(str, user["id"])
     store = _Store()
     groups = denial_groups(deny_events)
@@ -147,14 +149,32 @@ async def evaluate(
     )
     if not chosen and not need_password:
         return [], None, {}
-    times = [pe.time_of(g.events[-1].get("published")) for g in chosen]
-    oldest = min((t for t in times if t is not None), default=None)
+    times = [t for g in chosen if (t := pe.time_of(g.event.get("published"))) is not None]
+    firsts = [pe.time_of(g.events[-1].get("published")) for g in chosen]
+    oldest = min((t for t in firsts if t is not None), default=None)
 
     policy: dict[str, Any] = {}
     rules: dict[str, Any] = {}
     listed: dict[str, Any] = {}
     shared: dict[str, Any] = {}
-    verify: dict[int, Any] = {}
+    cut: set[str] = set()
+    """Lists that had more than their cap: what was read may be incomplete."""
+
+    async def fetch_list(
+        what: str,
+        key: str,
+        operation: str,
+        path: Mapping[str, str] | None,
+        params: Mapping[str, str] | None,
+        cap: int,
+    ) -> Any:
+        async def job() -> list[Any]:
+            items, more = await ctx.items(operation, path, params, mode="link", max_items=cap)
+            if more:
+                cut.add(key)
+            return items
+
+        return await _guard(store, what, job)
 
     async def get_policy(pid: str) -> None:
         if not _POLICY_ID.fullmatch(pid):
@@ -166,29 +186,34 @@ async def evaluate(
         if not _POLICY_ID.fullmatch(pid):
             rules[pid] = store.missing("policy rules", "a policy ID on the event isn't one")
             return
-        rules[pid] = await _guard(
-            store,
+        rules[pid] = await fetch_list(
             "policy rules",
-            lambda: _items(ctx, "listPolicyRules", {"policyId": pid}, None, _RULES_PER_POLICY),
+            f"rules:{pid}",
+            "listPolicyRules",
+            {"policyId": pid},
+            None,
+            _RULES_PER_POLICY,
         )
 
     async def list_type(kind: str) -> None:
-        listed[kind] = await _guard(
-            store,
+        listed[kind] = await fetch_list(
             f"{kind} policies",
-            lambda: _items(ctx, "listPolicies", None, {"type": kind}, _POLICIES_PER_TYPE),
+            f"policies:{kind}",
+            "listPolicies",
+            None,
+            {"type": kind},
+            _POLICIES_PER_TYPE,
         )
 
     async def zones() -> None:
-        shared["zones"] = await _guard(
-            store, "network zones", lambda: _items(ctx, "listNetworkZones", None, None, _ZONES)
+        shared["zones"] = await fetch_list(
+            "network zones", "zones", "listNetworkZones", None, None, _ZONES
         )
 
     async def user_groups() -> None:
-        async def job() -> tuple[list[Any], bool]:
-            return await ctx.items("listUserGroups", {"id": uid}, mode="link", max_items=_GROUPS)
-
-        shared["groups"] = await _guard(store, "user groups", job)
+        shared["groups"] = await fetch_list(
+            "user groups", "groups", "listUserGroups", {"id": uid}, None, _GROUPS
+        )
 
     async def membership() -> None:
         if oldest is None:
@@ -198,35 +223,37 @@ async def evaluate(
             "filter": f'eventType sw "group.user_membership." and target.id eq "{uid}"',
             "since": _iso(oldest),
             "sortOrder": "DESCENDING",
-            "limit": str(_MEMBERSHIP_EVENTS),
+            "limit": str(_MEMBERSHIP_EVENTS + 1),
         }
-        shared["membership"] = await _guard(
-            store,
+        shared["membership"] = await fetch_list(
             "group membership changes",
-            lambda: _items(ctx, "listLogEvents", None, params, _MEMBERSHIP_EVENTS),
+            "membership",
+            "listLogEvents",
+            None,
+            params,
+            _MEMBERSHIP_EVENTS,
         )
 
     async def authenticators() -> None:
-        shared["authenticators"] = await _guard(
-            store, "authenticators", lambda: _items(ctx, "listAuthenticators", None, None, 100)
+        shared["authenticators"] = await fetch_list(
+            "authenticators", "authenticators", "listAuthenticators", None, None, 100
         )
 
-    async def verify_events(i: int, group: DenialGroup) -> None:
-        t = pe.time_of(group.event.get("published"))
-        if t is None:
-            verify[i] = pe.Missing("the denial has no timestamp")
+    async def verify_events() -> None:
+        # One query over every denial's lookback window (the System Log's rate limit is low);
+        # each denial takes its own window in memory.
+        if not times:
+            shared["verify"] = pe.Missing("the denials have no timestamp")
             return
         params = {
             "filter": f'eventType eq "user.authentication.verify" and actor.id eq "{uid}"',
-            "since": _iso(t - _VERIFY_LOOKBACK),
-            "until": _iso(t + timedelta(seconds=1)),
+            "since": _iso(min(times) - _VERIFY_LOOKBACK),
+            "until": _iso(max(times) + timedelta(seconds=1)),
             "sortOrder": "DESCENDING",
-            "limit": str(_VERIFY_EVENTS),
+            "limit": str(_VERIFY_EVENTS + 1),
         }
-        verify[i] = await _guard(
-            store,
-            "verify events",
-            lambda: _items(ctx, "listLogEvents", None, params, _VERIFY_EVENTS),
+        shared["verify"] = await fetch_list(
+            "verify events", "verify", "listLogEvents", None, params, _VERIFY_EVENTS
         )
 
     # Wave 1.
@@ -243,9 +270,9 @@ async def evaluate(
             tg.start_soon(zones)
             tg.start_soon(membership)
             tg.start_soon(authenticators)
-            for i, group in enumerate(chosen):
-                tg.start_soon(verify_events, i, group)
+            tg.start_soon(verify_events)
         tg.start_soon(user_groups)
+    enrolled = await enrollments()
 
     # Wave 2: rules of listed sign-on and enrollment policies, to place rules named without
     # their policy (the policy the event names first); authenticator methods.
@@ -259,21 +286,26 @@ async def evaluate(
                 items.sort(key=lambda p: p.get("name") not in names)
                 scan += [_s(p.get("id")) for p in items[:_SCANNED_POLICIES] if _s(p.get("id"))]
                 for p in items:
-                    policy.setdefault(_s(p.get("id")), p)
+                    # A listed policy stands in for a `getPolicy` that failed for the same ID.
+                    if not isinstance(policy.get(_s(p.get("id"))), dict):
+                        policy[_s(p.get("id"))] = p
     auths = _by_key(shared.get("authenticators"))
     wanted_keys: set[str] = set()
     for pid in policy_ids:
         for r in _list(rules.get(pid)):
             wanted_keys |= pe.authenticator_ids_named(pe.as_dict(r))
-    if not isinstance(enrollments, pe.Missing):
-        wanted_keys |= {_s(e.get("key")) for e in enrollments if e.get("status") == "ACTIVE"}
+    if not isinstance(enrolled, pe.Missing):
+        wanted_keys |= {_s(e.get("key")) for e in enrolled if e.get("status") == "ACTIVE"}
     methods: dict[str, Any] = {}
 
     async def get_methods(aid: str) -> None:
-        methods[aid] = await _guard(
-            store,
+        methods[aid] = await fetch_list(
             "authenticator methods",
-            lambda: _items(ctx, "listAuthenticatorMethods", {"authenticatorId": aid}, None, 50),
+            f"methods:{aid}",
+            "listAuthenticatorMethods",
+            {"authenticatorId": aid},
+            None,
+            50,
         )
 
     async with anyio.create_task_group() as tg:
@@ -287,32 +319,29 @@ async def evaluate(
 
     # Facts.
     raw_groups = shared.get("groups")
-    if isinstance(raw_groups, pe.Missing) or raw_groups is None:
-        groups_now: frozenset[str] | pe.Missing = raw_groups or pe.Missing(
-            "user groups weren't read"
-        )
-        complete = False
+    if isinstance(raw_groups, list):
+        groups_now: frozenset[str] | pe.Missing = frozenset(
+            _s(pe.as_dict(g).get("id")) for g in cast(list[Any], raw_groups)
+        ) - {""}
     else:
-        items, more = cast(tuple[list[Any], bool], raw_groups)
-        groups_now = frozenset(_s(pe.as_dict(g).get("id")) for g in items) - {""}
-        complete = not more
-    zone_map = _by_id(shared.get("zones"))
+        groups_now = raw_groups if isinstance(raw_groups, pe.Missing) else pe.Missing("not read")
+    membership_events = _events(shared.get("membership"))
+    if "membership" in cut:
+        membership_events = pe.Missing("more group membership changes than were read")
     facts = pe.Facts(
         user=user,
-        zones=zone_map,
+        zones=_by_id(shared.get("zones")),
         groups_now=groups_now,
-        groups_complete=complete,
-        membership_events=_events(shared.get("membership")),
+        groups_complete="groups" not in cut,
+        membership_events=membership_events,
         authenticators=auths if isinstance(auths, dict) else (auths or pe.Missing("not read")),
         methods={
             aid: (_by_type(m) if not isinstance(m, pe.Missing) else m) for aid, m in methods.items()
         },
-        enrollments=enrollments,
+        enrollments=enrolled,
     )
-    out = [
-        _evaluate_group(g, verify.get(i, pe.Missing("not read")), policy, rules, scan, facts)
-        for i, g in enumerate(chosen)
-    ]
+    verify = shared.get("verify", pe.Missing("not read"))
+    out = [_evaluate_group(g, verify, policy, rules, scan, facts, cut) for g in chosen]
     if len(groups) > MAX_DENIALS:
         out.append({"not_evaluated": len(groups) - MAX_DENIALS, "note": "older distinct denials"})
     password = None
@@ -323,7 +352,12 @@ async def evaluate(
         else:
             current = None if isinstance(groups_now, pe.Missing) else groups_now
             password = pe.password_policy(
-                [pe.as_dict(p) for p in _list(found)], current, user, causes, now
+                [pe.as_dict(p) for p in _list(found)],
+                current,
+                user,
+                causes,
+                now,
+                complete="groups" not in cut and "policies:PASSWORD" not in cut,
             )
     return out, password, store.skipped
 
@@ -335,16 +369,21 @@ def _evaluate_group(
     rules: Mapping[str, Any],
     scan: Sequence[str],
     facts: pe.Facts,
+    cut: set[str],
 ) -> dict[str, Any]:
     event = group.event
     t = pe.time_of(event.get("published"))
-    verify, by = _match_verify(event, verify_events)
+    verify, by = _match_verify(event, _window(verify_events, t))
     denial = pe.Denial(event=event, at=t, verify_events=verify, verify_by=by)
     if isinstance(facts.groups_now, pe.Missing):
         denial.groups_note = facts.groups_now.reason
     elif isinstance(facts.membership_events, pe.Missing):
         denial.groups_at = facts.groups_now
-        denial.groups_note = "group membership as of now: changes since the event weren't read"
+        denial.groups_note = (
+            f"group membership as of now ({facts.membership_events.reason}): a group the rule "
+            "needs that the user isn't in now is undecided"
+        )
+        facts = replace(facts, groups_complete=False)
     else:
         denial.groups_at = pe.groups_at(facts.groups_now, facts.membership_events, t)
     resolved: list[tuple[Mapping[str, Any], list[Mapping[str, Any]], Mapping[str, Any]]] = []
@@ -368,18 +407,34 @@ def _evaluate_group(
             resolved.append(found)
     denial.mfa_policy = next((p for p, _, _ in resolved if p.get("type") == "MFA_ENROLL"), None)
     out: dict[str, Any] = {
-        "rule_ids": list(group.rule_ids),
+        "rule_ids": pe.clip(list(group.rule_ids)),
         "count": len(group.events),
         "first_seen": group.events[-1].get("published"),
         "last_seen": event.get("published"),
     }
     if group.app is not None:
-        out["app"] = {k: group.app.get(k) for k in ("id", "displayName") if group.app.get(k)}
+        out["app"] = {
+            k: pe.clip(group.app.get(k)) for k in ("id", "displayName") if group.app.get(k)
+        }
     out["rules"] = [pe.diagnose_rule(p, rs, r, denial, facts) for p, rs, r in resolved]
     if unresolved:
         out["unresolved"] = unresolved
     if denial.groups_note:
         out["groups_note"] = denial.groups_note
+    notes = [
+        f"policy {pid} has more rules than were read ({_RULES_PER_POLICY}): candidates and the "
+        "rule itself may be missing"
+        for pid in sorted({_s(p.get("id")) for p, _, _ in resolved} - {""})
+        if f"rules:{pid}" in cut
+    ]
+    if any(k.startswith("policies:") for k in cut) and any(
+        u.get("reason", "").startswith("rule not found") for u in unresolved
+    ):
+        notes.append(f"more than {_POLICIES_PER_TYPE} policies of a type: not all were searched")
+    if "zones" in cut:
+        notes.append(f"more than {_ZONES} network zones: a zone not read is undecided")
+    if notes:
+        out["notes"] = notes
     out["verify_events_matched_by"] = by
     changed: list[dict[str, Any]] = []
     for p, rs, _ in resolved:
@@ -417,7 +472,7 @@ def _resolve(
 
     if ref.policy_id:
         p = policy.get(ref.policy_id)
-        if isinstance(p, pe.Missing) or p is None:
+        if not isinstance(p, dict):
             return p.reason if isinstance(p, pe.Missing) else "policy not read"
         rs = ordered(ref.policy_id)
         if isinstance(rs, str):
@@ -437,7 +492,10 @@ def _resolve(
             continue
         rule = next((r for r in rs if r.get("id") == ref.rule_id), None)
         if rule is not None:
-            return cast(Mapping[str, Any], policy[pid]), rs, rule
+            found = policy.get(pid)
+            if not isinstance(found, dict):
+                return "the rule's policy wasn't read"
+            return cast(Mapping[str, Any], found), rs, rule
     if reasons:
         return reasons[0]
     return "rule not found in the global session or enrollment policies"
@@ -466,15 +524,18 @@ def _match_verify(event: Mapping[str, Any], found: Any) -> tuple[Any, str | None
     return [], None
 
 
-async def _items(
-    ctx: Context,
-    operation: str,
-    path: Mapping[str, str] | None,
-    params: Mapping[str, str] | None,
-    max_items: int,
-) -> list[Any]:
-    items, _ = await ctx.items(operation, path, params, mode="link", max_items=max_items)
-    return items
+def _window(found: Any, t: datetime | None) -> Any:
+    """The verify events in one denial's lookback window."""
+    if isinstance(found, pe.Missing):
+        return found
+    if t is None:
+        return pe.Missing("the denial has no timestamp")
+    out: list[Any] = []
+    for e in _list(found):
+        published = pe.time_of(pe.as_dict(e).get("published"))
+        if published is not None and t - _VERIFY_LOOKBACK <= published <= t + timedelta(seconds=1):
+            out.append(e)
+    return out
 
 
 def _by_id(found: Any) -> Mapping[str, Mapping[str, Any]] | pe.Missing:

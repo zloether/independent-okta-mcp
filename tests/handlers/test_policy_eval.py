@@ -523,3 +523,44 @@ def test_password_policy_without_groups() -> None:
 def test_long_values_are_clipped() -> None:
     r = pe.row("x", "y" * 500, ["z"] * 50, False)
     assert len(r["required"]) == 200 and len(r["actual"]) == 21
+
+
+# --- slice 2 code review regressions ---------------------------------------------------------
+
+
+def test_a_device_that_doesn_t_say_is_undecided() -> None:
+    e = ev(device={"os_platform": "MACOS"})
+    r = only(pe.conditions({"device": {"managed": True}}, denial(e), facts()))
+    assert r["pass"] is None
+
+
+def test_methods_count_only_enrollments_before_the_event() -> None:
+    method = {"type": "ASSURANCE", "constraints": [{"possession": {"methods": ["PUSH"]}}]}
+    f = facts(
+        authenticators={"okta_verify": {"id": "aut1", "status": "ACTIVE"}},
+        methods={"aut1": {"push": {"status": "ACTIVE"}}},
+        enrollments=[
+            {
+                "type": "app",
+                "key": "okta_verify",
+                "status": "ACTIVE",
+                "created": "2026-11-14T11:00:00.000Z",
+            },
+        ],
+    )
+    assert only(pe.gate(_rule(method), denial(), f))["pass"] is False
+
+
+def test_password_policy_with_cut_groups_says_so() -> None:
+    p = _password(lockout={"maxAttempts": 5})
+    out = pe.password_policy(
+        [p],
+        frozenset({"00g1staff00000000000"}),
+        {"id": UID},
+        {"locked_out": 1},
+        NOW,
+        complete=False,
+    )
+    assert "higher-priority" in out["note"]
+    out = pe.password_policy([p], frozenset(), {"id": UID}, {"locked_out": 1}, NOW, complete=False)
+    assert out["evaluated"] is False

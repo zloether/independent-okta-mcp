@@ -78,7 +78,7 @@ class Denial:
 
 
 def row(check: str, required: Any, actual: Any, ok: bool | None, note: str | None = None) -> Row:
-    out: Row = {"check": check, "required": _clip(required), "actual": _clip(actual), "pass": ok}
+    out: Row = {"check": check, "required": clip(required), "actual": clip(actual), "pass": ok}
     if note:
         out["note"] = note
     return out
@@ -146,15 +146,15 @@ def str_ids(value: object) -> list[str]:
     return [v for v in _list(value) if isinstance(v, str)]
 
 
-def _clip(value: Any) -> Any:
+def clip(value: Any) -> Any:
     if isinstance(value, str):
         return value if len(value) <= _TEXT_MAX else value[: _TEXT_MAX - 1] + "…"
     if isinstance(value, list):
-        items = [_clip(v) for v in cast(list[Any], value)[:_LIST_MAX]]
+        items = [clip(v) for v in cast(list[Any], value)[:_LIST_MAX]]
         more = len(cast(list[Any], value)) - _LIST_MAX
         return [*items, f"… (+{more})"] if more > 0 else items
     if isinstance(value, dict):
-        return {k: _clip(v) for k, v in cast(dict[str, Any], value).items()}
+        return {k: clip(v) for k, v in cast(dict[str, Any], value).items()}
     return value
 
 
@@ -432,7 +432,10 @@ def _device(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
             )
             continue
         actual = d.device.get(name)
-        rows.append(row(f"device.{name}", wanted, actual, bool(actual) == wanted))
+        if not isinstance(actual, bool):
+            rows.append(row(f"device.{name}", wanted, None, None, "the event's device doesn't say"))
+            continue
+        rows.append(row(f"device.{name}", wanted, actual, actual == wanted))
     if ids := str_ids(as_dict(cond.get("assurance")).get("include")):
         rows.append(
             row(
@@ -945,7 +948,8 @@ def _slot_rows(slot: _Slot, d: Denial, facts: Facts) -> list[Row]:
         ok: bool | None = None if isinstance(enrollments, Missing) else bool(enrolled & allowed)
         note = enrollments.reason if isinstance(enrollments, Missing) else None
         if ok and slot.methods and not isinstance(enrollments, Missing):
-            ok, note = _methods_enabled(slot.methods, allowed, enrollments, facts)
+            before = [e for e in enrollments if _enrolled_before(e, d)]
+            ok, note = _methods_enabled(slot.methods, allowed, before, facts)
         required = {"type_in": sorted(allowed)} | (
             {"offering": list(slot.methods)} if slot.methods else {}
         )
@@ -1044,7 +1048,7 @@ def _brief(rule: Mapping[str, Any]) -> dict[str, Any]:
         k: v
         for k, v in (
             ("id", rule.get("id")),
-            ("name", _clip(_str(rule.get("name"))) or None),
+            ("name", clip(_str(rule.get("name"))) or None),
             ("priority", rule.get("priority")),
         )
         if v is not None
@@ -1064,7 +1068,7 @@ def diagnose_rule(
     out: dict[str, Any] = {
         "policy": {
             "id": policy.get("id"),
-            "name": _clip(_str(policy.get("name"))),
+            "name": clip(_str(policy.get("name"))),
             "type": kind_of_policy,
         },
         "rule": _brief(rule) | ({"access": action} if action else {}),
@@ -1124,7 +1128,7 @@ def diagnose_rule(
     evaluated.sort(key=lambda c: (len(c.get("failing", [])), len(c.get("undecided", []))))
     if out["kind"] in ("no_allow_rule_matched", "allow_rule_gate_failed"):
         best = evaluated[0]
-        out["reason"] = _clip(
+        out["reason"] = clip(
             f"closest ALLOW rule {best['rule'].get('name') or best['rule'].get('id')!r} failed: "
             + "; ".join(r["check"] for r in best.get("failing", []))
         )
@@ -1175,6 +1179,8 @@ def password_policy(
     user: Mapping[str, Any],
     causes: Mapping[str, int],
     now: datetime,
+    *,
+    complete: bool = True,
 ) -> dict[str, Any]:
     """The password policy that applies to the user (first active one by priority whose groups
     include theirs and whose provider is theirs), and only the settings the causes concern:
@@ -1199,6 +1205,12 @@ def password_policy(
         if include & groups:
             chosen = p
             break
+    if chosen is None and not complete and not undecided:
+        return {
+            "evaluated": False,
+            "note": "the user's groups or the password policies were cut short: the policy "
+            "that applies can't be picked",
+        }
     if chosen is None:
         note = (
             "the user's groups weren't read, so the policy that applies can't be picked"
@@ -1207,8 +1219,13 @@ def password_policy(
         )
         return {"evaluated": False, "note": note}
     out: dict[str, Any] = {
-        "policy": {"id": chosen.get("id"), "name": _clip(_str(chosen.get("name")))}
+        "policy": {"id": chosen.get("id"), "name": clip(_str(chosen.get("name")))}
     }
+    if not complete:
+        out["note"] = (
+            "the user's groups or the password policies were cut short: a higher-priority "
+            "policy may apply instead"
+        )
     rows: list[Row] = []
     lockout = as_dict(at(chosen, "settings.password.lockout"))
     if causes.keys() & {"invalid_credentials", "locked_out"}:
