@@ -108,6 +108,10 @@ class Org:
         self.groups: list[str] = []
         self.authenticators: list[dict[str, Any]] = []
         self.methods: dict[str, list[dict[str, Any]]] = {}
+        # Slice 3.
+        self.assurance: dict[str, dict[str, Any]] = {}
+        self.posture_checks: list[dict[str, Any]] = []
+        self.default_posture_checks: list[dict[str, Any]] = []
         self.override: Callable[[httpx2.Request], httpx2.Response | None] | None = None
 
     @property
@@ -162,6 +166,13 @@ class Org:
             case ["users", uid, "groups"]:
                 assert uid == UID
                 return httpx2.Response(200, json=[{"id": g} for g in self.groups])
+            case ["device-assurances", aid]:
+                found = self.assurance.get(aid)
+                return httpx2.Response(200, json=found) if found else _missing()
+            case ["device-posture-checks"]:
+                return httpx2.Response(200, json=self.posture_checks)
+            case ["device-posture-checks", "default"]:
+                return httpx2.Response(200, json=self.default_posture_checks)
             case ["authenticators"]:
                 return httpx2.Response(200, json=self.authenticators)
             case ["authenticators", aid, "methods"]:
@@ -1394,3 +1405,135 @@ async def test_any_budget_gets_an_answer(
     out = await small.execute(Call(helpdesk(), "diagnostics", "login-failures", args={"user": UID}))
     assert isinstance(out, Success), out
     assert json.loads(out.text)["item"]["headline"]
+
+
+# --- slice 3: device assurance and advanced posture checks ----------------------------
+
+DEVICE_SCOPES = POLICY_SCOPES | {"okta.deviceAssurance.read", "okta.devicePostureChecks.read"}
+ASSURANCE = "dae1emaKYZTWRYYRRTSK"
+
+
+def device_policy(org: Org, *, posture: bool) -> None:
+    """The app policy's ALLOW rule needs a compliant Mac, with a firewall posture check."""
+    access_policy(org)
+    allow = org.rules["rst1emaKYZTWRYYRRTSK"][0]
+    allow["conditions"] = {"device": {"registered": True, "assurance": {"include": [ASSURANCE]}}}
+    allow["actions"]["appSignOn"].pop("verificationMethod")
+    org.assurance[ASSURANCE] = {
+        "id": ASSURANCE,
+        "name": "Mac baseline",
+        "platform": "MACOS",
+        "osVersion": {"minimum": "15.0"},
+        **(
+            {"devicePostureChecks": {"include": [{"variableName": "macOSFirewall", "value": "1"}]}}
+            if posture
+            else {}
+        ),
+    }
+    org.posture_checks = [
+        {
+            "id": "dch1emaKYZTWRYYRRTSK",
+            "variableName": "macOSFirewall",
+            "name": "Firewall on",
+            "type": "CUSTOM",
+            "query": "SELECT 1;",
+            "remediationSettings": {"message": {"customText": "Turn on the firewall"}},
+        }
+    ]
+
+
+def mac_deny() -> dict[str, Any]:
+    return catch_all_deny(
+        device={
+            "os_platform": "OSX",
+            "os_version": "14.6",
+            "registered": True,
+            "managed": True,
+            "macOSFirewall": "0",
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_a_device_failing_assurance_and_a_posture_check(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=DEVICE_SCOPES)
+    device_policy(org, posture=True)
+    org.events = [mac_deny()]
+    out = await diagnose(ex)
+    (candidate,) = out["policy_evaluation"][0]["rules"][0]["candidates"]
+    failing = {r["check"]: r for r in candidate["failing"]}
+    assert set(failing) == {
+        "assurance 'Mac baseline': osVersion.minimum",
+        "assurance 'Mac baseline': posture check macOSFirewall",
+    }
+    posture = failing["assurance 'Mac baseline': posture check macOSFirewall"]
+    assert posture["required"]["remediation"] == "Turn on the firewall"
+    assert posture["actual"] == "0"
+    assert candidate["passed"] == 1  # device.registered
+    assert org.paths.count(f"/api/v1/device-assurances/{ASSURANCE}") == 1
+    assert "/api/v1/device-posture-checks" in org.paths
+    assert "skipped" not in out
+
+
+@pytest.mark.anyio
+async def test_no_posture_checks_in_use_means_no_posture_calls_or_scope(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    # The org doesn't use advanced posture checks, and the service app lacks their scope.
+    scopes = POLICY_SCOPES | {"okta.deviceAssurance.read"}
+    ex = make(registry, spec, org, scopes=scopes)
+    device_policy(org, posture=False)
+    org.events = [mac_deny()]
+    out = await diagnose(ex)
+    assert not any(p.startswith("/api/v1/device-posture-checks") for p in org.paths)
+    assert "skipped" not in out
+    (candidate,) = out["policy_evaluation"][0]["rules"][0]["candidates"]
+    assert [r["check"] for r in candidate["failing"]] == [
+        "assurance 'Mac baseline': osVersion.minimum"
+    ]
+
+
+@pytest.mark.anyio
+async def test_posture_checks_without_their_scope_still_evaluate(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES | {"okta.deviceAssurance.read"})
+    device_policy(org, posture=True)
+    org.events = [mac_deny()]
+    out = await diagnose(ex)
+    assert {
+        "check": "policy evaluation: device posture checks",
+        "reason": "the service app needs okta.devicePostureChecks.read",
+    } in out["skipped"]
+    (candidate,) = out["policy_evaluation"][0]["rules"][0]["candidates"]
+    posture = next(r for r in candidate["failing"] if "posture check" in r["check"])
+    assert posture["actual"] == "0" and "remediation" not in posture["required"]
+
+
+@pytest.mark.anyio
+async def test_without_the_assurance_scope_the_assurance_check_is_undecided(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    device_policy(org, posture=True)
+    org.events = [mac_deny()]
+    out = await diagnose(ex)
+    (candidate,) = out["policy_evaluation"][0]["rules"][0]["candidates"]
+    assert candidate["status"] == "undetermined"
+    assert candidate["undecided"][0]["note"] == "the service app needs okta.deviceAssurance.read"
+    assert not any(p.startswith("/api/v1/device") for p in org.paths)
+
+
+@pytest.mark.anyio
+async def test_an_assurance_id_that_isn_t_one_is_never_sent(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=DEVICE_SCOPES)
+    device_policy(org, posture=False)
+    allow = org.rules["rst1emaKYZTWRYYRRTSK"][0]
+    allow["conditions"]["device"]["assurance"]["include"] = ["../users/me"]
+    org.events = [mac_deny()]
+    await diagnose(ex)
+    assert not any(p.startswith("/api/v1/device-assurances") for p in org.paths)
