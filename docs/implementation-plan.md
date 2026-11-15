@@ -491,13 +491,13 @@ Review of 2026-11-15 before making the repository public (see the [decisions log
 - [x] `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `NOTICE` (Okta spec attribution, non-affiliation); README status says what has and hasn't run live, and that there is no independent audit
 - [x] `docs/compatibility-matrix.md` with how a client connects; runbook: what redaction doesn't cover (custom profile attributes, System Log string values), a proxy example and limits; design §12.1 and R8 for the same; request body limit pinned by a test
 - [ ] **Before the repository is public:** read every pull request's body, comments and reviews (62, all closed) for org identifiers, real IDs, pasted responses or anything else not meant for publication; they become public with the repository. Not done: the delegated scan stopped on a usage limit
-- [ ] **Repository settings (user):** private vulnerability reporting on (`SECURITY.md` relies on it); branch protection on `main` with CI required; secret scanning with push protection; approval required for workflows from first-time contributors' forks; check what access the `zeta-logic-bot` account keeps
+- [ ] **Repository settings, right after it is public (user):** GitHub offers these only on a public repository, so they can't be set first. In the same sitting as the visibility change: private vulnerability reporting on (`SECURITY.md` relies on it; until it is on, the reporting link there leads nowhere); branch protection on `main` with CI required; secret scanning with push protection; approval required for workflows from first-time contributors' forks. Before the change: check what access the `zeta-logic-bot` account keeps
 - [ ] **Independent security review** by someone other than the tools that wrote the code, of the 🔒 paths at least; until then the README and `SECURITY.md` say there has been none
-- [ ] **Decide (user):** whether contributions need a relicensing grant (a CLA). `CONTRIBUTING.md` now takes them under the repository's license only, which is enough to publish but would bind a later license change to each contributor's consent
+- [x] Relicensing (user decision, 2026-11-15: the license must stay changeable): `CONTRIBUTING.md` has contributors grant the licensor the right to relicense their contribution. It is a statement in a file, not a signed CLA; if outside contributions become frequent, a CLA check on pull requests makes the agreement explicit per contributor
 - [ ] Delete `spikes/` (already due with 0.6 and 4.6)
 - [ ] The live checks the README lists as not yet done are 4.6, 7.2, 7.3, 8.2 and 9.1's live items; the README's status table changes as they close
 
-Verify: the unchecked "before public" and "settings" items are done or consciously waived; README status matches this plan.
+Verify: the "before public" item is done, and the settings item within the hour after the change; README status matches this plan.
 
 ### 8.4 Release v1.0.0 ☐
 - [ ] Tag, build and publish image, changelog

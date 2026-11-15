@@ -22,4 +22,10 @@ uv lock --check
 
 ## License of contributions
 
-The project is licensed under Apache-2.0 with the Commons Clause ([LICENSE](LICENSE)). By submitting a contribution you agree that it is licensed under those same terms, as Apache-2.0 §5 provides.
+The project is licensed under Apache-2.0 with the Commons Clause ([LICENSE](LICENSE)), and the licensor may change that license later. So that a contribution never blocks such a change, by submitting one (a pull request, a patch, or text in an issue meant for inclusion) you agree that:
+
+1. it is your own work, or you have the right to submit it under these terms;
+2. it is licensed to everyone under the project's license as it stands when you submit it; and
+3. you also grant the licensor named in [LICENSE](LICENSE) a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to use, modify, sublicense and relicense it under any terms, including terms other than the project's current license.
+
+You keep the copyright in your contribution. If you can't agree to this, open an issue describing the change instead of sending code.
