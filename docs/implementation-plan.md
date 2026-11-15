@@ -457,6 +457,7 @@ Verify: someone (or a fresh Claude session) follows the runbook on a clean machi
 ### 8.1 Security review sweep ☑
 - [x] `/security-review` over all 🔒 paths together (cross-cutting issues): four parallel reviewers by theme (identity → authorization, request building and URL following, data egress, credentials and deployment), 2026-11-14
 - [x] Resolve or ticket every finding (see the [decisions log](decisions-log.md))
+- [x] Second sweep, whole codebase by hand (2026-11-15): no high or medium finding; four low ones fixed (existing role groups with members in `okta-setup.py`, check 6 for every query argument, `MCP_MAX_TOKEN_AGE` default, a concurrent-callers test), two informational ones left open (decisions log) 🔒
 - [x] Narrow the `.` half of the reserved-literal rule in `exec/params.py` so logins such as `me.smith@…` resolve again: Okta doesn't strip suffixes (`me.json` is a literal), but does strip matrix parameters, so `;` stays refused (2.10 dev-org check, 2026-11-13) 🔒
 
 ### 8.2 Compatibility matrix & E2E ☐

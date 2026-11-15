@@ -25,31 +25,35 @@ from okta_mcp.registry.spec import Operation, SpecIndex
 REGISTRY = files("okta_mcp") / "data" / "registry"
 # Free-form filters: what they can match decides whether the call reads more than it returns.
 _FILTERS = frozenset({"filter", "search", "q"})
-# Query params reviewed as unable to widen a result: each picks among the items the command
-# returns anyway, by a fixed field (a status, a type, an ID, a time window) or their order.
-# Every other query param needs an `arg_rule` or `allowed_values` (check 6), so one Okta adds
-# later (an `expand` under another name) can't be exposed without a decision. Matched by name:
-# before adding one, check it on every operation that has it, and that it neither adds fields
-# or items (`expand`, `discloseIdentifiers`) nor names an attribute (`sortBy`).
+# (operationId, query param) pairs reviewed as unable to widen a result: each picks among the
+# items the command returns anyway, by a fixed field (a status, a type, an ID, a time window)
+# or their order. Every other query param needs an `arg_rule` or `allowed_values` (check 6), so
+# one nobody looked at (an `expand` under another name, or a familiar name that means more on
+# another operation) can't be exposed without a decision. Before adding a pair, check that the
+# param neither adds fields or items (`expand`, `discloseIdentifiers`) nor names an attribute
+# (`sortBy`) on that operation.
 _NARROWING = frozenset(
     {
-        "activeAppsOnly",
-        "assignmentType",
-        "lastUpdated",
-        "requestingAppId",
-        "requestingAppName",
-        "resourceAppId",
-        "resourceAppName",
-        "scopeId",
-        "since",
-        "sortOrder",
-        "sourceGroupId",
-        "sourceId",
-        "status",
-        "targetId",
-        "trusted",
-        "type",
-        "until",
+        ("getAllCrossAppAccessConnections", "activeAppsOnly"),
+        ("getAllCrossAppAccessConnections", "requestingAppId"),
+        ("getAllCrossAppAccessConnections", "requestingAppName"),
+        ("getAllCrossAppAccessConnections", "resourceAppId"),
+        ("getAllCrossAppAccessConnections", "resourceAppName"),
+        ("getAllCrossAppAccessConnections", "status"),
+        ("getRoleTargetsByUserIdAndRoleId", "assignmentType"),
+        ("listAssociatedServersByTrustedType", "trusted"),
+        ("listGroupPushMappings", "lastUpdated"),
+        ("listGroupPushMappings", "sourceGroupId"),
+        ("listGroupPushMappings", "status"),
+        ("listIdentityProviders", "type"),
+        ("listLogEvents", "since"),
+        ("listLogEvents", "until"),
+        ("listPolicies", "type"),
+        ("listProfileMappings", "sourceId"),
+        ("listProfileMappings", "targetId"),
+        ("listRealms", "sortOrder"),
+        ("listUserGrants", "scopeId"),
+        ("listYubikeyOtpTokens", "sortOrder"),
     }
 )
 # Params whose value names attributes, so `arg_rule: attribute_expression` can check them.
@@ -312,10 +316,10 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
         used[arg.param] = arg_name
         if location == "query" and arg.param in _RESERVED_QUERY:
             errors.append(f"arg {arg_name}: query param {arg.param} is set by the server")
-        # Check 6: a query argument needs a rule, unless its param is known only to narrow.
+        # Check 6: a query argument needs a rule, unless it is known only to narrow here.
         if (
             location == "query"
-            and arg.param not in _NARROWING
+            and (op.operation_id, arg.param) not in _NARROWING
             and arg.arg_rule is None
             and arg.allowed_values is None
         ):

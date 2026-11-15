@@ -53,7 +53,8 @@ class FakeOkta:
                 )
             ]
             if not self.page_size:
-                return httpx2.Response(200, json=items)
+                limit = request.url.params.get("limit")
+                return httpx2.Response(200, json=items[: int(limit)] if limit else items)
             start = int(request.url.params.get("after", 0))
             end = start + self.page_size
             headers = {}
@@ -774,7 +775,7 @@ def test_existing_group_with_members_is_not_used(config: Path, capsys) -> None:
 
 def test_a_full_page_of_members_is_reported_as_a_minimum(config: Path, capsys) -> None:
     okta = FakeOkta()
-    plant_group(okta, "mcp-okta-readers", setup.MEMBERS_SHOWN)
+    plant_group(okta, "mcp-okta-readers", setup.MEMBERS_SHOWN + 5)
 
     assert run(okta, "check", config) == 1
     assert f"has {setup.MEMBERS_SHOWN} or more member(s)" in capsys.readouterr().out
@@ -783,7 +784,7 @@ def test_a_full_page_of_members_is_reported_as_a_minimum(config: Path, capsys) -
 def test_reviewed_existing_group_is_used(config: Path, capsys) -> None:
     okta = FakeOkta()
     planted = plant_group(okta, "mcp-okta-readers", 2)
-    config.write_text(config.read_text() + "reviewed_groups: [mcp-okta-readers]\n")
+    config.write_text(config.read_text() + f"reviewed_groups: [{planted['id']}]\n")
 
     assert run(okta, "apply", config, "--yes") == 0
     rule = okta.find(*rules_path(okta), name=setup.RULE_NAME)
@@ -823,11 +824,43 @@ def test_group_with_members_added_to_the_config_later_is_not_used(config: Path, 
     assert planted["id"] not in rule["conditions"]["people"]["groups"]["include"]
 
 
-def test_reviewed_groups_must_be_configured_groups(config: Path, capsys) -> None:
-    config.write_text(config.read_text() + "reviewed_groups: [mcp-okta-other]\n")
+def test_reviewed_groups_are_ids_not_names(config: Path, capsys) -> None:
+    """The review was of one group's members: another group given its name is not covered."""
+    config.write_text(config.read_text() + "reviewed_groups: [mcp-okta-readers]\n")
 
     assert run(FakeOkta(), "check", config) == 2
-    assert "reviewed_groups must be listed in groups" in capsys.readouterr().err
+    assert "reviewed_groups" in capsys.readouterr().err
+
+
+def test_a_review_does_not_carry_over_to_another_group_of_the_same_name(
+    config: Path, capsys
+) -> None:
+    okta = FakeOkta()
+    plant_group(okta, "mcp-okta-readers", 2)
+    config.write_text(config.read_text() + "reviewed_groups: [00gother000000000000]\n")
+
+    assert run(okta, "check", config) == 1
+    assert "[manual] group mcp-okta-readers: existing group" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("level", ["server", "policy", "rule"])
+def test_a_group_in_an_inactive_rule_is_not_trusted_for_it(
+    config: Path, level: str, capsys
+) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config, "--yes") == 0
+    for group in okta.items("api", "v1", "groups"):
+        okta.items("api", "v1", "groups", group["id"], "users").append({"id": "00u1member"})
+    path = rules_path(okta)
+    target = {
+        "server": okta.find("api", "v1", "authorizationServers", name="okta-mcp"),
+        "policy": okta.find(*path[:-2], name=setup.POLICY_NAME),
+        "rule": okta.find(*path, name=setup.RULE_NAME),
+    }[level]
+    target["status"] = "INACTIVE"
+
+    assert run(okta, "check", config) == 1
+    assert "[manual] group mcp-okta-readers: existing group" in capsys.readouterr().out
 
 
 def test_duplicate_groups_are_an_error(config: Path, capsys) -> None:

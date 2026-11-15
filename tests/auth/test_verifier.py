@@ -458,6 +458,21 @@ async def test_max_token_age_is_configurable(make: Make, tmp_path: Path) -> None
 
 
 @pytest.mark.anyio
+async def test_an_unexpired_token_over_the_age_limit_is_warned_about_once(
+    make: Make, caplog: pytest.LogCaptureFixture
+) -> None:
+    v = await loaded(make)
+    old = sign(claims(iat=int(NOW) - 3600 - LEEWAY - 1, exp=int(NOW) + 600))
+    with caplog.at_level(logging.WARNING, logger="okta_mcp"):
+        assert await v.verify_token(old) is None
+        assert await v.verify_token(old) is None
+    (record,) = [r for r in caplog.records if "MCP_MAX_TOKEN_AGE" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert "3600 s" in record.getMessage()
+    assert "eyJ" not in record.getMessage()
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "token",
     [

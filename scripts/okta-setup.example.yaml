@@ -26,11 +26,12 @@ groups:
   - mcp-okta-helpdesk
   - mcp-okta-readers
 
-# Only for a group above that already existed, with members, before this tool first used it:
-# `check` reports it as manual until you have looked at its members and named it here. Anyone
-# in a role group gets the role. Remove the entry once `check` is clean.
+# Only for a group above that has members before the tool has put it in the policy rule (one
+# that existed before the first run): `check` reports it as manual, with its ID, until you
+# have looked at its members and listed the ID here. Anyone in a role group gets the role.
+# Remove the entry once `check` is clean.
 # reviewed_groups:
-#   - mcp-okta-helpdesk
+#   - 00g1helpdsk000000000
 
 # One public (PKCE) OIDC app per approved MCP client, with its exact redirect URIs.
 clients:

@@ -21,7 +21,8 @@ at most once per 60 s. `ready()` is true while keys are held and not past their 
 TTL). Startup doesn't wait for the issuer.
 
 Nothing here logs a token, a claim value or a response body; a rejection is logged at DEBUG
-with a fixed reason.
+with a fixed reason (plus `token_too_old`, a WARNING at most every ten minutes, when an
+unexpired token is over the age limit: a setting to fix, not a sender to ignore).
 """
 
 import json
@@ -50,6 +51,8 @@ LEEWAY = 60
 JWKS_TTL = 3600.0
 """How long fetched keys are trusted without a successful refresh (s)."""
 REFRESH_EVERY = JWKS_TTL / 2
+TOO_OLD_LOG_EVERY = 600.0
+"""At most one `token_too_old` line per this many seconds."""
 UNKNOWN_KID_INTERVAL = 60.0
 """At most one refetch per this many seconds for a `kid` the cache doesn't have."""
 RETRY_MIN, RETRY_MAX = 1.0, 60.0
@@ -161,6 +164,7 @@ class JWTVerifier:
         self._keys: dict[str, jwt.PyJWK] = {}
         self._keys_until = -math.inf
         self._last_fetch = -math.inf
+        self._too_old_logged = -math.inf
         self._lock = anyio.Lock()
 
     # --- readiness and keys -----------------------------------------------------------------
@@ -356,6 +360,18 @@ class JWTVerifier:
         if iat > now + LEEWAY:
             raise _Rejected("iat in the future")
         if now - iat > self._max_age + LEEWAY:
+            # Signed by the issuer, for us, and not expired: the authorization server gives
+            # tokens a longer life than the server accepts, so users get 401 mid-token. Said
+            # at WARNING (only a real token gets here), but not once per request.
+            if self._monotonic() - self._too_old_logged >= TOO_OLD_LOG_EVERY:
+                self._too_old_logged = self._monotonic()
+                log.warning(
+                    "an unexpired token was refused as older than MCP_MAX_TOKEN_AGE (%d s): "
+                    "shorten the authorization server's access-token lifetime, or raise "
+                    "MCP_MAX_TOKEN_AGE",
+                    self._max_age,
+                    extra=event("token_too_old", max_age_s=self._max_age),
+                )
             raise _Rejected("older than MCP_MAX_TOKEN_AGE")
         if "nbf" in claims:
             nbf = _number(claims["nbf"])

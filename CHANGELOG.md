@@ -8,8 +8,8 @@ No release has been tagged and no image is published; the server builds from a c
 
 ### Changed
 
-- `MCP_MAX_TOKEN_AGE` defaults to 3600 (was 86400): a token issued more than an hour ago is refused. Authorization servers set up with `scripts/okta-setup.py` or `terraform/okta` issue tokens of at most 30 minutes and are unaffected; set the variable for one that issues longer ones.
-- `scripts/okta-setup.py` no longer uses a role group that existed, with members, before the tool first used it: it reports the group as `manual` until it is named under `reviewed_groups` in the config.
+- `MCP_MAX_TOKEN_AGE` defaults to 3600 (was 86400): a token issued more than an hour ago is refused. Authorization servers set up with `scripts/okta-setup.py` or `terraform/okta` issue tokens of at most 30 minutes and are unaffected; set the variable for one that issues longer ones (the server logs `token_too_old` when it refuses an unexpired token for its age).
+- `scripts/okta-setup.py` no longer uses a role group that existed, with members, before the tool first used it: it reports the group as `manual` until its ID is listed under `reviewed_groups` in the config.
 
 ### Added
 

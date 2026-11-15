@@ -23,7 +23,7 @@ import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Annotated, Any, TypeVar, cast
 from urllib.parse import urlsplit
 
 import httpx2
@@ -48,6 +48,8 @@ GROUP_PREFIX = "mcp-okta-"
 # would put most of a user's groups in every token, past Okta's cap on the claim. Mirrored in
 # terraform/okta/variables.tf (tested).
 GROUP_PREFIX_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9 _.:-]{3,63}$"
+# pydantic's regex engine (Rust): `$` is the end of the text, never before a final newline.
+GROUP_ID_PATTERN = r"^00g[A-Za-z0-9]{17}$"
 
 
 def groups_expression(prefix: str) -> str:
@@ -178,9 +180,10 @@ class Config(_Model):
     group_prefix: str = Field(default=GROUP_PREFIX, pattern=GROUP_PREFIX_PATTERN)
     """Role group names start with this; the groups claim emits only such groups' IDs."""
     groups: list[str] = Field(min_length=1)
-    reviewed_groups: list[str] = []
-    """Groups that existed, with members, before this tool used them, and whose members an
-    admin has checked (`Setup.groups`). Not needed once the group is in the policy rule."""
+    reviewed_groups: list[Annotated[str, Field(pattern=GROUP_ID_PATTERN)]] = []
+    """IDs of groups that had members before they reached the policy rule, and whose members
+    an admin has checked (`Setup.groups`). IDs, not names: the check was of one group, and a
+    name can be given to another. Not needed once the group is in the policy rule."""
     clients: list[Client] = Field(min_length=1)
     service_app: ServiceApp
 
@@ -196,8 +199,6 @@ class Config(_Model):
         bad = [g for g in self.groups if not g.startswith(prefix) or g == prefix]
         if bad:
             raise ValueError(f"group names must start with {prefix!r}, got {bad}")
-        if unknown := [g for g in self.reviewed_groups if g not in self.groups]:
-            raise ValueError(f"reviewed_groups must be listed in groups, got {unknown}")
         return self
 
     @property
@@ -421,19 +422,22 @@ class Setup:
 
     def _rule_groups(self) -> set[str]:
         """IDs of the groups already in the managed policy rule: put there by this tool or by
-        an admin who can edit the authorization server, so already accepted as role groups."""
+        an admin who can edit the authorization server (who decides who gets tokens anyway),
+        so already accepted as role groups. Only from the one ACTIVE server, policy and rule
+        of the managed names; whether that rule is otherwise sound is `_rule`'s to say."""
         cfg = self.cfg
         server = self.okta.find("/api/v1/authorizationServers", "name", cfg.authorization_server)
-        if server is None:
+        if server is None or server.get("status") != "ACTIVE":
             return set()
         base = f"/api/v1/authorizationServers/{server['id']}/policies"
-        policy = next((p for p in self.okta.get(base) if p["name"] == POLICY_NAME), None)
-        if policy is None:
+        policies = [p for p in self.okta.get(base) if p["name"] == POLICY_NAME]
+        if len(policies) != 1 or policies[0].get("status") != "ACTIVE":
             return set()
-        rules = self.okta.get(f"{base}/{policy['id']}/rules")
-        rule = next((r for r in rules if r["name"] == RULE_NAME), None)
-        if rule is None:
+        rules = self.okta.get(f"{base}/{policies[0]['id']}/rules")
+        rules = [r for r in rules if r["name"] == RULE_NAME]
+        if len(rules) != 1 or rules[0].get("status") != "ACTIVE":
             return set()
+        rule = rules[0]
         people = (rule.get("conditions") or {}).get("people") or {}
         return set((people.get("groups") or {}).get("include") or [])
 
@@ -441,9 +445,10 @@ class Setup:
         """Why an existing group isn't used yet, or None. Group names are not reserved, so
         anyone who can create a group could have made this one, with themselves in it, for a
         Super Admin to turn into a role (as for an existing service app). A group is used when
-        this tool created it, it is already in the policy rule, it has no members, or the
-        config lists it under `reviewed_groups`."""
-        if group["id"] in accepted or name in self.cfg.reviewed_groups:
+        this run created it, it is already in the policy rule, it has no members, or the
+        config lists its ID under `reviewed_groups`. Who joins a group later is outside this
+        tool's view (design R7)."""
+        if group["id"] in accepted or group["id"] in self.cfg.reviewed_groups:
             return None
         members = self.okta.get(f"/api/v1/groups/{group['id']}/users", limit=MEMBERS_SHOWN)
         if not members:
@@ -451,9 +456,9 @@ class Setup:
         count = f"{len(members)}{' or more' if len(members) >= MEMBERS_SHOWN else ''}"
         return (
             f"existing group {group['id']} created {group.get('created')} has {count} "
-            "member(s), and this tool has not used it before: anyone in it gets the role. "
-            "Check its members, then add it to reviewed_groups in the config (or empty it) "
-            "and run again"
+            "member(s) and is not in the policy rule yet: anyone in it gets the role. Check "
+            "its members, then add this ID to reviewed_groups in the config (or empty the "
+            "group) and run again"
         )
 
     def groups(self) -> None:

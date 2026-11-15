@@ -71,12 +71,20 @@ GET_ENROLLMENTS = {
 }
 
 
+class _AnyOperation(frozenset[tuple[str, str]]):
+    """`loader._NARROWING`, plus these tests' query params on whatever operation."""
+
+    names = frozenset({"labels", "match", "ids", "x", "n", *(f"p{i:02}" for i in range(25))})
+
+    def __contains__(self, pair: object) -> bool:
+        return (isinstance(pair, tuple) and pair[1] in self.names) or super().__contains__(pair)
+
+
 @pytest.fixture(autouse=True)
 def plain_query_params(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests are about schemas, and use query params (some from made-up specs) that the
     registry doesn't: let them load without the rule check 6 asks for (`test_loader.py`)."""
-    extra = {"labels", "match", "ids", "x", "n", *(f"p{i:02}" for i in range(25))}
-    monkeypatch.setattr(loader, "_NARROWING", loader._NARROWING | extra)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(loader, "_NARROWING", _AnyOperation(loader._NARROWING))  # pyright: ignore[reportPrivateUsage]
 
 
 def _with(base: dict[str, Any], **changes: Any) -> dict[str, Any]:
