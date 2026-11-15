@@ -862,14 +862,15 @@ def test_a_group_in_an_inactive_rule_is_not_trusted_for_it(
     assert run(okta, "check", config) == 1
     out = capsys.readouterr().out
     assert "[manual] group mcp-okta-readers: existing group" in out
-    # The remedy is the inactive object, not a review of the tool's own groups.
-    assert "is not ACTIVE" in out and "Fix that first" in out
-    assert "reviewed_groups" not in out
+    # Both remedies: the inactive object if the group is the tool's own, else the review.
+    assert "is not ACTIVE" in out and "fix that and run again" in out
+    assert "created" in out and "reviewed_groups" in out
 
 
 def test_reviewed_groups_left_empty_is_no_groups(config: Path) -> None:
     config.write_text(config.read_text() + "reviewed_groups:\n")
 
+    assert setup.load_config(config).reviewed_groups == []
     assert run(FakeOkta(), "check", config) == 1  # work remains, but the config loads
 
 

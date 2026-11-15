@@ -431,7 +431,7 @@ class Setup:
         so already accepted as role groups. Only from the one ACTIVE server, policy and rule
         of the managed names; whether that rule is otherwise sound is `_rule`'s to say. With
         the IDs, a note for the report when a server, policy or rule is there but can't
-        vouch for any group: fixing that, not `reviewed_groups`, is then the remedy."""
+        vouch for any group: the report then gives that as a remedy beside the review."""
         cfg = self.cfg
         server = self.okta.find("/api/v1/authorizationServers", "name", cfg.authorization_server)
         if server is None:
@@ -467,11 +467,14 @@ class Setup:
             return None
         count = f"{len(members)}{' or more' if len(members) >= MEMBERS_SHOWN else ''}"
         if note:
-            # Likely a group this tool set up: the rule that would say so can't be read as is.
+            # Perhaps a group this tool set up: the rule that would say so can't be relied on
+            # as it is. Both remedies, since which applies is the admin's to know.
             return (
-                f"existing group {group['id']} has {count} member(s), and {note}, so the rule "
-                "can't show whether this group was already accepted. Fix that first and run "
-                "again"
+                f"existing group {group['id']} created {group.get('created')} has {count} "
+                f"member(s), and {note}, so the policy rule can't show whether this group "
+                "was already accepted: anyone in it gets the role. If this tool set the group "
+                "up, fix that and run again; otherwise check its members, then add this ID to "
+                "reviewed_groups in the config (or empty the group) and run again"
             )
         return (
             f"existing group {group['id']} created {group.get('created')} has {count} "

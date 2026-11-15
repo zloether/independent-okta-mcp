@@ -24,7 +24,8 @@ Nothing here logs a token, a claim value or a response body; a rejection is logg
 with a fixed reason (plus `token_too_old`, a WARNING at most every ten minutes, when an
 unexpired token is over the age limit and nothing else is wrong with it: a setting to fix,
 not a sender to ignore). The age limit is checked where listed but refused last, so that
-warning is only for a token that would otherwise be served.
+warning is only for a token the verifier would otherwise accept (what the policy then lets
+its user do is not the verifier's to know).
 """
 
 import json
