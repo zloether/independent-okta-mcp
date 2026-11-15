@@ -193,16 +193,25 @@ def test_app_id_shape(registry: Registry) -> None:
 
 
 def test_expand_values_are_closed(registry: Registry) -> None:
-    users = registry.domains["users"].commands
-    validate_args(users["list"], {"expand": "classification"})
-    with pytest.raises(InvalidArguments, match="arg 'expand'"):
-        validate_args(users["list"], {"expand": "classification,foo"})
-    validate_args(users["list-roles"], {"user": USER, "expand": "targets/groups"})
-    with pytest.raises(InvalidArguments, match="arg 'expand'"):
-        validate_args(users["list-roles"], {"user": USER, "expand": "targets"})
     apps = registry.domains["apps"].commands
     with pytest.raises(InvalidArguments, match="arg 'expand'"):
         validate_args(apps["get-users"], {"app": APP, "expand": "user/00u1emaKYZTWRYYRRTSK"})
+
+
+@pytest.mark.parametrize(
+    ("command", "args", "value"),
+    [
+        # Each embeds what a sibling command returns, which a policy may refuse.
+        ("list", {}, "classification"),
+        ("list-roles", {"user": USER}, "targets/groups"),
+        ("list-roles", {"user": USER}, "targets/catalog/apps"),
+    ],
+)
+def test_no_expand_of_sibling_data(
+    registry: Registry, command: str, args: dict[str, str], value: str
+) -> None:
+    with pytest.raises(InvalidArguments, match="unknown arg 'expand'"):
+        validate_args(registry.domains["users"].commands[command], {**args, "expand": value})
 
 
 def test_spec_enum_path_params(registry: Registry) -> None:

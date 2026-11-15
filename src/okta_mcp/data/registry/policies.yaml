@@ -15,8 +15,7 @@ commands:
       status: {query: status, allowed_values: [ACTIVE, INACTIVE]}
       q: {query: q, arg_rule: {reviewed: "prefix of the policy name, returned"}}
       sort_by: {query: sortBy, allowed_values: [name]}
-      # Embeds each policy's rules: what `get-rules` returns, same class.
-      expand: {query: expand, allowed_values: [rules]}
+      # No `expand`: `rules` embeds what `get-rules` returns, which a policy may refuse.
     paginate: link
     page_size: 200
     # Whether Okta pages `q` is unverified; treated as unpaged so a cut is reported, not silent.
@@ -29,7 +28,7 @@ commands:
     summary: Get a policy by ID
     args:
       policy: {path_param: policyId, pattern: "^[A-Za-z0-9]{1,64}$"}
-      expand: {query: expand, allowed_values: [rules]}
+      # No `expand`, as for `list`.
     data_classes: [org-config]
 
   # Whether Okta pages rules is unverified. No `limit` is sent, and a next link is followed if

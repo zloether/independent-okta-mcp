@@ -11,8 +11,8 @@ An independent project: not affiliated with, endorsed by or supported by Okta, I
 | | |
 |---|---|
 | Done | The server, policy engine, 24 command domains, container and setup tools, tested against mocked Okta in CI |
-| Checked against an Okta dev org | The setup script; OAuth sign-in from Claude Code (against a check server, not this server); most commands through stdio dev mode |
-| Not yet done | Sign-in from a real client to this server over HTTP; a deployment from the [runbook](docs/runbook.md) on a clean machine; a live run of `diagnostics login-failures`; the runbook steps marked **unverified** |
+| Checked against an Okta dev org | The setup script; OAuth sign-in from Claude Code to this server over loopback HTTP; most commands through stdio dev mode |
+| Not yet done | Sign-in through a TLS proxy and token refresh against this server; a deployment from the [runbook](docs/runbook.md) on a clean machine; a live run of `diagnostics login-failures`; the runbook steps marked **unverified** |
 | Review | Written and reviewed with AI assistance (Claude Code), directed by the maintainer. No independent security audit ([SECURITY.md](SECURITY.md#review-status)) |
 
 What is left is tracked in the [plan](docs/implementation-plan.md).

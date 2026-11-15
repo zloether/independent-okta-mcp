@@ -157,13 +157,12 @@ def test_list_args(registry: Registry) -> None:
     rule = listing.entry.args["search"].arg_rule
     assert rule is not None and rule.attribute_expression and not rule.attributes
     exposed = {a.param for a in listing.entry.args.values()}
-    assert exposed == {"search", "expand"}
-    assert {"fields", "after", "limit"} <= set(listing.op().params)
-    assert listing.entry.args["expand"].allowed_values == ("user", "userSummary")
-    with pytest.raises(InvalidArguments, match="arg 'expand'"):
-        validate_args(listing, {"expand": "capabilities"})
-    _, params = build_request(listing, {"expand": "userSummary"}, ORG)
-    assert params == {"expand": "userSummary", "limit": "200"}
+    assert exposed == {"search"}
+    assert {"fields", "after", "limit", "expand"} <= set(listing.op().params)
+    # `user`/`userSummary` embed what `get-users` returns, which a policy may refuse.
+    for expand in ("user", "userSummary"):
+        with pytest.raises(InvalidArguments, match="unknown arg 'expand'"):
+            validate_args(listing, {"expand": expand})
     assert listing.is_list and listing.entry.paginate == "link"
 
 
@@ -177,8 +176,10 @@ def test_os_account_expand_is_comma_joined_and_closed(registry: Registry) -> Non
             cmd, {**args, "expand": ["account_linked_enrollments", "offlineFactors"]}, ORG
         )
         assert params["expand"] == "account_linked_enrollments,offlineFactors", name
-        with pytest.raises(InvalidArguments, match="arg 'expand'"):
-            validate_args(cmd, {**args, "expand": ["capabilities"]})
+        # `users` may embed what `get-users` returns.
+        for bad in (["capabilities"], ["users"], ["users", "account_linked_enrollments"]):
+            with pytest.raises(InvalidArguments, match="arg 'expand'"):
+                validate_args(cmd, {**args, "expand": bad})
 
 
 def _engine(registry: Registry, role: dict[str, Any]) -> Engine:
@@ -205,8 +206,8 @@ def test_os_account_expand_raises_to_sensitive(registry: Registry) -> None:
         if name == "get-os-account":
             args["account"] = ACCOUNT
         assert wildcard.check(WHO, "devices", name, args) is Verdict.ALLOWED, name
-        # Any value, `users` included: the rule reads the argument's presence.
-        for expand in (["users"], ["account_linked_enrollments", "offlineFactors"]):
+        # Any value: the rule reads the argument's presence.
+        for expand in (["offlineFactors"], ["account_linked_enrollments", "offlineFactors"]):
             call = {**args, "expand": expand}
             assert wildcard.check(WHO, "devices", name, call) is Verdict.FORBIDDEN, name
             assert named.check(WHO, "devices", name, call) is Verdict.ALLOWED, name
@@ -218,7 +219,6 @@ def test_wildcards_reach_every_command_without_expand(registry: Registry) -> Non
     for domain in DOMAINS:
         for cmd in registry.domains[domain].commands.values():
             assert e.check(WHO, domain, cmd.name, {}) is not Verdict.FORBIDDEN, (domain, cmd.name)
-    assert e.check(WHO, "devices", "list", {"expand": "user"}) is Verdict.ALLOWED
     # A device search needs `search_attributes`, whatever the allow.
     search = {"search": 'profile.serialNumber co "C02"'}
     assert e.check(WHO, "devices", "list", search) is Verdict.FORBIDDEN

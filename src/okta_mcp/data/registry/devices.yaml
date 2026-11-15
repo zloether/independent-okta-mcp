@@ -11,15 +11,14 @@ description: Read devices, their users and OS accounts (read-only).
 # or `get-os-accounts` (unverified live, plan 5.6).
 commands:
   # `search` names device properties (`profile.*`, `id`, `status`, `lastUpdated`): the engine
-  # checks the attributes named (design §9.2). `expand` closed to the user embeds the list schema
-  # declares (`_embedded.users`, pii like the device); `capabilities` has no declared shape, so it is not offered.
+  # checks the attributes named (design §9.2). No `expand`: `user`/`userSummary` embed what
+  # `get-users` returns, which a policy may refuse; `capabilities` has no declared shape in `DeviceList._embedded`.
   # `fields` is not exposed (`select` does that, after scrubbing).
   list:
     operation: listDevices
     summary: List or search devices
     args:
       search: {query: search, arg_rule: {attribute_expression: true}}
-      expand: {query: expand, allowed_values: [user, userSummary]}
     paginate: link
     page_size: 200
     view: [id, status, profile.displayName, profile.platform, profile.osVersion, profile.managed]
@@ -41,15 +40,18 @@ commands:
     data_classes: [pii]
 
   # `expand` can embed the OS account's linked enrollments (Platform SSO, Desktop MFA) and their
-  # offline factors (types, security-key serial numbers): MFA state. One query param takes all
-  # three values, so passing it at all raises the call to sensitive; `get-users` gives a
-  # device's users without it.
+  # offline factors (types, security-key serial numbers): MFA state, so passing it at all raises
+  # the call to sensitive. Not `users`: the spec doesn't declare what it embeds, and it may be what
+  # `get-users` returns, which a policy may refuse.
   get-os-accounts:
     operation: listDeviceOSAccounts
     summary: OS accounts on a device
     args:
       device: {path_param: deviceId, pattern: "^guo[A-Za-z0-9]{17}$"}
-      expand: {query: expand, arg_rule: {raises_sensitivity_to: sensitive}}
+      expand:
+        query: expand
+        allowed_values: [account_linked_enrollments, offlineFactors]
+        arg_rule: {raises_sensitivity_to: sensitive}
     view: [id, platform, status, profile.fullName, profile.type, lastSeenAt]
     data_classes: [pii]
 
@@ -59,5 +61,8 @@ commands:
     args:
       device: {path_param: deviceId, pattern: "^guo[A-Za-z0-9]{17}$"}
       account: {path_param: osAccountId, pattern: "^dao[A-Za-z0-9]{17}$"}
-      expand: {query: expand, arg_rule: {raises_sensitivity_to: sensitive}}
+      expand:
+        query: expand
+        allowed_values: [account_linked_enrollments, offlineFactors]
+        arg_rule: {raises_sensitivity_to: sensitive}
     data_classes: [pii]

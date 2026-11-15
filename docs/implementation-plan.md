@@ -347,13 +347,13 @@ Design: §14 (Integration, Protocol) · Depends: 4.4
 
 Verify: `uv run pytest tests/integration/`
 
-### 4.6 Real-client check (Path A) ☐
+### 4.6 Real-client check (Path A) ◐
 Design: §8.3 · Depends: 4.5, 0.5, 0.6
-- [ ] Run locally behind a TLS proxy (e.g. Caddy) or tunnel; connect each target MCP client via Path A (auth is always on, so exposure is safe)
+- [ ] Run locally behind a TLS proxy (e.g. Caddy) or tunnel; connect each target MCP client via Path A (auth is always on, so exposure is safe). Done over loopback `http` (2026-11-15); the TLS proxy run is still to do, with 7.2's bring-up
 - [x] Move the 0.6 matrix from `design/spike-findings.md` to [`docs/compatibility-matrix.md`](compatibility-matrix.md), with how a client connects (done early, 8.3.1)
-- [ ] Re-run each client in the matrix against the real server and update its "Tested against" column
-- [ ] Under option B, the server accepts refreshed tokens with no new sign-in (Claude Code)
-- [ ] 4.4 added `scope="okta-mcp"` to every challenge, and MCP clients prefer it over `scopes_supported`. Re-check that Claude Code still asks for `offline_access` (0.6 saw `okta-mcp offline_access` without the challenge scope); if it doesn't, option B loses its refresh token, and the `scope` parameter comes out of the 401
+- [x] Re-run each client in the matrix against the real server and update its "Tested against" column (Claude Code, 2026-11-15)
+- [ ] Under option B, the server accepts refreshed tokens with no new sign-in (Claude Code). Okta grants the refresh token (2026-11-15); a call after the access token expires is not yet tried
+- [x] 4.4 added `scope="okta-mcp"` to every challenge, and MCP clients prefer it over `scopes_supported`. Re-check that Claude Code still asks for `offline_access` (0.6 saw `okta-mcp offline_access` without the challenge scope); if it doesn't, option B loses its refresh token, and the `scope` parameter comes out of the 401
 
 Verify: at least one real client completes OAuth and calls a pilot command; matrix moved and re-run.
 

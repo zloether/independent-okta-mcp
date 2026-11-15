@@ -19,8 +19,8 @@ commands:
       search: {query: search, arg_rule: {attribute_expression: true}}
       sort_by: {query: sortBy, arg_rule: {attribute_expression: true}}
       sort_order: {query: sortOrder, allowed_values: [asc, desc]}
-      # `classification` is what `get-classification` returns, same class.
-      expand: {query: expand, allowed_values: [classification]}
+      # No `expand`: `classification` is what `get-classification` returns, which a policy may
+      # refuse.
     paginate: link
     page_size: 200
     # Okta doesn't page `q` (it also leaves out DEPROVISIONED users): one page, never resumed.
@@ -239,7 +239,7 @@ commands:
     summary: Admin roles assigned to a user
     args:
       user: {path_param: userId, resolve: user_id}
-      expand: {query: expand, allowed_values: [targets/groups, targets/catalog/apps]}
+      # No `expand`: targets/* embeds list-role-*-targets, which a policy may refuse.
     view: [id, type, label, status, assignmentType]
     data_classes: [admin-roles]
 
