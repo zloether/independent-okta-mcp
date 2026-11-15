@@ -53,7 +53,8 @@ class FakeOkta:
                 )
             ]
             if not self.page_size:
-                return httpx2.Response(200, json=items)
+                limit = request.url.params.get("limit")
+                return httpx2.Response(200, json=items[: int(limit)] if limit else items)
             start = int(request.url.params.get("after", 0))
             end = start + self.page_size
             headers = {}
@@ -736,6 +737,141 @@ def test_imported_group_is_not_used(config: Path, capsys) -> None:
     out = capsys.readouterr().out
     assert "[manual] group mcp-okta-readers: type is APP_GROUP" in out
     assert "00gimported  #" not in out
+
+
+def plant_group(okta: FakeOkta, name: str, members: int) -> dict[str, Any]:
+    """A group someone made before the tool ran, with `members` users in it."""
+    group = {
+        "id": "00gplanted0000000000",
+        "type": "OKTA_GROUP",
+        "created": "2026-01-02T03:04:05.000Z",
+        "profile": {"name": name},
+    }
+    okta.items("api", "v1", "groups").append(group)
+    okta.items("api", "v1", "groups", group["id"], "users").extend(
+        {"id": f"00u{i:017d}"} for i in range(members)
+    )
+    return group
+
+
+def test_existing_group_with_members_is_not_used(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    planted = plant_group(okta, "mcp-okta-readers", 2)
+
+    assert run(okta, "apply", config, "--yes") == 1
+    assert not [p for _, p in okta.writes if planted["id"] in p]
+    rule = okta.find(*rules_path(okta), name=setup.RULE_NAME)
+    assert planted["id"] not in rule["conditions"]["people"]["groups"]["include"]
+    out = capsys.readouterr().out
+    assert (
+        f"[manual] group mcp-okta-readers: existing group {planted['id']} created "
+        "2026-01-02T03:04:05.000Z has 2 member(s)"
+    ) in out
+    assert "reviewed_groups" in out
+    assert f"{planted['id']}  #" not in out
+    # The other group is still set up.
+    assert len(rule["conditions"]["people"]["groups"]["include"]) == 1
+
+
+def test_a_full_page_of_members_is_reported_as_a_minimum(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    plant_group(okta, "mcp-okta-readers", setup.MEMBERS_SHOWN + 5)
+
+    assert run(okta, "check", config) == 1
+    assert f"has {setup.MEMBERS_SHOWN} or more member(s)" in capsys.readouterr().out
+
+
+def test_reviewed_existing_group_is_used(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    planted = plant_group(okta, "mcp-okta-readers", 2)
+    config.write_text(config.read_text() + f"reviewed_groups: [{planted['id']}]\n")
+
+    assert run(okta, "apply", config, "--yes") == 0
+    rule = okta.find(*rules_path(okta), name=setup.RULE_NAME)
+    assert planted["id"] in rule["conditions"]["people"]["groups"]["include"]
+    assert f"{planted['id']}  # mcp-okta-readers" in capsys.readouterr().out
+
+
+def test_empty_existing_group_is_used(config: Path) -> None:
+    okta = FakeOkta()
+    planted = plant_group(okta, "mcp-okta-readers", 0)
+
+    assert run(okta, "apply", config, "--yes") == 0
+    rule = okta.find(*rules_path(okta), name=setup.RULE_NAME)
+    assert planted["id"] in rule["conditions"]["people"]["groups"]["include"]
+
+
+def test_group_already_in_the_rule_stays_trusted_once_it_has_members(config: Path) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config, "--yes") == 0
+    for group in okta.items("api", "v1", "groups"):
+        okta.items("api", "v1", "groups", group["id"], "users").append({"id": "00u1member"})
+
+    assert run(okta, "check", config) == 0
+
+
+def test_group_with_members_added_to_the_config_later_is_not_used(config: Path, capsys) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config, "--yes") == 0
+    planted = plant_group(okta, "mcp-okta-new", 1)
+    add_group(config)
+    okta.writes.clear()
+
+    assert run(okta, "apply", config, "--yes") == 1
+    assert not okta.writes
+    assert "[manual] group mcp-okta-new: existing group" in capsys.readouterr().out
+    rule = okta.find(*rules_path(okta), name=setup.RULE_NAME)
+    assert planted["id"] not in rule["conditions"]["people"]["groups"]["include"]
+
+
+def test_reviewed_groups_are_ids_not_names(config: Path, capsys) -> None:
+    """The review was of one group's members: another group given its name is not covered."""
+    config.write_text(config.read_text() + "reviewed_groups: [mcp-okta-readers]\n")
+
+    assert run(FakeOkta(), "check", config) == 2
+    assert "reviewed_groups" in capsys.readouterr().err
+
+
+def test_a_review_does_not_carry_over_to_another_group_of_the_same_name(
+    config: Path, capsys
+) -> None:
+    okta = FakeOkta()
+    plant_group(okta, "mcp-okta-readers", 2)
+    config.write_text(config.read_text() + "reviewed_groups: [00gother000000000000]\n")
+
+    assert run(okta, "check", config) == 1
+    assert "[manual] group mcp-okta-readers: existing group" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("level", ["server", "policy", "rule"])
+def test_a_group_in_an_inactive_rule_is_not_trusted_for_it(
+    config: Path, level: str, capsys
+) -> None:
+    okta = FakeOkta()
+    assert run(okta, "apply", config, "--yes") == 0
+    for group in okta.items("api", "v1", "groups"):
+        okta.items("api", "v1", "groups", group["id"], "users").append({"id": "00u1member"})
+    path = rules_path(okta)
+    target = {
+        "server": okta.find("api", "v1", "authorizationServers", name="okta-mcp"),
+        "policy": okta.find(*path[:-2], name=setup.POLICY_NAME),
+        "rule": okta.find(*path, name=setup.RULE_NAME),
+    }[level]
+    target["status"] = "INACTIVE"
+
+    assert run(okta, "check", config) == 1
+    out = capsys.readouterr().out
+    assert "[manual] group mcp-okta-readers: existing group" in out
+    # Both remedies: the inactive object if the group is the tool's own, else the review.
+    assert "is not ACTIVE" in out and "fix that and run again" in out
+    assert "created" in out and "reviewed_groups" in out
+
+
+def test_reviewed_groups_left_empty_is_no_groups(config: Path) -> None:
+    config.write_text(config.read_text() + "reviewed_groups:\n")
+
+    assert setup.load_config(config).reviewed_groups == []
+    assert run(FakeOkta(), "check", config) == 1  # work remains, but the config loads
 
 
 def test_duplicate_groups_are_an_error(config: Path, capsys) -> None:

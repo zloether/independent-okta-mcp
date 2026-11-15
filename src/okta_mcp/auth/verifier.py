@@ -21,7 +21,11 @@ at most once per 60 s. `ready()` is true while keys are held and not past their 
 TTL). Startup doesn't wait for the issuer.
 
 Nothing here logs a token, a claim value or a response body; a rejection is logged at DEBUG
-with a fixed reason.
+with a fixed reason (plus `token_too_old`, a WARNING at most every ten minutes, when an
+unexpired token is over the age limit and nothing else is wrong with it: a setting to fix,
+not a sender to ignore). The age limit is checked where listed but refused last, so that
+warning is only for a token the verifier would otherwise accept (what the policy then lets
+its user do is not the verifier's to know).
 """
 
 import json
@@ -50,6 +54,8 @@ LEEWAY = 60
 JWKS_TTL = 3600.0
 """How long fetched keys are trusted without a successful refresh (s)."""
 REFRESH_EVERY = JWKS_TTL / 2
+TOO_OLD_LOG_EVERY = 600.0
+"""At most one `token_too_old` line per this many seconds."""
 UNKNOWN_KID_INTERVAL = 60.0
 """At most one refetch per this many seconds for a `kid` the cache doesn't have."""
 RETRY_MIN, RETRY_MAX = 1.0, 60.0
@@ -155,12 +161,14 @@ class JWTVerifier:
         self._clients = frozenset(config.allowed_client_ids)  # `*` only ever alone (Config)
         self._groups_claim = config.groups_claim
         self._max_age = config.max_token_age
+        self._required_scope = config.required_scope
         self._clock = clock
         self._monotonic = monotonic
         self._metadata_url = self._issuer.rstrip("/") + "/.well-known/oauth-authorization-server"
         self._keys: dict[str, jwt.PyJWK] = {}
         self._keys_until = -math.inf
         self._last_fetch = -math.inf
+        self._too_old_logged = -math.inf
         self._lock = anyio.Lock()
 
     # --- readiness and keys -----------------------------------------------------------------
@@ -355,8 +363,8 @@ class JWTVerifier:
             raise _Rejected("expired")
         if iat > now + LEEWAY:
             raise _Rejected("iat in the future")
-        if now - iat > self._max_age + LEEWAY:
-            raise _Rejected("older than MCP_MAX_TOKEN_AGE")
+        # Refused below, once the other checks have had their say: see `_too_old`.
+        too_old = now - iat > self._max_age + LEEWAY
         if "nbf" in claims:
             nbf = _number(claims["nbf"])
             if nbf is None or nbf > now + LEEWAY:
@@ -370,6 +378,8 @@ class JWTVerifier:
         if not isinstance(sub, str) or not sub:
             raise _Rejected("sub")
         scopes = self._scopes(claims)
+        if too_old:
+            raise self._too_old(scopes)
 
         principal = Principal(
             uid=uid,
@@ -387,6 +397,26 @@ class JWTVerifier:
             claims={"iss": self._issuer},
             principal=principal,
         )
+
+    def _too_old(self, scopes: list[str]) -> _Rejected:
+        """The rejection for a token over `MCP_MAX_TOKEN_AGE`. If the age is all that is wrong
+        with it (unexpired, from an allowed client, for a user, with the required scope), the
+        authorization server gives tokens a longer life than the server accepts and users get
+        401 mid-token: said at WARNING, since only a token that would otherwise be served gets
+        here, but not once per request. A token refused for another reason too says nothing
+        about the lifetime our clients get, so it is no cause to tell the operator to raise
+        the limit."""
+        due = self._monotonic() - self._too_old_logged >= TOO_OLD_LOG_EVERY
+        if self._required_scope in scopes and due:
+            self._too_old_logged = self._monotonic()
+            log.warning(
+                "an unexpired token was refused as older than MCP_MAX_TOKEN_AGE (%d s): "
+                "shorten the authorization server's access-token lifetime, or raise "
+                "MCP_MAX_TOKEN_AGE",
+                self._max_age,
+                extra=event("token_too_old", max_age_s=self._max_age),
+            )
+        return _Rejected("older than MCP_MAX_TOKEN_AGE")
 
     def _client_id(self, claims: Mapping[str, object]) -> str:
         """Okta's `cid`, or RFC 9068 `client_id`; if both are present they must agree."""

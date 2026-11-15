@@ -23,10 +23,39 @@ from okta_mcp.registry.schema import build_schema, make_validator, synopsis
 from okta_mcp.registry.spec import Operation, SpecIndex
 
 REGISTRY = files("okta_mcp") / "data" / "registry"
-# Free-form filters narrow a list; the other widening params add data to it.
+# Free-form filters: what they can match decides whether the call reads more than it returns.
 _FILTERS = frozenset({"filter", "search", "q"})
-# `sortBy` takes any property: ordering by a redacted one leaks it more slowly than `sw` does.
-_WIDENING = _FILTERS | {"expand", "discloseIdentifiers", "sortBy"}
+# (operationId, query param) pairs reviewed as unable to widen a result: each picks among the
+# items the command returns anyway, by a fixed field (a status, a type, an ID, a time window)
+# or their order. Every other query param needs an `arg_rule` or `allowed_values` (check 6), so
+# one nobody looked at (an `expand` under another name, or a familiar name that means more on
+# another operation) can't be exposed without a decision. Before adding a pair, check that the
+# param neither adds fields or items (`expand`, `discloseIdentifiers`) nor names an attribute
+# (`sortBy`) on that operation.
+_NARROWING = frozenset(
+    {
+        ("getAllCrossAppAccessConnections", "activeAppsOnly"),
+        ("getAllCrossAppAccessConnections", "requestingAppId"),
+        ("getAllCrossAppAccessConnections", "requestingAppName"),
+        ("getAllCrossAppAccessConnections", "resourceAppId"),
+        ("getAllCrossAppAccessConnections", "resourceAppName"),
+        ("getAllCrossAppAccessConnections", "status"),
+        ("getRoleTargetsByUserIdAndRoleId", "assignmentType"),
+        ("listAssociatedServersByTrustedType", "trusted"),
+        ("listGroupPushMappings", "lastUpdated"),
+        ("listGroupPushMappings", "sourceGroupId"),
+        ("listGroupPushMappings", "status"),
+        ("listIdentityProviders", "type"),
+        ("listLogEvents", "since"),
+        ("listLogEvents", "until"),
+        ("listPolicies", "type"),
+        ("listProfileMappings", "sourceId"),
+        ("listProfileMappings", "targetId"),
+        ("listRealms", "sortOrder"),
+        ("listUserGrants", "scopeId"),
+        ("listYubikeyOtpTokens", "sortOrder"),
+    }
+)
 # Params whose value names attributes, so `arg_rule: attribute_expression` can check them.
 _EXPRESSIONS = frozenset({"filter", "search", "sortBy"})
 # Pagination and page size belong to the server (design §7.2), never to the caller.
@@ -287,8 +316,13 @@ def _check_args(entry: CommandEntry, op: Operation, errors: list[str]) -> None:
         used[arg.param] = arg_name
         if location == "query" and arg.param in _RESERVED_QUERY:
             errors.append(f"arg {arg_name}: query param {arg.param} is set by the server")
-        # Check 6: arguments that can widen results need a rule.
-        if arg.param in _WIDENING and arg.arg_rule is None and arg.allowed_values is None:
+        # Check 6: a query argument needs a rule, unless it is known only to narrow here.
+        if (
+            location == "query"
+            and (op.operation_id, arg.param) not in _NARROWING
+            and arg.arg_rule is None
+            and arg.allowed_values is None
+        ):
             errors.append(f"arg {arg_name}: {arg.param} needs an arg_rule or allowed_values")
         # `reviewed` records that a filter was looked at; it can't wave through anything else.
         if arg.arg_rule is not None and arg.arg_rule.reviewed:

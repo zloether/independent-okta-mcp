@@ -457,10 +457,12 @@ Verify: someone (or a fresh Claude session) follows the runbook on a clean machi
 ### 8.1 Security review sweep ☑
 - [x] `/security-review` over all 🔒 paths together (cross-cutting issues): four parallel reviewers by theme (identity → authorization, request building and URL following, data egress, credentials and deployment), 2026-11-14
 - [x] Resolve or ticket every finding (see the [decisions log](decisions-log.md))
+- [x] Second sweep, whole codebase by hand (2026-11-15): no high or medium finding; four low ones fixed (existing role groups with members in `okta-setup.py`, check 6 for every query argument, `MCP_MAX_TOKEN_AGE` default, a concurrent-callers test), two informational ones left open (decisions log) 🔒
 - [x] Narrow the `.` half of the reserved-literal rule in `exec/params.py` so logins such as `me.smith@…` resolve again: Okta doesn't strip suffixes (`me.json` is a literal), but does strip matrix parameters, so `;` stays refused (2.10 dev-org check, 2026-11-13) 🔒
 
 ### 8.2 Compatibility matrix & E2E ☐
 - [ ] Complete `docs/compatibility-matrix.md` for all target clients (Path A)
+- [ ] `scripts/okta-setup.py check` against a real org that has a role group with members (from the 8.1 second sweep, 2026-11-15; after that change merges and before the public release, user decision): the existing-group check reads `GET /api/v1/groups/{id}/users?limit=200` and the `status` of the managed server, policy and rule, all tested against the in-memory fake only. Confirm a populated group not yet in the rule is reported `manual` with its ID, creation date and member count; that listing its ID under `reviewed_groups` clears it; and that a group already in the rule stays `ok` with members
 - [ ] E2E checklist: groups claim; per-role tool lists; revocation (A: group removal takes effect within one access-token lifetime; B: group removal and role changes at the next refresh, token revocation ends the chain, an expired Okta session doesn't); 429 behavior under load
 
 ### 8.2.1 Live-org CI 🔒 ☐

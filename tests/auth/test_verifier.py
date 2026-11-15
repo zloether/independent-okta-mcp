@@ -241,7 +241,7 @@ async def test_valid_es256_token(make: Make) -> None:
         {"nbf": int(NOW) + LEEWAY - 1},
         {"iat": int(NOW) + LEEWAY - 1},
         {"exp": int(NOW) + 1},
-        {"iat": int(NOW) - 86400},
+        {"iat": int(NOW) - 3600},
         {"exp": NOW + 10.5, "iat": NOW - 0.5},
     ],
 )
@@ -419,7 +419,7 @@ async def test_kid_required(make: Make, issuer: Issuer, kid: str | None) -> None
         ({"exp": "9999999999"}, "exp or iat"),
         ({"iat": DROP}, "exp or iat"),
         ({"iat": int(NOW) + LEEWAY + 1}, "iat in the future"),
-        ({"iat": int(NOW) - 86400 - LEEWAY - 1}, "older than"),
+        ({"iat": int(NOW) - 3600 - LEEWAY - 1}, "older than"),
         ({"nbf": int(NOW) + LEEWAY + 1}, "nbf"),
         ({"nbf": "0"}, "nbf"),
         ({"cid": "0oa1other00000000000"}, "cid not in"),
@@ -451,10 +451,40 @@ async def test_rejected_claims(
 
 @pytest.mark.anyio
 async def test_max_token_age_is_configurable(make: Make, tmp_path: Path) -> None:
-    cfg = load_config(env(tmp_path, MCP_MAX_TOKEN_AGE="3600"))  # noqa: S106
+    cfg = load_config(env(tmp_path, MCP_MAX_TOKEN_AGE="7200"))  # noqa: S106
     v = await loaded(make, cfg)
-    assert await v.verify_token(sign(claims(iat=int(NOW) - 3600))) is not None
-    assert await v.verify_token(sign(claims(iat=int(NOW) - 3600 - LEEWAY - 1))) is None
+    assert await v.verify_token(sign(claims(iat=int(NOW) - 7200))) is not None
+    assert await v.verify_token(sign(claims(iat=int(NOW) - 7200 - LEEWAY - 1))) is None
+
+
+@pytest.mark.anyio
+async def test_an_unexpired_token_over_the_age_limit_is_warned_about_once(
+    make: Make, caplog: pytest.LogCaptureFixture
+) -> None:
+    v = await loaded(make)
+    old = sign(claims(iat=int(NOW) - 3600 - LEEWAY - 1, exp=int(NOW) + 600))
+    with caplog.at_level(logging.WARNING, logger="okta_mcp"):
+        assert await v.verify_token(old) is None
+        assert await v.verify_token(old) is None
+    (record,) = [r for r in caplog.records if "MCP_MAX_TOKEN_AGE" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert "3600 s" in record.getMessage()
+    assert "eyJ" not in record.getMessage()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "also_wrong", [{"cid": "0oa1other00000000000"}, {"scp": ["openid"]}, {"uid": DROP}]
+)
+async def test_an_old_token_refused_for_another_reason_too_is_not_warned_about(
+    make: Make, caplog: pytest.LogCaptureFixture, also_wrong: dict[str, Any]
+) -> None:
+    """Such a token says nothing about the lifetime approved clients get."""
+    v = await loaded(make)
+    old = sign(claims(iat=int(NOW) - 3600 - LEEWAY - 1, exp=int(NOW) + 600, **also_wrong))
+    with caplog.at_level(logging.WARNING, logger="okta_mcp"):
+        assert await v.verify_token(old) is None
+    assert not [r for r in caplog.records if "MCP_MAX_TOKEN_AGE" in r.getMessage()]
 
 
 @pytest.mark.anyio
