@@ -41,9 +41,9 @@ class Facts:
     )
     """Device assurance policy ID → the policy (slice 3)."""
     posture_checks: Mapping[str, Mapping[str, Any]] | Missing | None = None
+    """Posture check variable name → its definition; None when no policy needs one."""
     posture_incomplete: str | None = None
     """Why the posture check definitions may be missing some (a list failed or was cut)."""
-    """Posture check variable name → its definition; None when no policy needs one."""
 
 
 @dataclass

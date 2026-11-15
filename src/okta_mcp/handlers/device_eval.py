@@ -197,11 +197,13 @@ def _find(value: Any, name: str, depth: int = 0) -> tuple[bool, Any]:
     if isinstance(value, str) and value[:1] in "{[":
         try:
             value = json.loads(value)
-        except ValueError:
+        except (ValueError, RecursionError):
             return False, None
     if isinstance(value, dict):
         for k, v in cast(dict[str, Any], value).items():
-            if k.lower() == name.lower():
+            # A posture result is a scalar: an object or list under the name isn't one, so
+            # nothing larger than a value leaves the server (security review, 9.1).
+            if k.lower() == name.lower() and isinstance(v, str | int | float | bool):
                 return True, v
         for v in cast(dict[str, Any], value).values():
             found, inner = _find(v, name, depth + 1)

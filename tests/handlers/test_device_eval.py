@@ -317,3 +317,17 @@ def test_posture_definitions_not_read_keep_the_reason() -> None:
         [AID], denial({**MAC, "macOSFirewall": "0"}), facts(policy, posture=posture)
     )
     assert row["pass"] is False and "devicePostureChecks" in row["note"]
+
+
+def test_an_object_under_the_check_s_name_is_not_a_result() -> None:
+    policy = mac(devicePostureChecks={"include": [{"variableName": "requestUri", "value": "1"}]})
+    d = denial(MAC, debugContext={"debugData": {"requestUri": {"big": "x" * 500}}})
+    (row,) = de.assurance([AID], d, facts(policy, posture={}))
+    assert row["pass"] is None and "big" not in str(row)
+
+
+def test_a_deeply_nested_json_string_doesn_t_fail_the_diagnosis() -> None:
+    policy = mac(devicePostureChecks={"include": [FIREWALL]})
+    device = {**MAC, "device_integrator": "[" * 100_000}
+    (row,) = de.assurance([AID], denial(device), facts(policy, posture={}))
+    assert row["pass"] is None
