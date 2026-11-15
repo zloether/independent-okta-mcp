@@ -13,14 +13,13 @@ commands, below.
 
 - `okta_devices list` lists or searches devices (id, status, profile.displayName,
   profile.platform, profile.osVersion, profile.managed). `search` is an attribute expression.
-  `expand` is `user` (full details of associated users) or `userSummary` (summaries). Devices
-  are paged. `okta_devices get` returns one by `device`.
+  Devices are paged. `okta_devices get` returns one by `device`.
 - `okta_devices get-users` lists the users of a `device` (user id and login, managementStatus,
-  screenLockType, created). It needs no `expand`.
+  screenLockType, created).
 - `okta_devices get-os-accounts` lists the OS accounts on a `device` (id, platform, status,
   profile.fullName, profile.type, lastSeenAt). `okta_devices get-os-account` returns one by
   `device` and `account`.
-- `expand` on the two OS-account commands takes `users`, `account_linked_enrollments` and
+- `expand` on the two OS-account commands takes `account_linked_enrollments` and
   `offlineFactors`. `offlineFactors` only takes effect together with
   `account_linked_enrollments`.
 
@@ -58,7 +57,7 @@ users, use `get-users` instead.
   `search_attributes`. `co` works only on profile.displayName, profile.serialNumber,
   profile.imei, profile.meid, profile.udid and profile.sid. See `okta://reference/filters`.
 - An empty list means nothing matched the `search`.
-- The `capabilities` value of `expand` on `list` is not offered. `fields` is not available.
+- `list` takes no `expand`, and `fields` is not available.
 - To list a user's devices, use `okta_users get-devices`, not `list` with a search.
 - IDs are 20 characters. A device ID starts with `guo`, an OS account ID with `dao`.
 - Okta can map devices with a non-unique `profile.udid` to one record with a shared `id`.

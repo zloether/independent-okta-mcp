@@ -77,15 +77,12 @@ def test_every_path_param_is_constrained(registry: Registry) -> None:
 def test_policy_list_args(registry: Registry) -> None:
     cmd = registry.domains["policies"].commands["list"]
     validate_args(cmd, {"type": "OKTA_SIGN_ON"})
-    validate_args(
-        cmd, {"type": "ACCESS_POLICY", "status": "ACTIVE", "sort_by": "name", "expand": "rules"}
-    )
+    validate_args(cmd, {"type": "ACCESS_POLICY", "status": "ACTIVE", "sort_by": "name"})
     for bad in (
         {},  # `type` is required by Okta
         {"type": "nope"},
         {"type": "PASSWORD", "status": "DELETED"},
         {"type": "PASSWORD", "sort_by": "created"},
-        {"type": "PASSWORD", "expand": "rules,mappings"},
     ):
         with pytest.raises(InvalidArguments):
             validate_args(cmd, bad)
@@ -94,11 +91,13 @@ def test_policy_list_args(registry: Registry) -> None:
     assert q is not None and q.reviewed
 
 
-def test_policy_get_expand_is_closed(registry: Registry) -> None:
-    cmd = registry.domains["policies"].commands["get"]
-    validate_args(cmd, {"policy": POLICY, "expand": "rules"})
-    with pytest.raises(InvalidArguments, match="arg 'expand'"):
-        validate_args(cmd, {"policy": POLICY, "expand": "mappings"})
+@pytest.mark.parametrize(
+    ("command", "args"), [("list", {"type": "PASSWORD"}), ("get", {"policy": POLICY})]
+)
+def test_policy_has_no_expand(registry: Registry, command: str, args: dict[str, str]) -> None:
+    # expand=rules embeds what get-rules returns, which a policy may refuse.
+    with pytest.raises(InvalidArguments, match="unknown arg 'expand'"):
+        validate_args(registry.domains["policies"].commands[command], {**args, "expand": "rules"})
 
 
 def test_policy_id_refuses_sibling_endpoint(registry: Registry) -> None:

@@ -214,7 +214,7 @@ def test_other_caller_tool_or_command_is_rejected(cursors: Cursors, other: dict[
         {},
         {"group": "00g2emaKYZTWRYYRRTSK"},
         {"group": GROUP, "search": "x"},
-        {"group": GROUP, "expand": "group-rules"},
+        {"group": GROUP, "expand": "login-status-info"},
     ],
 )
 def test_other_args_are_rejected(cursors: Cursors, args: dict[str, Any]) -> None:

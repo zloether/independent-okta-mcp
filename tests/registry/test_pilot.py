@@ -154,6 +154,24 @@ def test_expand_values_are_closed(registry: Registry) -> None:
         validate_args(lst, {"expand": "stats,app"})
 
 
+@pytest.mark.parametrize(
+    ("command", "args", "value", "match"),
+    [
+        # Each embeds what a sibling command returns, which a policy may refuse.
+        ("get-members", {"group": "00g1emaKYZTWRYYRRTSK"}, "group-rules", "arg 'expand'"),
+        ("list-roles", {"group": "00g1emaKYZTWRYYRRTSK"}, "targets/groups", "unknown arg"),
+        ("list-roles", {"group": "00g1emaKYZTWRYYRRTSK"}, "targets/catalog/apps", "unknown arg"),
+        ("list-rules", {}, "groupIdToGroupNameMap", "unknown arg"),
+        ("get-rule", {"rule": "0pr3f7zMZZHPgUoWO0g4"}, "groupIdToGroupNameMap", "unknown arg"),
+    ],
+)
+def test_no_expand_of_sibling_data(
+    registry: Registry, command: str, args: dict[str, str], value: str, match: str
+) -> None:
+    with pytest.raises(InvalidArguments, match=match):
+        validate_args(registry.domains["groups"].commands[command], {**args, "expand": value})
+
+
 def test_schema_snapshots(registry: Registry) -> None:
     groups = registry.domains["groups"].commands
     assert groups["get-members"].schema == {
@@ -161,7 +179,7 @@ def test_schema_snapshots(registry: Registry) -> None:
         "properties": {
             "group": {"type": "string", "pattern": "^00g[A-Za-z0-9]{17}$"},
             "search": {"type": "string", "maxLength": 4096},
-            "expand": {"type": "string", "enum": ["group-rules", "login-status-info"]},
+            "expand": {"type": "string", "enum": ["login-status-info"]},
         },
         "additionalProperties": False,
         "required": ["group"],

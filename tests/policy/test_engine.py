@@ -400,7 +400,7 @@ def test_args_without_a_rule_change_nothing(engine: Engine) -> None:
     assert engine.check(who, "groups", "get", {"group": GROUP}) is ALLOWED
     # `allowed_values` without an `arg_rule` (get-members `expand`).
     assert (
-        engine.check(who, "groups", "get-members", {"group": GROUP, "expand": "group-rules"})
+        engine.check(who, "groups", "get-members", {"group": GROUP, "expand": "login-status-info"})
         is ALLOWED
     )
 

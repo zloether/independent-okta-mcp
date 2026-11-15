@@ -245,16 +245,15 @@ def test_filters_and_expands(registry: Registry) -> None:
     scopes = servers["list-scopes"]
     assert "filter" in scopes.op().params
     assert not any(a.param == "filter" for a in scopes.entry.args.values())
+    # `expand=scope` embeds what `get-scope` returns, which a policy may refuse.
     for name in AS_TOKENS:
-        assert servers[name].entry.args["expand"].allowed_values == ("scope",)
+        assert "expand" not in servers[name].entry.args, name
     tokens = servers["list-tokens"]
-    with pytest.raises(InvalidArguments, match="arg 'expand'"):
-        validate_args(tokens, {"server": AUS, "client": CLIENT, "expand": "user"})
-    url, params = build_request(
-        tokens, {"server": "default", "client": CLIENT, "expand": "scope"}, ORG
-    )
+    with pytest.raises(InvalidArguments, match="unknown arg 'expand'"):
+        validate_args(tokens, {"server": AUS, "client": CLIENT, "expand": "scope"})
+    url, params = build_request(tokens, {"server": "default", "client": CLIENT}, ORG)
     assert url == f"{ORG}/api/v1/authorizationServers/default/clients/{CLIENT}/tokens"
-    assert params == {"expand": "scope", "limit": "200"}
+    assert params == {"limit": "200"}
     associated = servers["list-associated"]
     _, params = build_request(associated, {"server": AUS, "trusted": True}, ORG)
     assert params == {"trusted": "true", "limit": "200"}

@@ -43,7 +43,8 @@ commands:
       group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
       # Any user profile attribute, checked as for `list` above.
       search: {query: search, arg_rule: {attribute_expression: true}}
-      expand: {query: expand, allowed_values: [group-rules, login-status-info]}
+      # Not `group-rules`: it may embed what `list-rules` returns, which a policy may refuse.
+      expand: {query: expand, allowed_values: [login-status-info]}
     paginate: link
     page_size: 200
     view: [id, status, profile.login]
@@ -76,7 +77,6 @@ commands:
     summary: List group rules
     args:
       search: {query: search, arg_rule: {reviewed: "matches the rule name, which is returned"}}
-      expand: {query: expand, allowed_values: [groupIdToGroupNameMap]}
     paginate: link
     page_size: 200
     view: [id, name, status]
@@ -87,7 +87,6 @@ commands:
     summary: Get a group rule by ID
     args:
       rule: {path_param: groupRuleId, pattern: "^0pr[A-Za-z0-9]{17}$"}
-      expand: {query: expand, allowed_values: [groupIdToGroupNameMap]}
     data_classes: [org-config]
 
   list-roles:
@@ -95,7 +94,7 @@ commands:
     summary: Admin roles assigned to a group
     args:
       group: {path_param: groupId, pattern: "^00g[A-Za-z0-9]{17}$"}
-      expand: {query: expand, allowed_values: [targets/groups, targets/catalog/apps]}
+      # No `expand`: targets/* embeds list-role-*-targets, which a policy may refuse.
     view: [id, type, label, status, assignmentType]
     data_classes: [admin-roles]
 

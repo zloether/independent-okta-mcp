@@ -29,6 +29,6 @@ Start sign-in from `/mcp` in a session. Claude Code requests `okta-mcp offline_a
 
 | Client | Version | Discovery used | Client ID | Redirect URI | Scopes requested | Result | Tested against |
 |---|---|---|---|---|---|---|---|
-| Claude Code | 2.1.311 | The 401, then the path-specific metadata URL (`/.well-known/oauth-protected-resource/mcp`); never the root URL. Okta's metadata fetched directly | `--client-id` | `http://localhost:8765/callback` (`--callback-port`) | `okta-mcp offline_access` | ✅ Both test users signed in with the right `uid` and group ID; silent refresh works under option B | The spike check server, 2026-11-04. **Not yet this server** (plan 4.6) |
+| Claude Code | 2.1.311 | The 401, then the path-specific metadata URL (`/.well-known/oauth-protected-resource/mcp`); never the root URL. Okta's metadata fetched directly | `--client-id` | `http://localhost:8765/callback` (`--callback-port`) | `okta-mcp offline_access` | ✅ Both test users signed in with the right `uid` and group ID; silent refresh works under option B | The spike check server, 2026-11-04. This server over loopback `http`, 2026-11-15: both users signed in, each saw only its role's tools; refresh token granted, refresh against this server not yet tried (plan 4.6) |
 
 No other client has been tried. A row is added when one is ([plan](implementation-plan.md) steps 0.6, 4.6 and 8.2); if you try one, an issue with the result is welcome.

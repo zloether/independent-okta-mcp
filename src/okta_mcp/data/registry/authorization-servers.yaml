@@ -71,8 +71,7 @@ commands:
     args:
       server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
       client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
-      # Embeds the scope objects named in `scopes`: server configuration, as `get-scope` returns.
-      expand: {query: expand, allowed_values: [scope]}
+      # No `expand`: `scope` embeds what `get-scope` returns, which a policy may refuse.
     paginate: link
     page_size: 200
     view: [id, status, userId, created, expiresAt]
@@ -85,7 +84,6 @@ commands:
       server: {path_param: authServerId, pattern: "^(default|aus[A-Za-z0-9]{17})$"}
       client: {path_param: clientId, pattern: "^[A-Za-z0-9_-]{1,100}$"}
       token: {path_param: tokenId, pattern: "^[A-Za-z0-9]{1,64}$"}
-      expand: {query: expand, allowed_values: [scope]}
     data_classes: [session, pii]
 
   list-keys:
