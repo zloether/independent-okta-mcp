@@ -54,7 +54,7 @@ def test_defaults(env: dict[str, str]) -> None:
     assert c.audience == "https://mcp.example.com/mcp"
     assert c.required_scope == "okta-mcp"
     assert c.groups_claim == "groups"
-    assert c.max_token_age == 86400
+    assert c.max_token_age == 3600
     assert c.cursor_key.get_secret_value() == b"k" * 32
     assert c.allowed_origins == ()
     assert (c.host, c.port, c.trust_proxy) == ("127.0.0.1", 8080, False)

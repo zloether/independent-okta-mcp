@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from okta_mcp.registry import loader
 from okta_mcp.registry.loader import RegistryError, build_registry, load_registry
 from okta_mcp.registry.model import SENSITIVITY
 from okta_mcp.registry.spec import SpecIndex, build_index, load_spec
@@ -429,6 +430,18 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
             "data_classes": ["mfa-state"],
         },
         "discloseIdentifiers needs an arg_rule or allowed_values",
+    ),
+    # Any query param the loader doesn't know as narrowing, not only the known wideners.
+    "unreviewed-query-param-without-rule": (
+        {
+            "operation": "listApplicationsBySearch",
+            "summary": "Search apps",
+            "args": {"labels": {"query": "labels"}},
+            "paginate": "link",
+            "view": ["id"],
+            "data_classes": ["org-config"],
+        },
+        "labels needs an arg_rule or allowed_values",
     ),
     "expand-without-rule": (
         {
@@ -900,3 +913,19 @@ def test_handler_scope_sets_cover_every_required_operation(spec: SpecIndex) -> N
 def test_handler_commands_are_left_out_of_the_shared_operation_check(spec: SpecIndex) -> None:
     # Same data classes as `get`, no arg rules: two simple commands so would be an error.
     _build(spec, get=GET, probe=HANDLER)
+
+
+def test_narrowing_params_are_the_ones_the_registry_uses_without_a_rule(spec: SpecIndex) -> None:
+    """`_NARROWING` is a reviewed list: nothing in it that widens, and nothing unused (an
+    entry no command needs is an exemption waiting for a param nobody looked at)."""
+    narrowing = loader._NARROWING  # pyright: ignore[reportPrivateUsage]
+    assert not narrowing & {"filter", "search", "q", "expand", "discloseIdentifiers", "sortBy"}
+    assert not narrowing & {"after", "limit"}
+    unruled = {
+        arg.query
+        for domain in load_registry(spec).domains.values()
+        for command in domain.commands.values()
+        for arg in command.entry.args.values()
+        if arg.query is not None and arg.arg_rule is None and arg.allowed_values is None
+    }
+    assert unruled == narrowing

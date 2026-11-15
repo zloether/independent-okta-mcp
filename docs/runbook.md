@@ -181,7 +181,7 @@ A group ID that no role names grants nothing. Adding a user to a new Okta group 
 ### 4.3 Adding a user, removing a user
 
 - **Add:** put the user in the right `mcp-okta-*` group. The role applies on their next token.
-- **Remove:** take the user out of every `mcp-okta-*` group. Under A, access ends within one access-token lifetime (≤ 30 minutes as set up). Under B, also revoke their tokens: Clear User Sessions with token revocation, or `DELETE /api/v1/users/{id}/sessions?oauthTokens=true`. Without that, an Okta refresh token that was refused while they had no group starts working again if a group is ever restored ([table](okta-setup.md#refresh-tokens-option-a-or-b)).
+- **Remove:** take the user out of every `mcp-okta-*` group. Under A, access ends within one access-token lifetime (≤ 30 minutes as set up; on an authorization server set up by hand with longer tokens, the server still refuses a token older than `MCP_MAX_TOKEN_AGE`, 1 hour by default). Under B, also revoke their tokens: Clear User Sessions with token revocation, or `DELETE /api/v1/users/{id}/sessions?oauthTokens=true`. Without that, an Okta refresh token that was refused while they had no group starts working again if a group is ever restored ([table](okta-setup.md#refresh-tokens-option-a-or-b)).
 - **Under B, failed refreshes** (a removed user's client still trying) appear in the System Log with no `User` target. Search by the client app's ID (`client.id`), not the user.
 - **Under B, `lifetime_minutes` is the re-sign-in and MFA interval.** Refreshes don't re-run the Global Session Policy or the authentication policy.
 

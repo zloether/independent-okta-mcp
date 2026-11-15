@@ -107,6 +107,8 @@ DESCRIPTION = "Managed by okta-mcp scripts/okta-setup.py"
 # Okta issues a refresh token only when the client app also has the refresh_token grant.
 RULE_SCOPES = ["openid", "profile", "email", "offline_access"]
 ROTATION = {"rotation_type": "ROTATE", "leeway": 30}
+MEMBERS_SHOWN = 200
+"""Members counted in an existing group (one page); more are reported as "200 or more"."""
 
 T = TypeVar("T")
 
@@ -176,6 +178,9 @@ class Config(_Model):
     group_prefix: str = Field(default=GROUP_PREFIX, pattern=GROUP_PREFIX_PATTERN)
     """Role group names start with this; the groups claim emits only such groups' IDs."""
     groups: list[str] = Field(min_length=1)
+    reviewed_groups: list[str] = []
+    """Groups that existed, with members, before this tool used them, and whose members an
+    admin has checked (`Setup.groups`). Not needed once the group is in the policy rule."""
     clients: list[Client] = Field(min_length=1)
     service_app: ServiceApp
 
@@ -191,6 +196,8 @@ class Config(_Model):
         bad = [g for g in self.groups if not g.startswith(prefix) or g == prefix]
         if bad:
             raise ValueError(f"group names must start with {prefix!r}, got {bad}")
+        if unknown := [g for g in self.reviewed_groups if g not in self.groups]:
+            raise ValueError(f"reviewed_groups must be listed in groups, got {unknown}")
         return self
 
     @property
@@ -412,7 +419,45 @@ class Setup:
         self.authorization_server(client_ids)
         self.service_app()
 
+    def _rule_groups(self) -> set[str]:
+        """IDs of the groups already in the managed policy rule: put there by this tool or by
+        an admin who can edit the authorization server, so already accepted as role groups."""
+        cfg = self.cfg
+        server = self.okta.find("/api/v1/authorizationServers", "name", cfg.authorization_server)
+        if server is None:
+            return set()
+        base = f"/api/v1/authorizationServers/{server['id']}/policies"
+        policy = next((p for p in self.okta.get(base) if p["name"] == POLICY_NAME), None)
+        if policy is None:
+            return set()
+        rules = self.okta.get(f"{base}/{policy['id']}/rules")
+        rule = next((r for r in rules if r["name"] == RULE_NAME), None)
+        if rule is None:
+            return set()
+        people = (rule.get("conditions") or {}).get("people") or {}
+        return set((people.get("groups") or {}).get("include") or [])
+
+    def _unreviewed(self, name: str, group: dict[str, Any], accepted: set[str]) -> str | None:
+        """Why an existing group isn't used yet, or None. Group names are not reserved, so
+        anyone who can create a group could have made this one, with themselves in it, for a
+        Super Admin to turn into a role (as for an existing service app). A group is used when
+        this tool created it, it is already in the policy rule, it has no members, or the
+        config lists it under `reviewed_groups`."""
+        if group["id"] in accepted or name in self.cfg.reviewed_groups:
+            return None
+        members = self.okta.get(f"/api/v1/groups/{group['id']}/users", limit=MEMBERS_SHOWN)
+        if not members:
+            return None
+        count = f"{len(members)}{' or more' if len(members) >= MEMBERS_SHOWN else ''}"
+        return (
+            f"existing group {group['id']} created {group.get('created')} has {count} "
+            "member(s), and this tool has not used it before: anyone in it gets the role. "
+            "Check its members, then add it to reviewed_groups in the config (or empty it) "
+            "and run again"
+        )
+
     def groups(self) -> None:
+        accepted = self._rule_groups()
         for name in self.cfg.groups:
             group = self.okta.find("/api/v1/groups", "profile.name", name)
             if group is None:
@@ -429,6 +474,9 @@ class Setup:
                     "(the groups claim ignores imported groups)",
                 )
                 continue  # not trusted: no app assignment, rule entry or policy.yaml ID
+            elif reason := self._unreviewed(name, group, accepted):
+                self.problem(f"group {name}", reason)
+                continue  # not trusted, as above
             else:
                 self.ok(f"group {name}", group["id"])
             if group:

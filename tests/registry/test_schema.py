@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 
+from okta_mcp.registry import loader
 from okta_mcp.registry.loader import Command, RegistryError, build_registry
 from okta_mcp.registry.schema import SYNOPSIS_MAX, InvalidArguments, help_text, validate_args
 from okta_mcp.registry.spec import SpecIndex, build_index, load_spec
@@ -68,6 +69,14 @@ GET_ENROLLMENTS = {
     "view": ["id", "type", "status", "name"],
     "data_classes": ["mfa-state", "pii"],
 }
+
+
+@pytest.fixture(autouse=True)
+def plain_query_params(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about schemas, and use query params (some from made-up specs) that the
+    registry doesn't: let them load without the rule check 6 asks for (`test_loader.py`)."""
+    extra = {"labels", "match", "ids", "x", "n", *(f"p{i:02}" for i in range(25))}
+    monkeypatch.setattr(loader, "_NARROWING", loader._NARROWING | extra)  # pyright: ignore[reportPrivateUsage]
 
 
 def _with(base: dict[str, Any], **changes: Any) -> dict[str, Any]:

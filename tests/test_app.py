@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 import httpx2
 import mcp_types as types
 import pytest
@@ -381,6 +382,40 @@ async def test_call_over_http(config: Config, mode: str) -> None:
     assert json.loads(block.text)["user"] == "user@example.com"
     assert [r.method for r in okta.requests] == ["POST", "GET"]
     assert okta.requests[0].url.path == "/oauth2/v1/token"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("mode", MODES)
+async def test_concurrent_callers_keep_their_own_identity(config: Config, mode: str) -> None:
+    """The caller comes from a context variable the SDK sets per request (`http_principal`).
+    Requests of two users in flight together must each see their own, which a change in how
+    the SDK runs handlers (an upgrade) could break without any other test noticing: the other
+    tests' tokens share one `uid` and `sub`, and run one after the other."""
+    ann = Principal(uid="00u1ann0000000000000", sub="ann@example.com", groups=frozenset({READERS}))
+    bob = Principal(uid="00u1bob0000000000000", sub="bob@example.com", groups=frozenset({HELPDESK}))
+    verifier = FakeVerifier({"ann": verified(ann), "bob": verified(bob)})
+    expected = {
+        "ann": ("ann@example.com", ["okta_groups"]),
+        "bob": ("bob@example.com", ["okta_groups", "okta_network_zones"]),
+    }
+    seen: list[tuple[str, str, list[str]]] = []
+
+    async def calls(app: Starlette, token: str) -> None:
+        async with mcp_client(app, token, mode) as client:
+            for _ in range(10):
+                status = await client.call_tool("okta_status", {})
+                (block,) = status.content
+                assert isinstance(block, types.TextContent)
+                body = json.loads(block.text)
+                seen.append((token, body["user"], sorted(body["tools"])))
+                await anyio.sleep(0)
+
+    async with serving(config, verifier) as app, anyio.create_task_group() as tg:
+        for _ in range(4):
+            tg.start_soon(calls, app, "ann")
+            tg.start_soon(calls, app, "bob")
+    assert len(seen) == 80
+    assert all((user, tools) == expected[token] for token, user, tools in seen)
 
 
 @pytest.mark.anyio

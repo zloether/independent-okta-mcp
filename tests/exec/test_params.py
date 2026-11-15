@@ -511,7 +511,11 @@ def _search_apps(spec: SpecIndex) -> Command:
                         "summary": "Search apps",
                         "args": {
                             "q": {"query": "q", "arg_rule": {"reviewed": "app name"}},
-                            "labels": {"query": "labels"},
+                            # A rule only because check 6 wants one; it doesn't change the request.
+                            "labels": {
+                                "query": "labels",
+                                "arg_rule": {"raises_sensitivity_to": "sensitive"},
+                            },
                         },
                         "paginate": "link",
                         "page_size": 100,
