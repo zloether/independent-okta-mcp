@@ -34,6 +34,7 @@ from jwt.algorithms import RSAAlgorithm
 from pydantic import (
     AnyHttpUrl,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     ValidationError,
@@ -180,7 +181,11 @@ class Config(_Model):
     group_prefix: str = Field(default=GROUP_PREFIX, pattern=GROUP_PREFIX_PATTERN)
     """Role group names start with this; the groups claim emits only such groups' IDs."""
     groups: list[str] = Field(min_length=1)
-    reviewed_groups: list[Annotated[str, Field(pattern=GROUP_ID_PATTERN)]] = []
+    # `reviewed_groups:` with its entries removed is YAML null: an empty list.
+    reviewed_groups: Annotated[
+        list[Annotated[str, Field(pattern=GROUP_ID_PATTERN)]],
+        BeforeValidator(lambda v: [] if v is None else v),
+    ] = []
     """IDs of groups that had members before they reached the policy rule, and whose members
     an admin has checked (`Setup.groups`). IDs, not names: the check was of one group, and a
     name can be given to another. Not needed once the group is in the policy rule."""
@@ -420,28 +425,35 @@ class Setup:
         self.authorization_server(client_ids)
         self.service_app()
 
-    def _rule_groups(self) -> set[str]:
+    def _rule_groups(self) -> tuple[set[str], str]:
         """IDs of the groups already in the managed policy rule: put there by this tool or by
         an admin who can edit the authorization server (who decides who gets tokens anyway),
         so already accepted as role groups. Only from the one ACTIVE server, policy and rule
-        of the managed names; whether that rule is otherwise sound is `_rule`'s to say."""
+        of the managed names; whether that rule is otherwise sound is `_rule`'s to say. With
+        the IDs, a note for the report when a server, policy or rule is there but can't
+        vouch for any group: fixing that, not `reviewed_groups`, is then the remedy."""
         cfg = self.cfg
         server = self.okta.find("/api/v1/authorizationServers", "name", cfg.authorization_server)
-        if server is None or server.get("status") != "ACTIVE":
-            return set()
+        if server is None:
+            return set(), ""
+        if server.get("status") != "ACTIVE":
+            return set(), f"authorization server {cfg.authorization_server!r} is not ACTIVE"
         base = f"/api/v1/authorizationServers/{server['id']}/policies"
         policies = [p for p in self.okta.get(base) if p["name"] == POLICY_NAME]
+        if not policies:
+            return set(), ""
         if len(policies) != 1 or policies[0].get("status") != "ACTIVE":
-            return set()
+            return set(), f"access policy {POLICY_NAME!r} is not ACTIVE, or there are two"
         rules = self.okta.get(f"{base}/{policies[0]['id']}/rules")
         rules = [r for r in rules if r["name"] == RULE_NAME]
+        if not rules:
+            return set(), ""
         if len(rules) != 1 or rules[0].get("status") != "ACTIVE":
-            return set()
-        rule = rules[0]
-        people = (rule.get("conditions") or {}).get("people") or {}
-        return set((people.get("groups") or {}).get("include") or [])
+            return set(), f"policy rule {RULE_NAME!r} is not ACTIVE, or there are two"
+        people = (rules[0].get("conditions") or {}).get("people") or {}
+        return set((people.get("groups") or {}).get("include") or []), ""
 
-    def _unreviewed(self, name: str, group: dict[str, Any], accepted: set[str]) -> str | None:
+    def _unreviewed(self, group: dict[str, Any], accepted: set[str], note: str) -> str | None:
         """Why an existing group isn't used yet, or None. Group names are not reserved, so
         anyone who can create a group could have made this one, with themselves in it, for a
         Super Admin to turn into a role (as for an existing service app). A group is used when
@@ -454,6 +466,13 @@ class Setup:
         if not members:
             return None
         count = f"{len(members)}{' or more' if len(members) >= MEMBERS_SHOWN else ''}"
+        if note:
+            # Likely a group this tool set up: the rule that would say so can't be read as is.
+            return (
+                f"existing group {group['id']} has {count} member(s), and {note}, so the rule "
+                "can't show whether this group was already accepted. Fix that first and run "
+                "again"
+            )
         return (
             f"existing group {group['id']} created {group.get('created')} has {count} "
             "member(s) and is not in the policy rule yet: anyone in it gets the role. Check "
@@ -462,7 +481,7 @@ class Setup:
         )
 
     def groups(self) -> None:
-        accepted = self._rule_groups()
+        accepted, note = self._rule_groups()
         for name in self.cfg.groups:
             group = self.okta.find("/api/v1/groups", "profile.name", name)
             if group is None:
@@ -479,7 +498,7 @@ class Setup:
                     "(the groups claim ignores imported groups)",
                 )
                 continue  # not trusted: no app assignment, rule entry or policy.yaml ID
-            elif reason := self._unreviewed(name, group, accepted):
+            elif reason := self._unreviewed(group, accepted, note):
                 self.problem(f"group {name}", reason)
                 continue  # not trusted, as above
             else:

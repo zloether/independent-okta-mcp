@@ -474,6 +474,21 @@ async def test_an_unexpired_token_over_the_age_limit_is_warned_about_once(
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
+    "also_wrong", [{"cid": "0oa1other00000000000"}, {"scp": ["openid"]}, {"uid": DROP}]
+)
+async def test_an_old_token_refused_for_another_reason_too_is_not_warned_about(
+    make: Make, caplog: pytest.LogCaptureFixture, also_wrong: dict[str, Any]
+) -> None:
+    """Such a token says nothing about the lifetime approved clients get."""
+    v = await loaded(make)
+    old = sign(claims(iat=int(NOW) - 3600 - LEEWAY - 1, exp=int(NOW) + 600, **also_wrong))
+    with caplog.at_level(logging.WARNING, logger="okta_mcp"):
+        assert await v.verify_token(old) is None
+    assert not [r for r in caplog.records if "MCP_MAX_TOKEN_AGE" in r.getMessage()]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
     "token",
     [
         "",

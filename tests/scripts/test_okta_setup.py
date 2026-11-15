@@ -860,7 +860,17 @@ def test_a_group_in_an_inactive_rule_is_not_trusted_for_it(
     target["status"] = "INACTIVE"
 
     assert run(okta, "check", config) == 1
-    assert "[manual] group mcp-okta-readers: existing group" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "[manual] group mcp-okta-readers: existing group" in out
+    # The remedy is the inactive object, not a review of the tool's own groups.
+    assert "is not ACTIVE" in out and "Fix that first" in out
+    assert "reviewed_groups" not in out
+
+
+def test_reviewed_groups_left_empty_is_no_groups(config: Path) -> None:
+    config.write_text(config.read_text() + "reviewed_groups:\n")
+
+    assert run(FakeOkta(), "check", config) == 1  # work remains, but the config loads
 
 
 def test_duplicate_groups_are_an_error(config: Path, capsys) -> None:

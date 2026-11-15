@@ -3,7 +3,6 @@ from typing import Any
 
 import pytest
 
-from okta_mcp.registry import loader
 from okta_mcp.registry.loader import Command, RegistryError, build_registry
 from okta_mcp.registry.schema import SYNOPSIS_MAX, InvalidArguments, help_text, validate_args
 from okta_mcp.registry.spec import SpecIndex, build_index, load_spec
@@ -71,20 +70,9 @@ GET_ENROLLMENTS = {
 }
 
 
-class _AnyOperation(frozenset[tuple[str, str]]):
-    """`loader._NARROWING`, plus these tests' query params on whatever operation."""
-
-    names = frozenset({"labels", "match", "ids", "x", "n", *(f"p{i:02}" for i in range(25))})
-
-    def __contains__(self, pair: object) -> bool:
-        return (isinstance(pair, tuple) and pair[1] in self.names) or super().__contains__(pair)
-
-
-@pytest.fixture(autouse=True)
-def plain_query_params(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests are about schemas, and use query params (some from made-up specs) that the
-    registry doesn't: let them load without the rule check 6 asks for (`test_loader.py`)."""
-    monkeypatch.setattr(loader, "_NARROWING", _AnyOperation(loader._NARROWING))  # pyright: ignore[reportPrivateUsage]
+# Check 6 wants a decision for every query arg. These tests are about schemas, which a rule
+# doesn't change, so their plain query args carry this one.
+RULED: dict[str, Any] = {"arg_rule": {"raises_sensitivity_to": "sensitive"}}
 
 
 def _with(base: dict[str, Any], **changes: Any) -> dict[str, Any]:
@@ -171,7 +159,7 @@ def test_spec_constraints_are_kept(spec: SpecIndex) -> None:
     cmd = {
         "operation": "listOktaManagedUserAccounts",
         "summary": "Managed accounts",
-        "args": {"match": {"query": "match"}},
+        "args": {"match": {"query": "match", **RULED}},
         "paginate": "link",
         "page_size": 20,
         "view": ["id"],
@@ -263,7 +251,7 @@ def test_type_overlay() -> None:
     cmd = {
         "operation": "getX",
         "summary": "X",
-        "args": {"x": {"path_param": "id"}, "ids": {"query": "ids", "type": "array"}},
+        "args": {"x": {"path_param": "id"}, "ids": {"query": "ids", **RULED, "type": "array"}},
         "data_classes": ["pii"],
     }
     props = _one(index, cmd).schema["properties"]
@@ -432,7 +420,7 @@ def test_valid_option_lists_are_capped() -> None:
         "responses": {},
     }
     index = build_index({"info": {"version": "1"}, "paths": {"/x": {"get": op}}})
-    args = {f"p{i:02}": {"query": f"p{i:02}"} for i in range(25)}
+    args = {f"p{i:02}": {"query": f"p{i:02}", **RULED} for i in range(25)}
     cmd = {"operation": "getX", "summary": "X", "args": args, "data_classes": ["pii"]}
     msg = _invalid(_one(index, cmd), {"nope": "x"})
     assert msg.endswith("p18, p19, … (+5; see okta_help)")
@@ -443,7 +431,7 @@ def test_valid_option_lists_are_capped() -> None:
 SEARCH_APPS = {
     "operation": "listApplicationsBySearch",
     "summary": "Search apps",
-    "args": {"labels": {"query": "labels"}},
+    "args": {"labels": {"query": "labels", **RULED}},
     "paginate": "link",
     "page_size": 100,
     "view": ["id", "label"],
@@ -453,7 +441,9 @@ LABEL = "^lbc[A-Za-z0-9]{17}$"
 
 
 def test_pattern_on_array_applies_to_items(spec: SpecIndex) -> None:
-    cmd = _one(spec, _with(SEARCH_APPS, args={"labels": {"query": "labels", "pattern": LABEL}}))
+    cmd = _one(
+        spec, _with(SEARCH_APPS, args={"labels": {"query": "labels", **RULED, "pattern": LABEL}})
+    )
     assert cmd.schema["properties"]["labels"]["items"]["pattern"] == LABEL
     assert "pattern" not in cmd.schema["properties"]["labels"]
     assert _invalid(cmd, {"labels": ["x" * 20]}) == f"arg 'labels' must match {LABEL}"
@@ -482,7 +472,7 @@ def test_pattern_dollar_ends_the_input(spec: SpecIndex) -> None:
         {
             "operation": "getX",
             "summary": "X",
-            "args": {"x": {"query": "x"}},
+            "args": {"x": {"query": "x", **RULED}},
             "data_classes": ["pii"],
         },
     )
@@ -500,7 +490,7 @@ def test_pattern_on_array_cannot_replace_item_pattern() -> None:
         "responses": {},
     }
     index = build_index({"info": {"version": "1"}, "paths": {"/x": {"get": op}}})
-    args = {"ids": {"query": "ids", "pattern": "^.*$"}}
+    args = {"ids": {"query": "ids", **RULED, "pattern": "^.*$"}}
     cmd = {"operation": "getX", "summary": "X", "args": args, "data_classes": ["pii"]}
     with pytest.raises(RegistryError, match=r"spec already sets pattern \^a\$"):
         _one(index, cmd)
@@ -508,7 +498,7 @@ def test_pattern_on_array_cannot_replace_item_pattern() -> None:
 
 def test_type_overlay_cannot_replace_spec_type(spec: SpecIndex) -> None:
     for t in ("string", "integer"):
-        args = {"labels": {"query": "labels", "type": t}}
+        args = {"labels": {"query": "labels", **RULED, "type": t}}
         with pytest.raises(RegistryError, match=f"spec type is array, not {t}"):
             _one(spec, _with(SEARCH_APPS, args=args))
 
@@ -526,7 +516,7 @@ def test_unknown_arg_names_are_shortened_and_capped(spec: SpecIndex) -> None:
 
 
 def test_help_text_states_item_constraints(spec: SpecIndex) -> None:
-    args = {"labels": {"query": "labels", "pattern": LABEL}}
+    args = {"labels": {"query": "labels", **RULED, "pattern": LABEL}}
     text = help_text(_one(spec, _with(SEARCH_APPS, args=args)))
     assert (
         f"  labels  array of string, each min length 20, each max length 20, each pattern {LABEL}"
@@ -547,7 +537,7 @@ def test_integer_args_reject_floats_and_booleans() -> None:
         {
             "operation": "getX",
             "summary": "X",
-            "args": {"n": {"query": "n"}},
+            "args": {"n": {"query": "n", **RULED}},
             "data_classes": ["pii"],
         },
     )
