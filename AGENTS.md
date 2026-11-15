@@ -12,7 +12,7 @@ Rules for agents working in this repo. Loaded every session: keep it to what eve
 | [`docs/decisions-log.md`](docs/decisions-log.md) | Before changing something a step decided (search by step ID); append a row for every decision and review outcome |
 | [`docs/design/mcp-server.md`](docs/design/mcp-server.md) | Only the § refs the step names; update it in the same PR if the step changes the design |
 | [`docs/agents/subagents.md`](docs/agents/subagents.md) | Before delegating to a subagent |
-| [`docs/runbook.md`](docs/runbook.md), [`docs/okta-setup.md`](docs/okta-setup.md) | Changing operator-visible behavior (human docs: update them with it) |
+| [`docs/runbook.md`](docs/runbook.md), [`docs/okta-setup.md`](docs/okta-setup.md), [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md), [`CHANGELOG.md`](CHANGELOG.md) | Changing operator-visible behavior (human docs: update them with it) |
 
 ## Working a step
 

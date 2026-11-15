@@ -117,7 +117,7 @@ Pulled forward from 4.6: if a target client can't sign in with a pre-registered 
 - [x] Check server and tests (mock JWKS: valid token, wrong `aud`/`iss`, expired, missing `uid`, disallowed `cid`, missing scope → 403, `HS256`/`none`)
 - [ ] For each target client: register its redirect URI on the spike public client, connect to `http://127.0.0.1:8000/mcp`, sign in as each test user, call `whoami` (Claude Code done)
 - [x] Refresh tokens tested both ways (A: none; B: rotating); both supported by `scripts/okta-setup.py` and `terraform/okta/` via `refresh_tokens`, A the default; `offline_access` added to the rule in both
-- [ ] Fill the compatibility matrix in [`design/spike-findings.md`](design/spike-findings.md) (discovery URLs from the server log, client-ID and redirect configuration, scopes requested, result)
+- [ ] Fill the [compatibility matrix](compatibility-matrix.md) (discovery URLs from the server log, client-ID and redirect configuration, scopes requested, result)
 
 Verify: at least Claude Code completes sign-in and `whoami` shows the user's `uid` and group ID; every target client has a matrix row. A client that can't connect is a design decision (drop it, or revisit §8.3), recorded in the [decisions log](decisions-log.md).
 
@@ -350,7 +350,8 @@ Verify: `uv run pytest tests/integration/`
 ### 4.6 Real-client check (Path A) ☐
 Design: §8.3 · Depends: 4.5, 0.5, 0.6
 - [ ] Run locally behind a TLS proxy (e.g. Caddy) or tunnel; connect each target MCP client via Path A (auth is always on, so exposure is safe)
-- [ ] Move the 0.6 matrix from `design/spike-findings.md` to `docs/compatibility-matrix.md` (client × discovery × registration × works/limitations) and re-run each client against the real server
+- [x] Move the 0.6 matrix from `design/spike-findings.md` to [`docs/compatibility-matrix.md`](compatibility-matrix.md), with how a client connects (done early, 8.3.1)
+- [ ] Re-run each client in the matrix against the real server and update its "Tested against" column
 - [ ] Under option B, the server accepts refreshed tokens with no new sign-in (Claude Code)
 - [ ] 4.4 added `scope="okta-mcp"` to every challenge, and MCP clients prefer it over `scopes_supported`. Re-check that Claude Code still asks for `offline_access` (0.6 saw `okta-mcp offline_access` without the challenge scope); if it doesn't, option B loses its refresh token, and the `scope` parameter comes out of the 401
 
@@ -444,7 +445,7 @@ Design: §11.4, Appendix C · Depends: 7.2, 0.5
 - [x] Audit log handling (6.1): restrict read access (the file is created 0600), retention, SIEM shipping; rotate a file sink with `copytruncate`, since the server doesn't reopen it
 - [x] Refresh tokens and user removal (spike 0.6): choosing A or B (link [`okta-setup.md`](okta-setup.md#refresh-tokens-option-a-or-b)); removing a user is group removal under A, plus clearing sessions with `oauthTokens=true` (or deactivating the user) under B; under B the Global Session Policy doesn't bound refresh chains, so `lifetime_minutes` is the re-sign-in and MFA interval; failed refreshes have no `User` target in the System Log, so find them by client ID
 - [ ] Clean-machine walkthrough to a working `/readyz` (needs the dev org; the Verify below)
-- [ ] Settle the runbook's **unverified** items against the dev org: whether the console keeps a pasted JWK's `kid`, a gap-free Terraform key rotation, whether `okta-setup.py check` works with a token narrower than Super Administrator, the rate-limit share (V16)
+- [ ] Settle the runbook's **unverified** items against the dev org: whether the console keeps a pasted JWK's `kid`, a gap-free Terraform key rotation, whether `okta-setup.py check` works with a token narrower than Super Administrator, the rate-limit share (V16), whether deactivating the service app ends service tokens already issued (kill switch step 2), and the Caddyfile in §3.3 (run it in front of the server: body limit, sign-in, a tool call)
 - [x] `okta-mcp --check`: load config, registry, scrub rules and policy, print warnings, exit 0 or 2 without serving, so a policy change can be checked before the restart that would otherwise be an outage (runbook §4.2)
 
 Verify: someone (or a fresh Claude session) follows the runbook on a clean machine to a working `/readyz`.
@@ -482,7 +483,21 @@ Live checks of what only Okta decides: the service token, routing, response shap
 Verify: a manual `workflow_dispatch` run is green; a planted failure (a command whose role is removed, a view naming a missing field) fails it with no response body in the log; `/security-review` of the workflow and `tests/live/`.
 
 ### 8.3 Documentation pass ☐
-- [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed)
+- [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed). 8.3.1 fixed the design's header, domain and tool counts, V5 and the §17 row; still to do: §15's milestones and the remaining "post-v1" wording against what shipped, README usage once 4.6 has run
+
+### 8.3.1 Public readiness ◐
+Review of 2026-11-15 before making the repository public (see the [decisions log](decisions-log.md)): docs, design, history and repo hygiene; not a code review.
+- [x] History and tree scanned for secrets, real org hostnames and real email domains: none
+- [x] `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `NOTICE` (Okta spec attribution, non-affiliation); README status says what has and hasn't run live, and that there is no independent audit
+- [x] `docs/compatibility-matrix.md` with how a client connects; runbook: what redaction doesn't cover (custom profile attributes, System Log string values), a proxy example and limits; design §12.1 and R8 for the same; request body limit pinned by a test
+- [x] Pull request text read before publication (62 pull requests: bodies, comments, reviews, review comments; delegated, spot-checked; see the decisions log): no secrets, org identifiers, real IDs, personal data or pasted responses. Repeat for anything opened between this check and the visibility change
+- [ ] **Repository settings, right after it is public (user):** GitHub offers these only on a public repository, so they can't be set first. In the same sitting as the visibility change: private vulnerability reporting on (`SECURITY.md` relies on it; until it is on, the reporting link there leads nowhere); branch protection on `main` with CI required; secret scanning with push protection; approval required for workflows from first-time contributors' forks. Before the change: check what access the `zeta-logic-bot` account keeps
+- [ ] **Independent security review** by someone other than the tools that wrote the code, of the 🔒 paths at least; until then the README and `SECURITY.md` say there has been none
+- [x] Relicensing (user decision, 2026-11-15: the license must stay changeable): `CONTRIBUTING.md` has contributors grant the licensor the right to relicense their contribution. It is a statement in a file, not a signed CLA; if outside contributions become frequent, a CLA check on pull requests makes the agreement explicit per contributor
+- [ ] Delete `spikes/` (already due with 0.6 and 4.6)
+- [ ] The live checks the README lists as not yet done are 4.6, 7.2, 7.3, 8.2 and 9.1's live items; the README's status table changes as they close
+
+Verify: the settings item is done within the hour after the visibility change; README status matches this plan.
 
 ### 8.4 Release v1.0.0 ☐
 - [ ] Tag, build and publish image, changelog

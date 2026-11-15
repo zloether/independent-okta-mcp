@@ -34,6 +34,10 @@
 - [ ] Design doc updated in this PR if the step changes it
 - [ ] Delegated work (subagents) named in the decisions log
 
+## License
+
+- [ ] I agree to [CONTRIBUTING.md](../CONTRIBUTING.md#license-of-contributions) for this contribution (the maintainer's own pull requests: delete this section)
+
 ## Not done here
 
 <!-- Live or dev-org checks, manual verification, follow-ups added to the plan. "None" if nothing. -->

@@ -1,0 +1,24 @@
+independent-okta-mcp
+Copyright zloether
+
+Licensed under the Apache License, Version 2.0 with the Commons Clause License
+Condition v1.0 (see LICENSE).
+
+This project is not affiliated with, endorsed by or sponsored by Okta, Inc.
+"Okta" is a trademark of Okta, Inc., used here only to name the API the
+software talks to.
+
+Third-party material
+--------------------
+
+src/okta_mcp/data/specs/management-minimal.yaml
+  The Okta Management OpenAPI specification, copied unmodified from
+  https://github.com/okta/okta-management-openapi-spec at the commit recorded
+  in src/okta_mcp/data/specs/PINNED.json. Copyright Okta, Inc. Licensed under
+  the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0),
+  as the file's `info.license` states. The Commons Clause condition in LICENSE
+  does not apply to this file.
+
+tests/fixtures/
+  Many fixtures are generated from the examples and schemas in that
+  specification (scripts/gen-fixtures.py) and carry the same license.
