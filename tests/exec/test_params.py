@@ -123,7 +123,9 @@ def _unpatterned(spec: SpecIndex) -> dict[str, Command]:
 
 def _commands(spec: SpecIndex) -> list[Command]:
     registry = load_registry(spec)
-    packaged = [c for d in registry.domains.values() for c in d.commands.values()]
+    packaged = [
+        c for d in registry.domains.values() for c in d.commands.values() if c.operation is not None
+    ]
     return packaged + list(_unpatterned(spec).values())
 
 
@@ -218,7 +220,7 @@ async def test_every_command_builds_its_template_path(spec: SpecIndex) -> None:
         okta = Okta()
         args = _path_args(cmd)
         await _call(okta, cmd, {**_required_query(cmd), **args})
-        expected = cmd.operation.path
+        expected = cmd.op().path
         for n, v in args.items():
             expected = expected.replace(
                 f"{{{cmd.entry.args[n].param}}}", path_segment(n, v, frozenset())

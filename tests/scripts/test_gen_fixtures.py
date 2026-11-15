@@ -140,7 +140,7 @@ def test_body_is_synthesized_without_examples(raw: dict[str, Any], registry: Reg
 def test_empty_example_falls_back_to_schema(raw: dict[str, Any], registry: Registry) -> None:
     command = registry.domains["groups"].commands["get"]
     stripped = json.loads(json.dumps(raw))
-    content = stripped["paths"][command.operation.path]["get"]["responses"]["200"]["content"]
+    content = stripped["paths"][command.op().path]["get"]["responses"]["200"]["content"]
     content["application/json"]["examples"] = {"Empty": {"value": {}}}
     stripped["components"]["schemas"]["Group"]["properties"]["id"].pop("example")
     assert OKTA_ID.match(gen.body(stripped, command)["id"])
@@ -176,7 +176,7 @@ def test_array_schema_keeps_a_wrapper_example(raw: dict[str, Any], registry: Reg
     # An example that isn't shaped like an item stays exactly as it is, for the fixture test
     # to refuse: not wrapped, and no view columns filled in.
     command = registry.domains["authenticators"].commands["list-methods"]
-    path = command.operation.path
+    path = command.op().path
     assert gen.body(_with_example(raw, path, {"items": [1]}), command) == {"items": [1]}
     # `_links` sits on wrappers as well as items, so it doesn't make a wrapper an item.
     wrapper = {"_links": {"self": {"href": "https://example.okta.com/"}}, "items": [1]}

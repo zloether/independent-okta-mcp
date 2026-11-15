@@ -11,7 +11,7 @@ APP = "0oa1emaKYZTWRYYRRTSK"
 
 
 def _commands(registry: Registry, domain: str) -> dict[str, str]:
-    return {n: c.operation.operation_id for n, c in registry.domains[domain].commands.items()}
+    return {n: c.op().operation_id for n, c in registry.domains[domain].commands.items()}
 
 
 def test_users_commands(registry: Registry) -> None:
@@ -161,7 +161,7 @@ def test_disclose_identifiers_raises(registry: Registry) -> None:
 )
 def test_unexposed_params(registry: Registry, domain: str, command: str, param: str) -> None:
     cmd = registry.domains[domain].commands[command]
-    assert param in cmd.operation.params
+    assert param in cmd.op().params
     assert param not in {a.param for a in cmd.entry.args.values()}
 
 
@@ -237,7 +237,7 @@ def test_linked_objects_view_is_the_user_link(registry: Registry) -> None:
     # 5.1: items are only `_links.self` (the spec's `ResponseLinks`), so the view names its href.
     cmd = registry.domains["users"].commands["get-linked-objects"]
     assert cmd.entry.view == ("_links.self.href",)
-    assert cmd.operation.reserved["userIdOrLogin"] == frozenset({"me"})
+    assert cmd.op().reserved["userIdOrLogin"] == frozenset({"me"})
     for bad in ("1manager", "manager-x", "a" * 257, "me/x"):
         with pytest.raises(InvalidArguments, match="arg 'relationship'"):
             validate_args(cmd, {"user": "00u1emaKYZTWRYYRRTSK", "relationship": bad})

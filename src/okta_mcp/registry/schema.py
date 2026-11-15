@@ -178,7 +178,9 @@ def help_text(command: "Command") -> str:
     entry, schema = command.entry, command.schema
     props = cast(Mapping[str, Mapping[str, Any]], schema["properties"])
     kind = ""
-    if command.is_list:
+    if command.handler is not None:
+        kind = " Composite: one result, no select, links, limit or cursor."
+    elif command.is_list:
         kind = " List, paginated." if entry.paginate != "none" else " List."
     lines = [
         f"okta_{command.domain.replace('-', '_')} {usage(command.name, schema)}",
@@ -197,12 +199,13 @@ def help_text(command: "Command") -> str:
         facts += [f"each {f}" for f in _bounds(s.get("items", {}))]
         if "maxItems" in s:
             facts.append(f"at most {_count(s['maxItems'], 'item')}")
-        param = command.operation.params[arg.param]
-        desc = (
-            _RESOLVED
-            if arg.resolve
-            else _describe(param.description or str(param.schema.get("description", "")))
-        )
+        if command.operation is None:
+            desc = arg.description or ""
+        elif arg.resolve:
+            desc = _RESOLVED
+        else:
+            param = command.operation.params[arg.param]
+            desc = _describe(param.description or str(param.schema.get("description", "")))
         line = f"  {name.ljust(width)}  {', '.join(facts)}"
         lines.append(f"{line} — {desc}" if desc else line)
     if either := _either(schema):
@@ -283,6 +286,8 @@ def _message(e: ValidationError, args: object, props: Mapping[str, Any]) -> str:
             return f"{where} must match {value}"
         case "maxItems":
             return f"{where} takes at most {_count(value, 'item')}"
+        case "maxLength":
+            return f"{where} is longer than {_count(value, 'character')}"
         case _:
             return f"{where} fails {e.validator} {value}"
 

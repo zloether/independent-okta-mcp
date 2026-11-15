@@ -30,6 +30,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 | 6. Audit, limits, logging | 6.1–6.2 | ◐ |
 | 7. Packaging & deployment | 7.1–7.3 | ◐ |
 | 8. Hardening & release | 8.1–8.4 | ◐ |
+| 9. Composite commands (before 8.4) | 9.1 | ◐ |
 
 **Ordering note vs design §15:** the MCP server (Phase 4) comes *before* bulk registry authoring (Phase 5), so two pilot domains run end to end early and every later registry entry can be smoke-tested through the real server.
 
@@ -490,11 +491,33 @@ Verify: all phases ☑; CI green on tag.
 
 ---
 
+## Phase 9 — Composite commands
+
+Before the release (user decision, 2026-11-14): 8.4 waits for 9.1's slices that are marked as release-blocking.
+
+### 9.1 `diagnostics login-failures` 🔒 ◐
+Design: §5.6 (composite commands, `diagnostics`), §9.2, §12.2 · Depends: 2.10, 3.2 · Reference: okta-skills `okta-logs` (`diagnose_login.py`, behavioral only)
+
+Helpdesk-style roles diagnose a user's failed sign-ins without read access to logs, policies, users or groups. The server does the triage in code and returns derived attributes and IDs, never raw events or objects. Calls run in parallel where they don't depend on each other; an operation whose scope the service app lacks is skipped and reported, not fatal.
+
+- [x] **Slice 1, mechanism (release-blocking):** registry `handler:` + `uses: {required, optional}`, targetless handler args with `description`/`max_length`; loader checks (GET only, scoped, no simple-only fields), scope sets from `required`; `Command.op()`; `Engine.runs`; `UserResolver.user`; `exec/composite.Context` (declared operations only, §6.4 path rule, paginator, `after` server-owned, `Unavailable` for optional scopes); executor dispatch (no `select`/`links`/`limit`/`cursor`, scrubbed `item` result, startup check for missing handlers)
+- [x] **Slice 1, triage (release-blocking):** user state; one System Log query (FAILURE/DENY plus lock/unlock, newest 500); cause per event (locked out, expired password, not assigned, sign-on policy DENY, other policy DENY, IP/threat block, IdP, MFA failed/abandoned, wrong credential, OAuth token error, other); per-cause attributes only; admin actions on the user left out; DPoP nonce handshake ignored; follow-ups only for the causes found, concurrently (app assignment now, authenticator enrollments, unknown-device blocks); `pending` lists policy checks not made yet with the IDs from the events; `diagnostics` guide; helpdesk in the example policy
+- [ ] **Slice 1, live check (release-blocking):** run against the dev org from the user's machine with simulated failures (wrong password to lockout, unassigned app, sign-on policy DENY, MFA failure, device assurance and posture check failures); record and sanitize events whose shape the tests assume (`device`, `UDDevice` `detailEntry`, `debugData.behaviors`, `securityContext.risk`, IdP and threat events, posture check results)
+- [x] **Slice 2, policy evaluation (release-blocking):** for each distinct DENY (rules + app), newest first, at most 3: resolve the named rules (with or without `detailEntry.policyId`), evaluate every candidate ALLOW rule's conditions against the event (network zones incl. dynamic, people/groups as of the event, user type, platform, risk, EL as `pass: null`), and return only the failing rows; `changed_after_event` from `lastUpdated` and change events. Policy types: `ACCESS_POLICY`, `OKTA_SIGN_ON`, `MFA_ENROLL` (enrollment gate), `PASSWORD` (lockout and expiry), `IDP_DISCOVERY`, `ENTITY_RISK`/`POST_AUTH_SESSION` where the event names them. New `uses`: `listPolicies`, `getPolicy`, `listPolicyRules`, `listNetworkZones`, `listUserGroups`, `listAuthenticators`, `listAuthenticatorMethods`, all optional
+  - Done 2026-11-15 (`handlers/policy_eval.py`, `policy_fetch.py`): all of the above, plus `rule_context` for other policy types the event names, Expression Language as attribute names only, result trimming to `MCP_MAX_BYTES`; the live check of slice 1 covers it too
+- [x] **Slice 3, device assurance and advanced posture checks:** assurance policies named by a rule (`getDeviceAssurancePolicy`), posture checks (`listDevicePostureChecks`, optional: an org without them needs no scope), failing requirements only, integrator errors as failures
+  - Done 2026-11-15 (`handlers/device_eval.py`): static and Windows per-major OS versions, encryption, screen lock, secure hardware, jailbreak, third-party signals (integrator errors), posture checks with remediation text, grace periods; dynamic OS requirements undecided (Okta's latest-release list isn't in the Management API); posture definitions read only when used. **Live check must confirm:** where a posture check's result is on a DENY event, and the assurance `devicePostureChecks` shape
+- [ ] `/code-review` and `/security-review` per slice; dev-org live checks per slice
+
+Verify: `uv run pytest tests/handlers tests/exec/test_composite.py tests/registry/test_loader.py`; through stdio dev mode, a helpdesk principal with only `diagnostics: [login-failures]` gets a diagnosis and nothing from `okta_logs`, `okta_policies` or `okta_users`.
+
+---
+
 ## Post-v1 backlog (on demand)
 
 | Item | Design | Notes |
 |---|---|---|
-| Composite handlers: batch `get-factors`/`get-enrollments` (`ids[]`), `policies get-rules` multi-ID, `logs list --member-of/--count-by`, `logs timeline`, `logs login-failures`, `logs diagnose` | §5.6, §7.2 | Each needs its own fan-out/aggregation caps; okta-skills as behavioral reference only |
+| More composite commands: batch `get-factors`/`get-enrollments` (`ids[]`), `policies get-rules` multi-ID, `logs list --member-of/--count-by`, `logs timeline` | §5.6, §7.2 | The mechanism is 9.1's; each needs its own fan-out caps; okta-skills as behavioral reference only. Login diagnosis is 9.1 |
 | Path B (Cross App Access / ID-JAG) | §8.4 | V2, V12 |
 | Per-bucket 429 handling, proactive slowdown | §6.5, R6 | Only if logged 429s show starvation |
 | `/metrics` | §13 | |

@@ -212,3 +212,34 @@ async def test_me_message_is_the_path_rules(spec: SpecIndex) -> None:
     with pytest.raises(InvalidArguments) as e:
         await resolver(spec, Okta()).user_id("user", "me", {})
     assert str(e.value) == "arg 'user' is the name of another endpoint, not an ID"
+
+
+# --- `user`: the whole user, for handler commands (plan 9.1) -------------------------------
+
+
+@pytest.mark.anyio
+async def test_user_by_login_returns_the_body(spec: SpecIndex) -> None:
+    okta = Okta()
+    user = await resolver(spec, okta).user("user", LOGIN)
+    assert user == {"id": ALICE, "profile": {"login": LOGIN}}
+    assert okta.paths == ["/api/v1/users/" + LOGIN]
+
+
+@pytest.mark.anyio
+async def test_user_by_id_is_looked_up_and_must_be_that_user(spec: SpecIndex) -> None:
+    good = Okta(httpx2.Response(200, json={"id": ALICE, "profile": {"login": LOGIN}}))
+    assert (await resolver(spec, good).user("user", ALICE))["id"] == ALICE
+    assert good.paths == ["/api/v1/users/" + ALICE]
+    other = Okta(httpx2.Response(200, json={"id": "00u1other00000000000"}))
+    with pytest.raises(NotFound):
+        await resolver(spec, other).user("user", ALICE)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("value", ["alice", "me", 5])
+async def test_user_refuses_what_user_id_refuses(spec: SpecIndex, value: object) -> None:
+    okta = Okta()
+    with pytest.raises((NotFound, InvalidArguments)):
+        await resolver(spec, okta).user("user", value)
+    if value != "alice":
+        assert okta.paths == []

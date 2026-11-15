@@ -125,7 +125,13 @@ class Arg(_Model):
     type: Literal["string", "integer", "boolean", "array"] | None = None
     max_items: int | None = Field(default=None, alias="maxItems", ge=1)
     required: bool = False
-    """Okta rejects calls without it though the spec doesn't flag it required."""
+    """Okta rejects calls without it though the spec doesn't flag it required. On a handler
+    command: the caller must pass it."""
+    max_length: int | None = Field(default=None, ge=1)
+    """Handler commands only: the longest string accepted (default `HANDLER_STRING_MAX`)."""
+    description: str | None = Field(default=None, min_length=1)
+    """Handler commands only, and required there: `okta_help`'s text for the arg, which has no
+    spec parameter to take it from."""
 
     @field_validator("pattern")
     @classmethod
@@ -140,14 +146,22 @@ class Arg(_Model):
 
     @model_validator(mode="after")
     def _one_target(self) -> Self:
-        if (self.path_param is None) == (self.query is None):
+        # Neither is a handler command's arg; `CommandEntry` checks which kind it is in.
+        if self.path_param is not None and self.query is not None:
             raise ValueError("set exactly one of path_param or query")
         if self.resolve is not None and self.path_param is None:
             raise ValueError("resolve applies only to a path_param")
         return self
 
     @property
+    def targeted(self) -> bool:
+        """It maps to a spec parameter (an operation command's arg)."""
+        return self.path_param is not None or self.query is not None
+
+    @property
     def param(self) -> str:
+        if not self.targeted:
+            raise RuntimeError("a handler command's arg has no spec parameter")
         return cast(str, self.path_param or self.query)
 
 
@@ -167,12 +181,35 @@ class ResponseOverride(_Model):
     reason: str = Field(min_length=1)
 
 
+HANDLER_STRING_MAX = 256
+"""Default `max_length` of a handler command's string arg."""
+
+
+class Uses(_Model):
+    """The operations a handler command may call (design §5.6), each a GET from the pinned spec.
+    The handler's context refuses any other. `required` decide whether the command can run at
+    all (its scope sets); an `optional` one whose scopes the service app lacks is skipped and
+    reported, so an org that doesn't grant, say, `okta.devicePostureChecks.read` still gets the
+    rest of the diagnosis."""
+
+    required: tuple[str, ...] = Field(min_length=1)
+    optional: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _distinct(self) -> Self:
+        every = (*self.required, *self.optional)
+        if len(set(every)) != len(every):
+            raise ValueError("uses lists an operation twice")
+        return self
+
+
 class Resumable(_Model):
     unless_args: tuple[str, ...] = Field(min_length=1)
 
 
 class CommandEntry(_Model):
-    operation: str
+    operation: str | None = None
+    """The one operation of a simple command. Exactly one of `operation` and `handler`."""
     summary: str = Field(min_length=1)
     args: Mapping[str, Arg] = Field(default_factory=lambda: MappingProxyType({}))
     one_of_required: tuple[str, ...] | None = Field(default=None, min_length=2)
@@ -189,8 +226,57 @@ class CommandEntry(_Model):
     resumable, and is reported truncated when Okta returns a full page (design §7.2)."""
     okta_scopes_override: ScopesOverride | None = None
     response_override: ResponseOverride | None = None
-    handler: str | None = None
-    """Reserved for post-v1 composite handlers; the loader rejects it."""
+    handler: str | None = Field(default=None, pattern=NAME)
+    """A composite command (design §5.6): the name of a Python handler in
+    `okta_mcp.handlers`, which calls the operations in `uses`. Its args map to no spec
+    parameter; it takes no `view`, paging or response overrides, and is never resumable."""
+    uses: Uses | None = None
+
+    @model_validator(mode="after")
+    def _kind(self) -> Self:
+        if (self.operation is None) == (self.handler is None):
+            raise ValueError("set exactly one of operation or handler")
+        if self.operation is not None:
+            if self.uses is not None:
+                raise ValueError("uses is only for handler commands")
+            for name, arg in self.args.items():
+                if not arg.targeted:
+                    raise ValueError(f"arg {name}: set exactly one of path_param or query")
+                if arg.max_length is not None or arg.description is not None:
+                    raise ValueError(
+                        f"arg {name}: max_length and description are only for handler "
+                        "commands (the spec gives them)"
+                    )
+            return self
+        if self.uses is None:
+            raise ValueError("a handler command needs uses")
+        simple_only = {
+            "one_of_required": self.one_of_required is not None,
+            "paginate": self.paginate != "none",
+            "page_size": self.page_size is not None,
+            "items_key": self.items_key is not None,
+            "view": self.view is not None,
+            "unpaged_args": bool(self.unpaged_args),
+            "okta_scopes_override": self.okta_scopes_override is not None,
+            "response_override": self.response_override is not None,
+        }
+        if bad := [k for k, set_ in simple_only.items() if set_]:
+            raise ValueError(f"{', '.join(bad)}: not for handler commands")
+        if self.resumable is not True:
+            raise ValueError("resumable: handler commands are never resumable; leave it out")
+        for name, arg in self.args.items():
+            if arg.targeted or arg.resolve is not None or arg.arg_rule is not None:
+                raise ValueError(
+                    f"arg {name}: a handler command's args take no path_param, query, resolve "
+                    "or arg_rule (the handler validates and uses them)"
+                )
+            if arg.description is None:
+                raise ValueError(f"arg {name}: a handler command's args need a description")
+            if arg.type not in (None, "string") and arg.max_length is not None:
+                raise ValueError(f"arg {name}: max_length is for strings")
+            if arg.type == "array" or arg.max_items is not None:
+                raise ValueError(f"arg {name}: handler args are strings, integers or booleans")
+        return self
 
     @field_validator("args")
     @classmethod

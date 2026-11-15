@@ -20,6 +20,13 @@ GET = {
     "args": {"user": {"path_param": "id"}},
     "data_classes": ["pii"],
 }
+HANDLER = {
+    "handler": "probe",
+    "summary": "Probe a user",
+    "args": {"user": {"required": True, "description": "User ID or login"}},
+    "uses": {"required": ["getUser"], "optional": ["listUserGroups"]},
+    "data_classes": ["pii"],
+}
 GET_GROUPS = {
     "operation": "listUserGroups",
     "summary": "Groups the user belongs to",
@@ -55,7 +62,7 @@ def test_valid_registry_loads(spec: SpecIndex) -> None:
     assert users.description == "Read users."
     get, groups = users.commands["get"], users.commands["get-groups"]
     assert (get.is_list, groups.is_list) == (False, True)
-    assert get.operation.path == "/api/v1/users/{id}"
+    assert get.op().path == "/api/v1/users/{id}"
     assert get.sensitivity == "normal"
     assert groups.scope_sets == (frozenset({"okta.users.read"}),)
 
@@ -615,7 +622,56 @@ _FAILURES: dict[str, tuple[dict[str, Any], str]] = {
     ),
     "view-duplicate-path": (_with(GET_GROUPS, view=["id", "id"]), "duplicate paths"),
     # Model shape
-    "handler": (_with(GET, handler="okta_mcp.handlers.x"), "post-v1"),
+    # Handler (composite) commands, design §5.6
+    "operation-and-handler": (_with(GET, handler="x"), "exactly one of operation or handler"),
+    "neither-operation-nor-handler": (_with(GET, operation=None), "exactly one of operation"),
+    "handler-name-not-kebab": (_with(HANDLER, handler="okta_mcp.x"), "should match pattern"),
+    "handler-without-uses": (_with(HANDLER, uses=None), "a handler command needs uses"),
+    "uses-on-simple-command": (_with(GET, uses={"required": ["getUser"]}), "only for handler"),
+    "uses-twice": (
+        _with(HANDLER, uses={"required": ["getUser"], "optional": ["getUser"]}),
+        "lists an operation twice",
+    ),
+    "uses-non-get": (
+        _with(HANDLER, uses={"required": ["getUser", "assignUserToApplication"]}),
+        "it is POST; only GET is allowed",
+    ),
+    "uses-unknown": (_with(HANDLER, uses={"required": ["nope"]}), "uses nope: unknown operation"),
+    "uses-scopeless": (
+        _with(HANDLER, uses={"required": ["getWellknownOrgMetadata"]}),
+        "declares no oauth2 scopes",
+    ),
+    "handler-with-view": (_with(HANDLER, view=["id"]), "view: not for handler commands"),
+    "handler-with-paginate": (_with(HANDLER, paginate="link"), "paginate"),
+    "handler-resumable": (_with(HANDLER, resumable=False), "never resumable"),
+    "handler-arg-with-target": (
+        _with(HANDLER, args={"user": {"path_param": "id", "description": "x"}}),
+        "take no path_param, query, resolve or arg_rule",
+    ),
+    "handler-arg-with-rule": (
+        _with(HANDLER, args={"q": {"description": "x", "arg_rule": {"forbidden": True}}}),
+        "take no path_param, query, resolve or arg_rule",
+    ),
+    "handler-arg-without-description": (
+        _with(HANDLER, args={"user": {"required": True}}),
+        "need a description",
+    ),
+    "handler-array-arg": (
+        _with(HANDLER, args={"ids": {"type": "array", "description": "x"}}),
+        "strings, integers or booleans",
+    ),
+    "handler-hidden-arg": (
+        _with(HANDLER, args={"x": {"allowed_values": [], "description": "x"}}),
+        "no hidden args",
+    ),
+    "simple-arg-without-target": (
+        _with(GET, args={"user": {}}),
+        "set exactly one of path_param or query",
+    ),
+    "simple-arg-with-description": (
+        _with(GET, args={"user": {"path_param": "id", "description": "x"}}),
+        "only for handler commands",
+    ),
     "misspelled-field": (_with(GET, arg_rules={}), "arg_rules: Extra inputs"),
     "arg-path-and-query": (
         _with(GET, args={"user": {"path_param": "id", "query": "id"}}),
@@ -819,3 +875,28 @@ def test_attribute_pattern_matches_the_tokenizer() -> None:
     from okta_mcp.registry.loader import _ATTRIBUTE  # pyright: ignore[reportPrivateUsage]
 
     assert (_ATTRIBUTE.pattern, _ATTRIBUTE.flags) == (ATTRIBUTE.pattern, ATTRIBUTE.flags)
+
+
+def test_handler_command(spec: SpecIndex) -> None:
+    cmd = _build(spec, probe=HANDLER).domains["users"].commands["probe"]
+    assert cmd.operation is None and cmd.handler == "probe"
+    assert set(cmd.uses) == {"getUser", "listUserGroups"}
+    assert cmd.optional == {"listUserGroups"}
+    # Only the required operations' scopes gate the command.
+    assert cmd.scope_sets == (frozenset({"okta.users.read"}),)
+    assert not cmd.is_list
+    assert cmd.schema["required"] == ["user"]
+    assert cmd.schema["properties"]["user"] == {"type": "string", "maxLength": 256}
+    with pytest.raises(RuntimeError):
+        cmd.op()
+
+
+def test_handler_scope_sets_cover_every_required_operation(spec: SpecIndex) -> None:
+    both = _with(HANDLER, uses={"required": ["getUser", "listLogEvents"]})
+    cmd = _build(spec, probe=both).domains["users"].commands["probe"]
+    assert cmd.scope_sets == (frozenset({"okta.users.read", "okta.logs.read"}),)
+
+
+def test_handler_commands_are_left_out_of_the_shared_operation_check(spec: SpecIndex) -> None:
+    # Same data classes as `get`, no arg rules: two simple commands so would be an error.
+    _build(spec, get=GET, probe=HANDLER)

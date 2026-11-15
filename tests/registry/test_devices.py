@@ -22,7 +22,7 @@ OS_ACCOUNTS = ("get-os-accounts", "get-os-account")
 
 
 def _commands(registry: Registry, domain: str) -> dict[str, str]:
-    return {n: c.operation.operation_id for n, c in registry.domains[domain].commands.items()}
+    return {n: c.op().operation_id for n, c in registry.domains[domain].commands.items()}
 
 
 def test_commands(registry: Registry) -> None:
@@ -70,7 +70,7 @@ def test_normal_commands_return_no_scrubbed_field(registry: Registry) -> None:
 
     for domain in DOMAINS:
         for cmd in registry.domains[domain].commands.values():
-            response = cmd.operation.response
+            response = cmd.op().response
             fields = set(response.fields) | {f for v in response.item_fields.values() for f in v}
             hits = sorted(f for f in fields if scrubbed(f, always) or string_hit(f, fields))
             if cmd.name == "get-users":
@@ -133,7 +133,7 @@ def test_id_shapes(
 def test_posture_check_id_keeps_out_the_default_segment(registry: Registry) -> None:
     # Only the character set: no spec example shows a built-in check's ID.
     cmd = registry.domains["device-posture"].commands["get"]
-    assert "default" in cmd.operation.reserved["postureCheckId"]
+    assert "default" in cmd.op().reserved["postureCheckId"]
     for bad in ("default", "DEFAULT", "Default", "dch3m8o4rWhwReDeM1c5/x", "a.b", "a-b", ".."):
         with pytest.raises(InvalidArguments, match="arg 'check'"):
             build_request(cmd, {"check": bad}, ORG)
@@ -158,7 +158,7 @@ def test_list_args(registry: Registry) -> None:
     assert rule is not None and rule.attribute_expression and not rule.attributes
     exposed = {a.param for a in listing.entry.args.values()}
     assert exposed == {"search", "expand"}
-    assert {"fields", "after", "limit"} <= set(listing.operation.params)
+    assert {"fields", "after", "limit"} <= set(listing.op().params)
     assert listing.entry.args["expand"].allowed_values == ("user", "userSummary")
     with pytest.raises(InvalidArguments, match="arg 'expand'"):
         validate_args(listing, {"expand": "capabilities"})

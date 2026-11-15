@@ -109,6 +109,7 @@ def statuses(
         (d.name, c.operation.operation_id)
         for d in registry.domains.values()
         for c in d.commands.values()
+        if c.operation is not None
     }
     status: dict[tuple[str, str], str] = {}
     for domain, commands in catalogue.items():
@@ -174,7 +175,7 @@ def render(
         (d.name, c.name, c.operation.operation_id)
         for d in registry.domains.values()
         for c in d.commands.values()
-        if (d.name, c.operation.operation_id) not in catalogued
+        if c.operation is not None and (d.name, c.operation.operation_id) not in catalogued
     )
     lines += ["", "## Registry commands outside the catalogue", ""]
     if extra:
@@ -184,7 +185,10 @@ def render(
         lines.append("None.")
 
     covered = {o for _, o in catalogued} | {
-        c.operation.operation_id for d in registry.domains.values() for c in d.commands.values()
+        c.operation.operation_id
+        for d in registry.domains.values()
+        for c in d.commands.values()
+        if c.operation is not None
     }
     by_tag: dict[str, list[str]] = defaultdict(list)
     for op_id, op in spec.operations.items():

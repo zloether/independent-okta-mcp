@@ -65,21 +65,41 @@ class UserResolver:
             return value
         if value in cache:
             return cache[value]
+        found = cast(str, (await self.user(arg, value))["id"])
+        cache[value] = found
+        return found
+
+    async def user(self, arg: str, value: object) -> dict[str, Any]:
+        """The user `value` names, as Okta returns it: by ID, or by exact login (a handler
+        command needs the whole user, not only its ID). Always one `getUser` request; the user
+        returned must have that ID, or that login. Raises as `resolve` does."""
+        if not isinstance(value, str):
+            raise InvalidArguments(f"arg {arg!r} must be a string")
         reserved = self._get_user.reserved.get(_LOOKUP_PARAM, frozenset())
         segment = path_segment(arg, value, reserved)
         url = build_url(self._org_url, self._get_user.path, {_LOOKUP_PARAM: segment})
-        found: str | None = None
+        found: dict[str, Any] | None = None
         try:
             response = await self._client.get(url)
         except UpstreamError as e:
             if e.status != 404:
                 raise
         else:
-            found = _user_id_of(json_body(response), value)
+            found = _user_of(json_body(response), value)
         if found is None:
             raise NotFound(NOT_FOUND)
-        cache[value] = found
         return found
+
+
+def _user_of(body: object, key: str) -> dict[str, Any] | None:
+    """`body` if it is a user with ID `key` (when `key` is shaped like one) or with login
+    `key`, else None."""
+    if not isinstance(body, dict):
+        return None
+    user = cast(dict[str, Any], body)
+    if USER_ID.fullmatch(key):
+        return user if user.get("id") == key else None
+    return user if _user_id_of(user, key) is not None else None
 
 
 def _user_id_of(body: object, login: str) -> str | None:

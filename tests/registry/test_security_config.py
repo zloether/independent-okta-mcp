@@ -13,7 +13,7 @@ POLICY = "00plrilJ7jZ66Gn0X0g3"
 
 
 def _commands(registry: Registry, domain: str) -> dict[str, str]:
-    return {n: c.operation.operation_id for n, c in registry.domains[domain].commands.items()}
+    return {n: c.op().operation_id for n, c in registry.domains[domain].commands.items()}
 
 
 def test_commands(registry: Registry) -> None:
@@ -104,7 +104,7 @@ def test_policy_get_expand_is_closed(registry: Registry) -> None:
 def test_policy_id_refuses_sibling_endpoint(registry: Registry) -> None:
     # `/api/v1/policies/simulate` is another operation (design §6.4 item 5).
     cmd = registry.domains["policies"].commands["get"]
-    assert "simulate" in cmd.operation.reserved["policyId"]
+    assert "simulate" in cmd.op().reserved["policyId"]
     for bad in ("simulate", "SIMULATE", "simulate.json"):
         with pytest.raises(InvalidArguments, match="arg 'policy'"):
             build_request(cmd, {"policy": bad}, "https://example.okta.com")
@@ -115,7 +115,7 @@ def test_policy_id_refuses_sibling_endpoint(registry: Registry) -> None:
 
 def test_unexposed_params(registry: Registry) -> None:
     cmd = registry.domains["policies"].commands["list"]
-    assert "resourceId" in cmd.operation.params
+    assert "resourceId" in cmd.op().params
     assert "resourceId" not in {a.param for a in cmd.entry.args.values()}
     # No page size is sent, and a next link is followed if Okta sends one.
     rules = registry.domains["policies"].commands["get-rules"]

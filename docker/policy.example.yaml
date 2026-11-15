@@ -19,6 +19,9 @@ roles:
       users:  ["*", get-factors, get-enrollments]
       groups: ["*"]
       apps:   [list, get, get-users, get-groups]
+      # Sensitive (it reads the System Log), so named outright. Returns attributes pulled from
+      # the user's failed sign-ins, not the events, policies or other users.
+      diagnostics: [login-failures]
     # One list for every command the role allows: `status` is the user's status on `users list`
     # and nothing on `groups list`; `profile.name` is the group's name.
     search_attributes:

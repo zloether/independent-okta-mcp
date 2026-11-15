@@ -90,6 +90,7 @@ def test_wildcards_reach_no_sensitive_command_unless_named(policy: Policy, full:
     assert policy.roles["helpdesk"].allow & sensitive == {
         ("users", "get-factors"),
         ("users", "get-enrollments"),
+        ("diagnostics", "login-failures"),
     }
     # logs and sessions through include_sensitive, get-risk by name.
     assert policy.roles["security-analyst"].allow & sensitive == {

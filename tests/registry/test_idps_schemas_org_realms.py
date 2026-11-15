@@ -24,7 +24,7 @@ FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 
 def _commands(registry: Registry, domain: str) -> dict[str, str]:
-    return {n: c.operation.operation_id for n, c in registry.domains[domain].commands.items()}
+    return {n: c.op().operation_id for n, c in registry.domains[domain].commands.items()}
 
 
 def test_commands(registry: Registry) -> None:
@@ -80,7 +80,7 @@ def test_commands(registry: Registry) -> None:
         "list-operations": "listRealmAssignmentOperations",
     }
     # Needs okta.orgs.manage; the service app has read scopes only.
-    ops = {c.operation.operation_id for c in registry.domains["org-settings"].commands.values()}
+    ops = {c.op().operation_id for c in registry.domains["org-settings"].commands.values()}
     assert "getAerialConsent" not in ops
 
 
@@ -134,7 +134,7 @@ def test_normal_commands_return_no_scrubbed_field(registry: Registry) -> None:
         for cmd in registry.domains[domain].commands.values():
             if cmd.sensitivity != "normal":
                 continue
-            response = cmd.operation.response
+            response = cmd.op().response
             fields = set(response.fields) | {f for v in response.item_fields.values() for f in v}
             hits = sorted(f for f in fields if scrubbed(f, always) or string_hit(f, fields))
             assert not hits, (cmd.domain, cmd.name, hits)
@@ -202,7 +202,7 @@ def test_idp_id_shape_keeps_out_the_credentials_segment(registry: Registry) -> N
         if "idp" not in cmd.entry.args:
             assert name in ("list", "list-keys", "get-key"), name
             continue
-        assert "credentials" in cmd.operation.reserved["idpId"]
+        assert "credentials" in cmd.op().reserved["idpId"]
         args = {n: "abc1" for n, a in cmd.entry.args.items() if a.path_param is not None}
         validate_args(cmd, {**args, "idp": IDP})
         for bad in ("credentials", "00u1emaKYZTWRYYRRTSK", "0oa1emaKYZTWRYYRRTS", f"{IDP}\n"):
@@ -212,7 +212,7 @@ def test_idp_id_shape_keeps_out_the_credentials_segment(registry: Registry) -> N
 
 def test_signing_key_refuses_its_sibling_literals(registry: Registry) -> None:
     cmd = registry.domains["identity-providers"].commands["get-signing-key"]
-    assert {"active", "generate"} <= cmd.operation.reserved["kid"]
+    assert {"active", "generate"} <= cmd.op().reserved["kid"]
     url, _ = build_request(cmd, {"idp": IDP, "key": "KmMo85SSsU7TZzOShcGb"}, ORG)
     assert url == f"{ORG}/api/v1/idps/{IDP}/credentials/keys/KmMo85SSsU7TZzOShcGb"
     for bad in ("active", "ACTIVE", "generate"):
@@ -230,7 +230,7 @@ def test_idp_args(registry: Registry) -> None:
         validate_args(idps["list"], {"type": "oidc"})
     # Only the IdP's own records' free-form profiles: no `q` on linked users.
     users = idps["list-users"]
-    assert "q" in users.operation.params
+    assert "q" in users.op().params
     assert not any(a.param == "q" for a in users.entry.args.values())
     assert users.entry.args["expand"].allowed_values == ("user",)
     with pytest.raises(InvalidArguments, match="arg 'expand'"):
@@ -252,7 +252,7 @@ def test_org_settings_args(registry: Registry) -> None:
     tokens = org["list-yubikey-tokens"]
     exposed = {a.param for a in tokens.entry.args.values()}
     assert exposed == {"sortBy", "sortOrder", "expand"}
-    assert {"filter", "forDownload"} <= set(tokens.operation.params)
+    assert {"filter", "forDownload"} <= set(tokens.op().params)
     assert tokens.entry.args["expand"].allowed_values == ("user",)
     with pytest.raises(InvalidArguments, match="arg 'sort_by'"):
         validate_args(tokens, {"sort_by": "profile.secret"})
@@ -263,7 +263,7 @@ def test_org_settings_args(registry: Registry) -> None:
 def test_schema_args(registry: Registry) -> None:
     schemas = registry.domains["schemas"].commands
     user_schema = schemas["get-user-schema"]
-    assert "linkedobjects" in user_schema.operation.reserved["schemaId"]
+    assert "linkedobjects" in user_schema.op().reserved["schemaId"]
     url, _ = build_request(user_schema, {"schema": "default"}, ORG)
     assert url == f"{ORG}/api/v1/meta/schemas/user/default"
     for bad in ("linkedObjects", "LINKEDOBJECTS", "a.b", "a-b"):
@@ -295,10 +295,10 @@ def test_realm_args(registry: Registry) -> None:
     for name in ("search", "sort_by"):
         rule = listing.entry.args[name].arg_rule
         assert rule is not None and rule.attribute_expression and not rule.attributes, name
-    assert "fields" in listing.operation.params
+    assert "fields" in listing.op().params
     assert not any(a.param == "fields" for a in listing.entry.args.values())
     assignment = realms["get-assignment"]
-    assert "operations" in assignment.operation.reserved["assignmentId"]
+    assert "operations" in assignment.op().reserved["assignmentId"]
     for bad in ("operations", "Operations"):
         with pytest.raises(InvalidArguments, match="arg 'assignment'"):
             build_request(assignment, {"assignment": bad}, ORG)
