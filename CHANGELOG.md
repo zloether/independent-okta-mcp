@@ -1,0 +1,16 @@
+# Changelog
+
+Changes an operator or user of the server would notice. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Design and review history is in the [decisions log](docs/decisions-log.md).
+
+## Unreleased
+
+No release has been tagged and no image is published; the server builds from a checkout. The first release will be `1.0.0` ([plan](docs/implementation-plan.md) step 8.4). Until then anything may change without notice: command names, policy file format, environment variables.
+
+### Added
+
+- Read-only MCP server for the Okta Management API: 24 domains as one tool each, plus `okta_help` and `okta_status`.
+- OAuth resource server for an Okta custom authorization server; group-to-role policy file; `okta-mcp --check`.
+- Service app access with `private_key_jwt` and DPoP; stdio dev mode.
+- Audit log, per-user request limits, JSON operational logs.
+- Container image definition and Compose example; Okta setup script and Terraform module.
+- `diagnostics login-failures`, a composite command for help-desk roles.

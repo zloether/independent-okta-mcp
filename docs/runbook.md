@@ -10,12 +10,19 @@ Decide these first. Each is hard to change later.
 
 | Decision | Options | Where it's set |
 |---|---|---|
-| **Exposure** | Internal only (VPN or private network) or internet-facing. Either way TLS ends at a reverse proxy, and nothing but that proxy reaches the container's port (§3.3). Write the choice down here and in the compatibility matrix | Your network, `ports:` in compose |
+| **Exposure** | Internal only (VPN or private network) or internet-facing. Either way TLS ends at a reverse proxy, and nothing but that proxy reaches the container's port (§3.3). Write the choice down with your deployment's notes | Your network, `ports:` in compose |
 | **Refresh tokens** | A: none (sign in again every access-token lifetime, the default) or B: rotating | `refresh_tokens` in the setup config ([A or B](okta-setup.md#refresh-tokens-option-a-or-b)) |
 | **Scopes and admin role** | Each `okta.*.read` scope you grant exposes its commands and may need a broader admin role than Read-only Administrator ([table](okta-setup.md#service-app-scopes-and-admin-roles)). Leave a scope out to stay narrow | `service_app.scopes` → `OKTA_SCOPES` |
 | **DPoP or sessions** | DPoP on (default), or off so `sessions get` works: Okta rejects that call from a DPoP-bound token ([details](okta-setup.md#service-app-scopes-and-admin-roles)) | Require DPoP on the service app, `OKTA_DPOP` |
-| **Roles** | Which Okta groups get which commands. Sensitive commands need a name or `include_sensitive` | `policy.yaml` (start from [`docker/policy.example.yaml`](../docker/policy.example.yaml)) |
+| **Roles** | Which Okta groups get which commands. Sensitive commands need a name or `include_sensitive`. Two things a role sees that the classes don't flag ([below](#what-redaction-doesnt-cover)): every profile attribute on a user, and whatever the System Log recorded | `policy.yaml` (start from [`docker/policy.example.yaml`](../docker/policy.example.yaml)) |
 | **Audit args** | `full` (args in clear, which are PII) or `hash` (keyed hashes) | `MCP_AUDIT_ARGS` |
+
+### What redaction doesn't cover
+
+The server redacts known secret fields in every result (`scrub.yaml`), by key name. It can't know what your org put where:
+
+- **Custom profile attributes.** User commands are normal, not sensitive, so `users: ["*"]` returns each user's whole profile. If your org keeps national ID numbers, salary bands, or anything secret in profile attributes, a role with user commands reads them, unless the attribute's name is one the rules redact (`secret`, `apiKey`, `token`, …). Check your user schema before granting user commands widely. There is no per-role field redaction yet (§12.4).
+- **System Log values.** `logs list` returns events as Okta recorded them. Redaction sees key names, not the inside of a string, so a secret in a value, such as a token in a request URL under `debugContext.debugData`, is returned. Grant `logs` only to roles you would let read the System Log in the admin console. `diagnostics login-failures` returns derived attributes, never the events.
 
 You need:
 
@@ -96,6 +103,19 @@ A configuration, key or policy error stops the server with exit status `2` and t
 
 Point the proxy at `127.0.0.1:8080`, or at `okta-mcp:8080` with the shared-network option in the compose file, and serve it at `MCP_PUBLIC_URL`. Then confirm that only the proxy can reach the port. Docker's published ports bypass host firewalls such as ufw (§11.4).
 
+The proxy should cap what it accepts. A minimal Caddyfile (unverified: not yet run against this server; tracked in plan 7.3):
+
+```
+mcp.example.com {
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+Whatever the proxy, set a request body limit (tool calls are a few KB; the server itself refuses bodies over 4 MiB), connection and header timeouts, and a per-address request rate if the endpoint is internet-facing: the server limits each signed-in user, not unauthenticated senders. Don't cache responses; tool lists differ per user.
+
 ```sh
 # from ANOTHER host on the same network: both must fail to connect
 curl -m 5 http://<server-host-ip>:8080/healthz
@@ -116,7 +136,7 @@ curl -s https://mcp.example.com/.well-known/oauth-protected-resource
 # both: resource = MCP_PUBLIC_URL, authorization_servers = [MCP_ISSUER]
 ```
 
-Then sign in from an MCP client as one test user per role. Check that `okta_status` shows the expected roles and that each tool list holds only that role's commands. Also check a user who is in a role group from the setup config that `policy.yaml` doesn't map (add one to the setup config for the test if needed): they get a token but see only `okta_status`, which says their groups map to no role. A user in none of the setup config's role groups can't get a token at all, because the authorization server's rule and the client app assignments list exactly those groups. That includes a hand-made `mcp-okta-*` group. Client-by-client notes are in [`design/spike-findings.md`](design/spike-findings.md) (moving to `compatibility-matrix.md` in plan step 4.6).
+Then sign in from an MCP client as one test user per role. Check that `okta_status` shows the expected roles and that each tool list holds only that role's commands. Also check a user who is in a role group from the setup config that `policy.yaml` doesn't map (add one to the setup config for the test if needed): they get a token but see only `okta_status`, which says their groups map to no role. A user in none of the setup config's role groups can't get a token at all, because the authorization server's rule and the client app assignments list exactly those groups. That includes a hand-made `mcp-okta-*` group. How each client connects, and which have been tried, is in [`compatibility-matrix.md`](compatibility-matrix.md).
 
 ### 3.5 Tell your users
 
@@ -238,7 +258,7 @@ Run `uv run python scripts/okta-setup.py check --config okta-setup.yaml` on a sc
 In order of speed. Do as many as the incident needs (§11.4). Only step 1 takes effect at once. Steps 2–4 stop new tokens, not ones already issued, because the server checks user tokens locally and never learns that Okta revoked one.
 
 1. **Stop the server:** `docker compose -f compose.example.yaml down`, or remove the route at the proxy. This takes seconds and ends all MCP access.
-2. **Deactivate the service app** (Applications → the service app → Deactivate). This is the step for a leaked service key. Unverified: whether Okta also refuses service tokens issued before the deactivation, or lets them run out (up to an hour).
+2. **Deactivate the service app** (Applications → the service app → Deactivate). This is the step for a leaked service key. Unverified (plan 7.3): whether Okta also refuses service tokens issued before the deactivation, or lets them run out (up to an hour). Until that is known, assume a stolen token works for an hour after this step.
 3. **Rotate the service key** (§4.4) if the key may have leaked: delete its public key from the app. This stops new service tokens only. A token the thief already holds is bound to the thief's own DPoP key and stays valid for its lifetime, so do step 2 as well.
 4. **Cut user sign-in:** deactivate the `okta-mcp` authorization server, or remove the client apps from its access policy. Users' access tokens already issued keep passing the server's checks until they expire (≤ 30 minutes as set up). If that window matters, also do step 1. Under B, also revoke the affected users' tokens (§4.3).
 5. **Rotate the cursor key** (`secrets/cursor_key`, §4.5) if it may have leaked. Outstanding cursors stop working when the container is recreated.

@@ -1,12 +1,29 @@
 # independent-okta-mcp
 
-A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server for the Okta Management API. Users sign in with Okta OAuth; their groups map to roles in a version-controlled policy that decides what each may call. Ships as one stateless container.
+A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server for the Okta Management API. Users sign in with Okta OAuth; their groups map to roles in a version-controlled policy that decides what each may call. Runs as one stateless container.
 
-**Status:** pre-alpha. Not usable yet; under active development.
+An independent project: not affiliated with, endorsed by or supported by Okta, Inc.
+
+## Status
+
+**Pre-alpha. Don't point it at a production org yet.** There is no release and no published image; it builds from a checkout.
+
+| | |
+|---|---|
+| Done | The server, policy engine, 24 command domains, container and setup tools, tested against mocked Okta in CI |
+| Checked against an Okta dev org | The setup script; OAuth sign-in from Claude Code (against a check server, not this server); most commands through stdio dev mode |
+| Not yet done | Sign-in from a real client to this server over HTTP; a deployment from the [runbook](docs/runbook.md) on a clean machine; a live run of `diagnostics login-failures`; the runbook steps marked **unverified** |
+| Review | Written and reviewed with AI assistance (Claude Code), directed by the maintainer. No independent security audit ([SECURITY.md](SECURITY.md#review-status)) |
+
+What is left is tracked in the [plan](docs/implementation-plan.md).
+
+## Read more
 
 - [Okta setup](docs/okta-setup.md): prerequisites (API Access Management), clients, service app
 - [Runbook](docs/runbook.md): deploy, operate, rotate, kill switch
-- [Design](docs/design/mcp-server.md) · [Plan](docs/implementation-plan.md)
+- [Clients](docs/compatibility-matrix.md): how an MCP client connects, and which have been tried
+- [Design](docs/design/mcp-server.md) · [Plan](docs/implementation-plan.md) · [Changelog](CHANGELOG.md)
+- [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
 ## Local dev mode (stdio)
 
@@ -34,4 +51,4 @@ Use a read-only admin's API token, or the service app (`OKTA_CLIENT_ID`, `OKTA_P
 
 ## License
 
-Apache-2.0 with the Commons Clause: free to use and modify, not to sell. See [LICENSE](LICENSE).
+Apache-2.0 with the Commons Clause: free to use and modify, not to sell. See [LICENSE](LICENSE). The vendored Okta OpenAPI specification is Okta's, under Apache-2.0 ([NOTICE](NOTICE)).

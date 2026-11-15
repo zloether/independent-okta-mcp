@@ -1,6 +1,6 @@
 # Okta MCP Server — Design
 
-Status: **Draft r4 (standalone repo)** · Date: 2026-10-23 · Owner: zloether
+Status: **r4, with the changes in §0.0 as built** (pre-release; the plan's step 8.3 does the final pass) · r4: 2026-10-23 · Last updated: 2026-11-15 · Owner: zloether
 
 A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that exposes the Okta Management API's read surface to MCP clients, with OAuth-based user authentication and Okta-group-driven authorization of which tools each user may call.
 
@@ -10,7 +10,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 
 ## 0. Change log
 
-### 0.0 Changes since r4 (design review, 2026-11-10)
+### 0.0 Changes since r4 (design review, 2026-11-10, and later steps)
 
 | r4 position | Now | Reason |
 |---|---|---|
@@ -76,16 +76,16 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 
 | Topic | Decision |
 |---|---|
-| Functional scope | Read-only coverage of the Okta Management API GET surface that admins use, grouped into **23 domains** (taxonomy borrowed from okta-skills, minus ai-agents). v1 ships all single-endpoint commands; composite commands (log analysis, login diagnosis, batch fan-out) are added after v1 on demand (§5.6). |
+| Functional scope | Read-only coverage of the Okta Management API GET surface that admins use, grouped into **23 domains** (taxonomy borrowed from okta-skills, minus ai-agents) plus `diagnostics` for composite commands (**24**). v1 ships all single-endpoint commands and one composite, `diagnostics login-failures`; other composites (log analysis, batch fan-out) are added after v1 on demand (§5.6). |
 | Source of truth | A **declarative command registry** in this repo, validated against a **pinned Okta OpenAPI spec** vendored in this repo. |
-| Tool surface | **One MCP tool per domain** (23) with a `command` enum, plus `okta_help` and `okta_status` (25 total). Per-user filtering rewrites the enum so users only see commands they may call. |
+| Tool surface | **One MCP tool per domain** (24) with a `command` enum, plus `okta_help` and `okta_status` (26 total). Per-user filtering rewrites the enum so users only see commands they may call. |
 | Runtime | Python ≥3.12, fully async (`anyio`, `httpx`), official MCP Python SDK v2. |
 | Transport | Streamable HTTP, **stateless**, behind a TLS-terminating reverse proxy. stdio for local development only. |
 | User authentication | MCP server is an OAuth 2.1 **resource server only**. Okta (dedicated custom authorization server) is the AS. v1 entry path: browser auth-code + PKCE. Okta Cross App Access / ID-JAG is future work (§8.4). |
 | Authorization | Access-token `groups` claim (group IDs) → **roles** in a version-controlled YAML policy → allow/deny of domains/commands. Enforced at `tools/list` and again at `tools/call`. Default deny. |
 | Okta API access | **Shared service app** (OAuth client credentials, `private_key_jwt`, DPoP, read scopes, the admin role those scopes need: Read-only Admin unless the deployment enables role commands). The user's token is never forwarded to Okta. |
 | Deployment | Single org, single container (Dockerfile + compose example), no external state. |
-| Estimated effort | **~32–35 working days** for one engineer (≈7 calendar weeks), excluding composite handlers. Re-estimated from the coverage inventory (plan step 1.5). See §15. |
+| Estimated effort | The r4 estimate was **~32–35 working days** for one engineer, excluding composite handlers (§15, kept as the original plan). Actual progress is in the [implementation plan](../implementation-plan.md). |
 
 ---
 
@@ -93,8 +93,8 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 
 ### Goals
 
-1. Coverage: every admin-relevant Okta read endpoint in the 23 domains is reachable via MCP, subject to policy.
-2. Small, model-friendly tool surface (25 tools, not one per endpoint).
+1. Coverage: every admin-relevant Okta read endpoint in the 23 API domains is reachable via MCP, subject to policy.
+2. Small, model-friendly tool surface (26 tools, not one per endpoint).
 3. Least privilege for humans: a help-desk user cannot call log/IAM/secret-bearing commands unless a role grants them.
 4. Self-hostable as one container; secrets supplied by the container runtime.
 5. Compatible with standards-based MCP clients (RFC 9728 and OIDC discovery, PKCE, resource indicators).
@@ -173,14 +173,16 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
 independent-okta-mcp/
 ├── AGENTS.md                    # agent/contributor instructions incl. trust boundaries (§12.2)
 ├── CLAUDE.md                    # @AGENTS.md, plus Claude Code subagent model choices
-├── LICENSE
+├── LICENSE, NOTICE              # Apache-2.0 + Commons Clause; third-party attribution
 ├── README.md
+├── SECURITY.md, CONTRIBUTING.md, CHANGELOG.md
 ├── pyproject.toml               # [project] + dev group; ruff/pyright/pytest config
 ├── uv.lock                      # committed
 ├── docs/
 │   ├── design/mcp-server.md     # this document
 │   ├── implementation-plan.md   # order of work, status
 │   ├── decisions-log.md         # append-only decisions and review outcomes
+│   ├── runbook.md, okta-setup.md, compatibility-matrix.md   # operator docs
 │   ├── agents/                  # task-specific agent guidance (AGENTS.md lists when to read)
 │   └── coverage/                # catalogue.yaml, report.md (§5.6)
 ├── src/okta_mcp/
@@ -223,7 +225,7 @@ The paths below `src/okta_mcp/data/` are abbreviated as `specs/`, `registry/`, `
 
 ### 5.1 One tool per domain
 
-Tool name = `okta_<domain>`: `okta_users`, `okta_groups`, `okta_apps`, `okta_policies`, `okta_devices`, `okta_network_zones`, `okta_device_assurance`, `okta_device_posture`, `okta_logs`, `okta_api_tokens`, `okta_sessions`, `okta_iam`, `okta_authenticators`, `okta_behaviors`, `okta_authorization_servers`, `okta_identity_providers`, `okta_schemas`, `okta_security`, `okta_attack_protection`, `okta_device_integrations`, `okta_org_settings`, `okta_realms`, `okta_oauth_client_roles` (**23**), plus:
+Tool name = `okta_<domain>`: `okta_users`, `okta_groups`, `okta_apps`, `okta_policies`, `okta_devices`, `okta_network_zones`, `okta_device_assurance`, `okta_device_posture`, `okta_logs`, `okta_api_tokens`, `okta_sessions`, `okta_iam`, `okta_authenticators`, `okta_behaviors`, `okta_authorization_servers`, `okta_identity_providers`, `okta_schemas`, `okta_security`, `okta_attack_protection`, `okta_device_integrations`, `okta_org_settings`, `okta_realms`, `okta_oauth_client_roles` (**23**), `okta_diagnostics` (composite commands, §5.6), plus:
 
 - `okta_help` — compact text help (every argument and constraint, the default view) for one command the caller may use (§5.3).
 - `okta_status` — the caller's effective roles/domains and, for commands their role permits but the server cannot execute, why (e.g. service app lacks a scope). No data about other users.
@@ -778,7 +780,7 @@ Startup fails fast on missing/invalid values, unreadable key, invalid policy, or
 - **Network exposure:** only the TLS proxy may reach the container's port. The app does not check which peer sent `X-Forwarded-*` (`MCP_TRUST_PROXY`); that is the network's job: no published port, or one bound to loopback (`127.0.0.1:8080:8080`; Docker's published ports bypass host firewalls such as ufw). Identity never comes from the client address (limits, audit and cursors key on `uid`), so a forged one mislabels a log line, nothing more.
 - **Compose example** ([`docker/compose.example.yaml`](../../docker/compose.example.yaml), plan 7.2): `read_only`, `cap_drop: [ALL]`, `no-new-privileges`, user 10001, port on `127.0.0.1` only (or none, with the proxy on a shared network), `MCP_TRUST_PROXY` off, cursor key and service key as file secrets, policy as a read-only bind with `create_host_path: false` (a missing file fails `up` instead of mounting an empty directory). Compose bind-mounts a file secret with the host file's owner and mode and ignores `uid`/`mode` for it, so the host files must be readable by uid 10001. `tests/test_compose_example.py` pins these statically; CI's `container` job also brings the file up with the built image (`tests/container/test_compose.py`: `up --wait` healthy, the hardening and read-only mounts in `docker inspect`, loopback-only binding, `/healthz` 200 through the published port).
 - **Replicas:** safe (stateless), but limiters and the service token are per replica.
-- **Exposure decision** (before rollout): internal-only vs internet-facing; record it in the runbook and the compatibility matrix.
+- **Exposure decision** (before rollout): internal-only vs internet-facing; the runbook makes it the first decision (§1 there).
 - **Kill switch:** (1) stop the container / pull from proxy; (2) deactivate the service app in Okta; (3) rotate the service key; (4) deactivate the custom AS or remove clients from its policy; (5) rotate `MCP_CURSOR_KEY`.
 - **Policy deployment:** edit, review, `okta-mcp --check` in the server's own environment, restart. The same check runs before an upgrade, since a new registry can reject a policy the old one accepted. The stateless server does not send list-change notifications (`subscriptions/listen` in 2026-07-28); clients re-list after `ttlMs` expires.
 
@@ -806,11 +808,12 @@ Startup fails fast on missing/invalid values, unreadable key, invalid policy, or
 | Existence oracle via resolver | Policy check runs before resolution (§5.6) |
 | Non-GET operation added to registry | Loader rejects non-GET operations; HTTP client exposes only `get` |
 | Secret-bearing "normal" endpoints | Classify by data returned; `scrub.yaml` regardless of role |
+| Secrets redaction can't see: scrubbing matches key names, so a secret inside a string value (a token in a System Log `debugContext.debugData` URL) or in a custom profile attribute with an ordinary name is returned | System Log commands are sensitive (`audit-log`), and its filter takes a closed set of scalar attributes (§6.2). **Residual (R8):** the role sees the value; operators decide who gets `logs` and user commands knowing this (runbook §1) |
 | Widening via arguments | `arg_rules`; unknown `expand` rejected; policy re-checked with args on resume |
 | SSRF / credential exfil via cursor or pagination link | Cursors hold a query string and path params only, never a path or host; URL re-derived from template; next links must be same origin and path |
 | Dev mode exposed over the network | stdio-only dev mode; HTTP always authenticates; image sets `MCP_ENV=production` |
 | Stolen service access token replayed elsewhere | DPoP binds it to an in-memory key |
-| DoS | Item/byte/deadline budgets, global in-flight cap, per-principal limiter, proxy limits |
+| DoS | Item/byte/deadline budgets, global in-flight cap, per-principal limiter; request bodies over 4 MiB refused (the SDK's default, `max_request_body_size`); the token is checked before a body is handled. Unauthenticated floods, slow connections and tighter body limits are the proxy's job (runbook §3.3) |
 | MCP traffic exhausting Okta rate limits shared with other integrations | Per-principal limiter; service app's rate-limit capacity capped in Okta (§10) |
 | Prompt injection via Okta data (unauthenticated attackers control System Log `actor.alternateId`; users control profile fields, device names, descriptions) | `untrusted: true` envelope; `readOnlyHint`; descriptions state results are data; no write tools. **Residual:** client's other tools can exfiltrate; document client-side isolation (dedicated session without egress tools, human approval) |
 | DNS rebinding / browser attacks | `Origin` validation, bearer-only, no cookies, no CORS wildcard |
@@ -854,7 +857,7 @@ As built (step 6.1, `audit.py`):
 
 ### 12.4 Privacy
 
-Results include PII. Roles should be scoped accordingly; `select` is a convenience, not a control. Future: policy-level per-role field redaction.
+Results include PII. Roles should be scoped accordingly; `select` is a convenience, not a control. User commands are `pii`, which is normal, so a wildcard on `users` returns whole profiles, custom attributes included; an org that keeps sensitive values there must scope user commands with that in mind (R8, runbook §1). Future: policy-level per-role field redaction.
 
 ---
 
@@ -918,7 +921,7 @@ M3 is the least certain line. The step 1.5 inventory (`docs/coverage/report.md`)
 | V2 | Okta configuration for a self-hosted resource server as ID-JAG audience | Path B (future) | Deferred with Path B |
 | V3 | Client registration: pre-registered vs DCR vs CIMD | Onboarding | Start with pre-registered public clients; check each target client in spike 0.6 and record in the compatibility matrix |
 | V4 | `.manage ⇒ .read` scope implication | Capability gate | **Closed (step 3.2): not modeled.** `OKTA_SCOPES` can't hold `.manage`, so nothing held implies anything; GET operations that accept only `.manage` are unavailable |
-| V5 | MCP SDK v2 and revision 2026-07-28: stateless per-request principal in low-level `on_*` handlers, `cacheScope`/`ttlMs` on list results, back-compat with 2025-11-25 clients, built-in resource-server auth helpers, `httpx` vs `httpx2` and the matching test mock. Facts from the r3 review post-date the author's knowledge and are unconfirmed | Implementation shape | Spike 0.4; pin SDK exact |
+| V5 | MCP SDK v2 and revision 2026-07-28: stateless per-request principal in low-level `on_*` handlers, `cacheScope`/`ttlMs` on list results, back-compat with 2025-11-25 clients, built-in resource-server auth helpers, `httpx` vs `httpx2` and the matching test mock. | Implementation shape | **Verified 0.4** ([decisions log](../decisions-log.md)): SDK v2 pinned exact, both revisions served, `httpx2` for the Okta client |
 | V6 | The narrowest standard role under which each scope's endpoints succeed (recorded in the `okta-setup.md` scope table) | Service-app role | Per-scope smoke in dev org, Read-only Administrator first |
 | V8 | Spec accuracy: wrong/missing `security` scopes (empty scopes are now a load error), operationIds that change between spec releases, parameters undocumented in the spec | Registry correctness | `okta_scopes_override` with comments; spec-update diff review; dev-org smoke |
 | V9 | Okta custom AS handling of RFC 8707 `resource` | Path A | **Verified 0.5:** ignored; `aud` is always the AS audience. Dedicated AS required |
@@ -937,6 +940,7 @@ M3 is the least certain line. The step 1.5 inventory (`docs/coverage/report.md`)
 | R5 | Reimplementation volume (M3) larger than estimated | Schedule | Generated fixtures; re-estimate after step 1.5; ship by domain, prioritizing domains used by the first roles |
 | R7 | Anyone who can manage membership of a role group can grant themselves that role; the server only sees the resulting claim | Privilege escalation through the shared service app | Okta-side controls in §8.2; runbook checklist and System Log alert (plan 7.3). Residual accepted once those are in place |
 | R6 | A single 429 retry with no per-bucket pausing starves under heavy shared use | Throughput | Logged 429 events show whether per-bucket handling is needed (deferred) |
+| R8 | Redaction is by key name: secrets in string values (System Log) and sensitive data in custom profile attributes reach any role allowed the command (§12.1, §12.4) | Data exposure | Runbook §1 tells operators; the live-org secret canary (plan 8.2.1) watches for new secret-like keys; per-role field redaction is future work. Residual accepted |
 
 Future work: Path B (XAA), composite handlers, per-bucket 429 handling, `/metrics`, ai-agents with a separate credential, shared rate limiting across replicas, per-role field redaction, DPoP/mTLS-bound user tokens, Helm chart, multi-org.
 
@@ -949,9 +953,9 @@ Future work: Path B (XAA), composite handlers, per-bucket 429 handling, `/metric
 | **Wrap okta-skills scripts (r2 design)** | Couples this repo to another repo's internals and release cadence; needs patches upstream; inherits argparse option-injection and thread/contextvar complexity. Rejected by the independence decision. |
 | **Vendor a pinned copy of okta-skills `shared/` + scripts** | Keeps structural parity but carries a fork that drifts silently, keeps the argparse attack surface, and still needs the r2 seams applied to the copy. |
 | **Generate tools mechanically from the whole OpenAPI spec** | Fast coverage, but ~290 GET ops with no domain grouping, classification or gotcha handling; the registry approach uses the spec for mechanics and humans for classification. |
-| **Fork Okta's open-source `okta-mcp-server`** | Hand-written, write-oriented tools, different stack, exact-string scope matching **[unverified]**. Ideas borrowed: scope-aware pruning, cursor pagination, status tool. |
+| **Fork Okta's open-source `okta-mcp-server`** | A different goal: this design wants a read-only server with per-user, group-driven authorization over one shared credential, generated from the spec. Not evaluated in depth. Ideas borrowed: scope-aware pruning, cursor pagination, status tool. |
 | One MCP tool per command (~250) | Context cost and tool-selection accuracy collapse. |
-| Discovery meta-tools (`search_operations`/`call_operation`) | Weaker model reliability, awkward per-tool authorization. Revisit if 25 tools is too many for some clients. |
+| Discovery meta-tools (`search_operations`/`call_operation`) | Weaker model reliability, awkward per-tool authorization. Revisit if 26 tools is too many for some clients. |
 | Per-user delegated Okta tokens | Strongest least-privilege and native attribution, but requires every user to hold Okta admin roles. Candidate hybrid for sensitive domains later. |
 | Embedded authorization server | Makes us a token issuer; only if Okta cannot be the resource AS. |
 | Synchronous `requests` + threads | r2's model; async gives real cancellation and simpler context propagation. |

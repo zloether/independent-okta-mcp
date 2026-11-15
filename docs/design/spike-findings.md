@@ -55,7 +55,7 @@ Okta ignores `resource`: `aud` is always the authorization server's one configur
 
 All three return the same `issuer`, `code_challenge_methods_supported: ["S256"]` and `dpop_signing_alg_values_supported` (RS256/384/512, ES256/384/512). Metadata does not advertise `resource_parameter_supported` or `authorization_response_iss_parameter_supported`. `scopes_supported` includes `okta-mcp` (scope created with `metadataPublish: ALL_CLIENTS`).
 
-Per-client discovery behavior goes in the compatibility matrix below.
+Per-client discovery behavior is in the [compatibility matrix](../compatibility-matrix.md).
 
 - Design impact: Okta serves the path-insertion URL itself, so a client that tries only RFC 8414 path insertion is **not** incompatible on that account. §8.3's "recorded as incompatible" rule can be dropped.
 
@@ -86,9 +86,7 @@ Procedure, per client:
 3. Add `http://127.0.0.1:8000/mcp` to the client as an HTTP MCP server and start sign-in. Sign in as each test user.
 4. Call `whoami`: `uid` and `groups` should be that user's. Copy the server's request log lines (they show which discovery URLs the client tried; no tokens) into the row's evidence.
 
-| Client | Version | Discovery used | Static client ID | Redirect URI | `resource` sent | Result |
-|---|---|---|---|---|---|---|
-| Claude Code | 2.1.311 | 401, then path-inserted PRM only (`/.well-known/oauth-protected-resource/mcp`, twice per sign-in attempt; never the root URL); AS metadata fetched from Okta directly | `--client-id` | `http://localhost:8765/callback` (`--callback-port 8765`; host not configurable) | yes | ✅ with `offline_access` allowed on the AS rule (2026-11-04 UTC); both test users, correct `uid` and group ID |
+The matrix itself is now [`docs/compatibility-matrix.md`](../compatibility-matrix.md), with how to connect each client. The findings behind its Claude Code row follow.
 
 **Claude Code requests `offline_access`.** Its authorize request was `scope=okta-mcp offline_access`, with `prompt=consent` and `resource` set and no `openid`. A rule that allows only `openid profile email okta-mcp` doesn't match, and Okta fails the request with `no_matching_policy` after the user signs in. With `offline_access` added to the rule's scopes and the grant types left as authorization code only, Okta issues an access token with `grantedScopes: okta-mcp` and no refresh token (System Log, 02:27 UTC), so the no-refresh design holds (option A).
 

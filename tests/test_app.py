@@ -393,6 +393,22 @@ async def test_stateless_issues_no_session_id(config: Config) -> None:
     assert "mcp-session-id" not in r.headers
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize(("authorization", "status"), [("Bearer reader", 413), (None, 401)])
+async def test_an_oversized_body_is_refused(
+    config: Config, authorization: str | None, status: int
+) -> None:
+    """Design §12.1 (DoS): the SDK's default body limit (4 MiB) holds on `/mcp`, and a sender
+    without a token gets the 401, not a read of its body."""
+    headers = {**JSON_HEADERS, "content-type": "application/json"}
+    if authorization:
+        headers["authorization"] = authorization
+    body = b'{"jsonrpc":"2.0","id":1,"method":"ping","params":{"pad":"' + b"a" * (4 * 1024 * 1024)
+    async with serving(config) as app, http_for(app) as http:
+        r = await http.post("/mcp", content=body + b'"}}', headers=headers)
+    assert r.status_code == status
+
+
 # --- construction and uvicorn -----------------------------------------------------------
 
 
