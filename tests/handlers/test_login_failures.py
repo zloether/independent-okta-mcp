@@ -925,3 +925,305 @@ async def test_a_token_event_never_shows_the_requester_s_ip(ex: Executor, org: O
     out = await diagnose(ex)
     tokens = cause(out, "oauth_token_error")
     assert "ips" not in tokens and "clients" not in tokens  # a User actor isn't a client
+
+
+# --- slice 2: policy evaluation --------------------------------------------------------
+
+POLICY_SCOPES = ALL_SCOPES | {
+    "okta.policies.read",
+    "okta.networkZones.read",
+    "okta.authenticators.read",
+}
+OFFICE = "nzo1emaKYZTWRYYRRTSK"
+VPN = "00g1vpn0000000000000"
+STAFF = "00g1staff00000000000"
+
+
+def access_policy(org: Org) -> None:
+    """An app policy: ALLOW from the office for the VPN group with Okta Verify, else DENY."""
+    org.policies["rst1emaKYZTWRYYRRTSK"] = {
+        "id": "rst1emaKYZTWRYYRRTSK",
+        "name": "Salesforce",
+        "type": "ACCESS_POLICY",
+        "lastUpdated": "2026-11-01T00:00:00.000Z",
+    }
+    org.rules["rst1emaKYZTWRYYRRTSK"] = [
+        {
+            "id": "rul1emaKYZTWRYYRRTSK",
+            "name": "Office + VPN group",
+            "priority": 0,
+            "status": "ACTIVE",
+            "lastUpdated": "2026-11-14T11:00:00.000Z",  # edited after the denial
+            "conditions": {
+                "network": {"connection": "ZONE", "include": [OFFICE]},
+                "people": {"groups": {"include": [VPN]}},
+            },
+            "actions": {
+                "appSignOn": {
+                    "access": "ALLOW",
+                    "verificationMethod": {
+                        "type": "ASSURANCE",
+                        "constraints": [{"possession": {"types": ["app"]}}],
+                    },
+                }
+            },
+        },
+        {
+            "id": "rul9emaKYZTWRYYRRTSK",
+            "name": "Catch-all Rule",
+            "priority": 1,
+            "status": "ACTIVE",
+            "system": True,
+            "actions": {"appSignOn": {"access": "DENY"}},
+        },
+    ]
+    org.zones = [
+        {
+            "id": OFFICE,
+            "name": "Office",
+            "type": "IP",
+            "status": "ACTIVE",
+            "gateways": [{"type": "CIDR", "value": "10.0.0.0/8"}],
+        }
+    ]
+    org.groups = [STAFF]
+    org.authenticators = [{"id": "aut1emaKYZTWRYYRRTSK", "key": "okta_verify", "status": "ACTIVE"}]
+    org.methods = {"aut1emaKYZTWRYYRRTSK": [{"type": "push", "status": "ACTIVE"}]}
+
+
+def catch_all_deny(**extra: Any) -> dict[str, Any]:
+    targets = [
+        {
+            "id": "rul9emaKYZTWRYYRRTSK",
+            "type": "Rule",
+            "displayName": "Catch-all Rule",
+            "detailEntry": {"policyId": "rst1emaKYZTWRYYRRTSK", "policyName": "Salesforce"},
+        },
+        {"id": APP, "type": "AppInstance", "displayName": "Salesforce"},
+    ]
+    return event(
+        "policy.evaluate_sign_on",
+        "DENY",
+        "Sign-on policy evaluation resulted in DENY",
+        targets=targets,
+        **extra,
+    )
+
+
+@pytest.mark.anyio
+async def test_a_catch_all_deny_names_what_the_allow_rule_lacked(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    access_policy(org)
+    org.enrollments = [{"id": "e1", "key": "okta_email", "type": "email", "status": "ACTIVE"}]
+    org.events = [catch_all_deny()]
+    out = await diagnose(ex)
+    (evaluation,) = out["policy_evaluation"]
+    assert evaluation["rule_ids"] == ["rul9emaKYZTWRYYRRTSK"]
+    assert evaluation["app"] == {"id": APP, "displayName": "Salesforce"}
+    (rule,) = evaluation["rules"]
+    assert rule["kind"] == "no_allow_rule_matched"
+    assert rule["policy"] == {
+        "id": "rst1emaKYZTWRYYRRTSK",
+        "name": "Salesforce",
+        "type": "ACCESS_POLICY",
+    }
+    (candidate,) = rule["candidates"]
+    assert candidate["rule"]["id"] == "rul1emaKYZTWRYYRRTSK"
+    failing = {r["check"]: r for r in candidate["failing"]}
+    # Outside the office, not in the VPN group, and no Okta Verify enrolled: all three.
+    assert set(failing) == {"network.include", "people.include", "enrolled authenticator"}
+    assert failing["network.include"]["required"]["zones"] == ["Office"]
+    assert failing["people.include"]["required"]["groups"] == [VPN]
+    assert "network.include" in rule["reason"]
+    assert out["headline"].endswith(f"Newest denial: {rule['reason']}.")
+    assert evaluation["changed_after_event"] == [
+        {"type": "rule", "id": "rul1emaKYZTWRYYRRTSK", "last_updated": "2026-11-14T11:00:00.000Z"}
+    ]
+    assert "skipped" not in out
+
+
+@pytest.mark.anyio
+async def test_groups_are_rewound_to_the_time_of_the_denial(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    access_policy(org)
+    org.groups = [STAFF, VPN]  # in the VPN group now ...
+    org.membership_events = [
+        {
+            "published": "2026-11-14T11:00:00.000Z",
+            "eventType": "group.user_membership.add",
+            "target": [{"type": "UserGroup", "id": VPN}],
+        },  # ... but only since after the denial
+    ]
+    org.events = [catch_all_deny()]
+    out = await diagnose(ex)
+    (candidate,) = out["policy_evaluation"][0]["rules"][0]["candidates"]
+    assert "people.include" in {r["check"] for r in candidate["failing"]}
+
+
+@pytest.mark.anyio
+async def test_without_policy_scopes_the_evaluation_is_skipped_not_fatal(
+    ex: Executor, org: Org
+) -> None:
+    access_policy(org)
+    org.events = [catch_all_deny()]
+    out = await diagnose(ex)
+    (evaluation,) = out["policy_evaluation"]
+    assert evaluation["unresolved"][0]["reason"] == "the service app needs okta.policies.read"
+    reasons = {s["check"]: s["reason"] for s in out["skipped"]}
+    assert reasons["policy evaluation: policy"] == "the service app needs okta.policies.read"
+    assert reasons["policy evaluation: network zones"] == (
+        "the service app needs okta.networkZones.read"
+    )
+    assert cause(out, "sign_on_policy_deny")["count"] == 1
+    assert not any(p.startswith(("/api/v1/policies", "/api/v1/zones")) for p in org.paths)
+
+
+@pytest.mark.anyio
+async def test_a_rule_without_its_policy_is_found_by_scanning(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    org.policies["00p1emaKYZTWRYYRRTSK"] = {
+        "id": "00p1emaKYZTWRYYRRTSK",
+        "name": "Default Policy",
+        "type": "OKTA_SIGN_ON",
+    }
+    org.rules["00p1emaKYZTWRYYRRTSK"] = [
+        {
+            "id": "0pr1emaKYZTWRYYRRTSK",
+            "name": "Block abroad",
+            "priority": 1,
+            "status": "ACTIVE",
+            "actions": {"signon": {"access": "DENY"}},
+            "conditions": {"network": {"connection": "ZONE", "include": [OFFICE]}},
+        },
+    ]
+    org.zones = [
+        {
+            "id": OFFICE,
+            "name": "Abroad",
+            "type": "IP",
+            "gateways": [{"type": "CIDR", "value": "203.0.113.0/24"}],
+        }
+    ]
+    org.events = [
+        event(
+            "policy.evaluate_sign_on",
+            "DENY",
+            "x",
+            targets=[
+                {
+                    "id": "0pr1emaKYZTWRYYRRTSK",
+                    "type": "Rule",
+                    "displayName": "Block abroad",
+                    "detailEntry": {"policyName": "Default Policy"},
+                },
+            ],
+        )
+    ]
+    out = await diagnose(ex)
+    (rule,) = out["policy_evaluation"][0]["rules"]
+    assert rule["kind"] == "explicit_deny_rule"
+    assert rule["policy"]["type"] == "OKTA_SIGN_ON"
+    assert rule["passed"] == 1  # the IP is in the rule's zone: the DENY rule matched
+
+
+@pytest.mark.anyio
+async def test_an_id_from_the_event_that_isn_t_one_never_reaches_a_path(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    org.events = [
+        event(
+            "policy.evaluate_sign_on",
+            "DENY",
+            "x",
+            targets=[
+                {"id": "rul1", "type": "Rule", "detailEntry": {"policyId": "../../users/me"}},
+                {"id": "rul2", "type": "Rule", "detailEntry": {"policyId": "simulate"}},
+            ],
+        )
+    ]
+    out = await diagnose(ex)
+    unresolved = out["policy_evaluation"][0]["unresolved"]
+    assert len(unresolved) == 2
+    assert not any("users/me" in p or p.endswith("/simulate") for p in org.paths)
+
+
+@pytest.mark.anyio
+async def test_verify_events_match_only_the_same_sign_in(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    access_policy(org)
+    org.events = [catch_all_deny(transaction={"id": "tx1"})]
+    org.verify_events = [
+        event("user.authentication.verify", "SUCCESS", transaction={"id": "tx-other"}),
+        event("user.authentication.verify", "SUCCESS", transaction={"id": "tx1"}),
+    ]
+    out = await diagnose(ex)
+    assert out["policy_evaluation"][0]["verify_events_matched_by"] == "transaction.id"
+    query = parse_qs(
+        next(r for r in org.requests if "verify" in r.url.query.decode()).url.query.decode()
+    )
+    assert query["since"] == ["2026-11-14T09:30:00.000Z"]
+    assert query["until"] == ["2026-11-14T10:00:01.000Z"]
+
+
+@pytest.mark.anyio
+async def test_the_password_policy_for_a_lockout(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    ex = make(registry, spec, org, scopes=POLICY_SCOPES)
+    org.user["status"] = "LOCKED_OUT"
+    org.groups = [STAFF]
+    org.policies["00p2emaKYZTWRYYRRTSK"] = {
+        "id": "00p2emaKYZTWRYYRRTSK",
+        "name": "Staff passwords",
+        "type": "PASSWORD",
+        "status": "ACTIVE",
+        "priority": 1,
+        "conditions": {
+            "people": {"groups": {"include": [STAFF]}},
+            "authProvider": {"provider": "OKTA"},
+        },
+        "settings": {"password": {"lockout": {"maxAttempts": 3, "autoUnlockMinutes": 30}}},
+    }
+    target = [{"id": UID, "type": "User"}]
+    org.events = [
+        event("user.account.lock", "SUCCESS", actor="system", targets=target),
+        *[event("user.session.start", reason="INVALID_CREDENTIALS") for _ in range(3)],
+    ]
+    out = await diagnose(ex)
+    password = out["password_policy"]
+    assert password["policy"]["name"] == "Staff passwords"
+    assert [r["check"] for r in password["failing"]] == ["password.lockout.maxAttempts"]
+    assert "30 minutes" in password["undecided"][0]["note"]
+    assert "policy_evaluation" not in out  # no DENY, so no rules to evaluate
+
+
+@pytest.mark.anyio
+async def test_a_small_budget_trims_detail_instead_of_failing(
+    registry: Registry, spec: SpecIndex, org: Org
+) -> None:
+    access_policy(org)
+    org.rules["rst1emaKYZTWRYYRRTSK"] = [
+        {
+            **org.rules["rst1emaKYZTWRYYRRTSK"][0],
+            "id": f"rul{i}emaKYZTWRYYRRTSK",
+            "priority": i,
+            "name": "r" * 150,
+        }
+        for i in range(5)
+    ] + [{**org.rules["rst1emaKYZTWRYYRRTSK"][1], "priority": 9}]
+    org.events = [catch_all_deny()]
+    small = make(registry, spec, org, scopes=POLICY_SCOPES)
+    small._max_bytes = 6000  # pyright: ignore[reportPrivateUsage]
+    out = await diagnose(small)
+    assert out["trimmed"] is True
+    (rule,) = out["policy_evaluation"][0]["rules"]
+    assert len(rule["candidates"]) == 1 and rule["candidates_total"] == 5

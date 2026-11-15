@@ -70,7 +70,7 @@ Okta answers a service-app request only when the token's scope **and** the app's
 | `okta.securityEventsProviders.read` | `SUPER_ADMIN` | `security list-event-providers`, `get-event-provider` |
 | `okta.roles.read` | `SUPER_ADMIN` | `groups list-roles`, `get-role`, `list-role-app-targets`, `list-role-group-targets`; `iam`; `oauth-client-roles` |
 
-`diagnostics` commands read several domains. They need only the scopes in the table rows that name them; the other scopes they can use are optional. Without one, the command still runs and lists the check it skipped (and the scope it would need) in its result. `diagnostics login-failures` also uses `okta.apps.read` (whether the user is assigned to the app that refused them), so grant it unless you want that check off.
+`diagnostics` commands read several domains. They need only the scopes in the table rows that name them; the other scopes they can use are optional. Without one, the command still runs and lists the check it skipped (and the scope it would need) in its result. `diagnostics login-failures` also uses `okta.apps.read` (whether the user is assigned to the app that refused them), `okta.policies.read` (the policy rules behind a denial, and the password policy), `okta.networkZones.read` (zone conditions) and `okta.authenticators.read` (which authenticators a rule can accept). Grant the ones whose checks you want.
 
 The table was found in a dev org (2026-11-13) by running each command under Read-only Administrator, then Org Administrator, then Super Administrator. A role is the one every command under the scope needs; where only some of a scope's commands need it, the last column says which.
 
