@@ -21,6 +21,7 @@ Everything Okta sends is data: strings are capped, nothing from an event is used
 a value, and Okta-derived IDs are checked against their ID pattern before they go into a path.
 """
 
+import json
 import logging
 import re
 from collections import Counter
@@ -33,6 +34,8 @@ import anyio
 
 from okta_mcp.exec.composite import Context, Unavailable
 from okta_mcp.exec.resolve import USER_ID
+from okta_mcp.handlers import policy_eval as pe
+from okta_mcp.handlers import policy_fetch
 from okta_mcp.logs import log_internal
 from okta_mcp.okta.client import UpstreamError
 from okta_mcp.okta.paginate import PaginationError
@@ -74,6 +77,10 @@ _SIGN_IN = (
     "security.",
 )
 """Event types that are a step of signing in (or its outcome) when the user is the actor."""
+_NOT_READ = "the user's authenticator enrollments weren't read"
+_BUDGET_SHARE = 0.85
+"""Of `max_bytes`, what the result may fill before trimming, leaving room for the envelope and
+for escaping the executor's JSON may add."""
 _LOCK = "user.account.lock"
 _UNLOCK = "user.account.unlock"
 
@@ -170,20 +177,44 @@ async def run(ctx: Context, args: Mapping[str, Any]) -> dict[str, Any]:
     }
     checks: list[dict[str, Any]] = [_status_check(user)]
     skipped: list[dict[str, str]] = []
-    await _follow_ups(ctx, uid, user, groups, checks, skipped)
+    shared: dict[str, Any] = {}
+    await _follow_ups(ctx, uid, user, groups, checks, skipped, shared)
+    # Slice 2: the policies behind the denials, and the password policy behind password causes.
+    denials = [
+        e.raw
+        for cause in ("sign_on_policy_deny", "other_policy_deny")
+        if cause in groups
+        for e in groups[cause].events
+    ]
+    denials.sort(key=lambda raw: _str(raw.get("published")), reverse=True)
+    evaluations, password, missing = await policy_fetch.evaluate(
+        ctx,
+        user,
+        denials,
+        {cause: len(g.events) for cause, g in groups.items()},
+        shared.get("enrollments", pe.Missing(_NOT_READ)),
+        now,
+    )
     result["causes"] = [g.render() for g in sorted(groups.values(), key=_order)]
     result["checks"] = checks
-    if pending := _pending(groups):
-        result["pending"] = pending
+    if evaluations:
+        result["policy_evaluation"] = evaluations
+    if password is not None:
+        result["password_policy"] = password
+    skipped += [
+        {"check": f"policy evaluation: {what}", "reason": why} for what, why in missing.items()
+    ]
     if skipped:
         result["skipped"] = skipped
-    result["headline"] = _headline(user, groups)
+    result["headline"] = _headline(user, groups, evaluations)
     result["notes"] = [
-        "Attributes come from the events, as recorded when they happened; checks read state as "
-        "it is now.",
-        "IDs (policy, rule, app, device) are for a role that can look them up in detail.",
+        "Attributes come from the events, as recorded when they happened; checks, policies and "
+        "rules are read as they are now (see changed_after_event).",
+        "Rows show only what failed (pass false) or couldn't be decided (pass null); passing "
+        "checks are counted.",
+        "IDs (policy, rule, app, device, zone, group) are for a role that can look them up.",
     ]
-    return result
+    return _fit(result, ctx.max_bytes)
 
 
 # --- arguments ---------------------------------------------------------------------------
@@ -619,6 +650,7 @@ async def _follow_ups(
     groups: Mapping[str, _Group],
     checks: list[dict[str, Any]],
     skipped: list[dict[str, str]],
+    shared: dict[str, Any],
 ) -> None:
     """The checks the causes call for, at the same time. Each job returns its row; rows and
     skips are added in job order, whatever order the jobs finish in. A failure of one job,
@@ -628,8 +660,8 @@ async def _follow_ups(
         apps = [a for a in _apps(groups["not_assigned"].events) if APP_ID.fullmatch(a["id"])]
         for app in apps[:_APPS_CHECKED]:
             jobs.append(("app_assignment", _assignment(ctx, uid, app)))
-    if groups.keys() & {"mfa_failed", "mfa_abandoned", "sign_on_policy_deny"}:
-        jobs.append(("authenticator_enrollment", _enrollments(ctx, uid, groups)))
+    if groups.keys() & {"mfa_failed", "mfa_abandoned", "sign_on_policy_deny", "other_policy_deny"}:
+        jobs.append(("authenticator_enrollment", _enrollments(ctx, uid, groups, shared)))
     if "locked_out" in groups or user.get("status") == "LOCKED_OUT":
         jobs.append(("sign_in_blocks", _blocks(ctx, uid)))
     results: list[dict[str, Any] | dict[str, str] | None] = [None] * len(jobs)
@@ -684,11 +716,13 @@ def _assignment(
 
 
 def _enrollments(
-    ctx: Context, uid: str, groups: Mapping[str, _Group]
+    ctx: Context, uid: str, groups: Mapping[str, _Group], shared: dict[str, Any]
 ) -> Callable[[], Awaitable[dict[str, Any]]]:
     async def job() -> dict[str, Any]:
         body = await ctx.get("listAuthenticatorEnrollments", {"userId": uid})
         items = cast(list[Any], body) if isinstance(body, list) else []
+        # The policy evaluation reads them too (the verification gate): one request.
+        shared["enrollments"] = [cast(dict[str, Any], x) for x in items if isinstance(x, dict)]
         enrolled = [
             {
                 k: _cap(v)
@@ -729,32 +763,9 @@ def _blocks(ctx: Context, uid: str) -> Callable[[], Awaitable[dict[str, Any]]]:
     return job
 
 
-def _pending(groups: Mapping[str, _Group]) -> list[dict[str, Any]]:
-    """Checks a later slice will make, with what the events name, so a role that can read
-    policies knows where to look."""
-    out: list[dict[str, Any]] = []
-    for cause in ("sign_on_policy_deny", "other_policy_deny"):
-        if cause in groups:
-            out.append(
-                {
-                    "check": "policy_evaluation",
-                    "cause": cause,
-                    "note": "not evaluated by this server yet: read the conditions of the rules "
-                    "in this cause's policies",
-                }
-            )
-    if groups.keys() & {"invalid_credentials", "locked_out", "password_expired"}:
-        out.append(
-            {
-                "check": "password_policy",
-                "note": "not evaluated by this server yet: lockout and expiry settings of the "
-                "user's password policy",
-            }
-        )
-    return out
-
-
-def _headline(user: Mapping[str, Any], groups: Mapping[str, _Group]) -> str:
+def _headline(
+    user: Mapping[str, Any], groups: Mapping[str, _Group], evaluations: list[dict[str, Any]]
+) -> str:
     status = _str(user.get("status"))
     if status in _STATUS_NOTES and status != "PASSWORD_EXPIRED":
         return f"Account is {status}: {_STATUS_NOTES[status]}."
@@ -764,9 +775,53 @@ def _headline(user: Mapping[str, Any], groups: Mapping[str, _Group]) -> str:
     count = len(first.events)
     more = len(groups) - 1
     tail = f"; {more} other cause{'s' if more != 1 else ''}" if more else ""
-    return (
+    head = (
         f"Most likely: {CAUSES[first.cause][1]} ({count} event{'s' if count != 1 else ''}){tail}."
     )
+    if first.cause in ("sign_on_policy_deny", "other_policy_deny"):
+        reason = next(
+            (r["reason"] for e in evaluations for r in e.get("rules", ()) if r.get("reason")), None
+        )
+        if reason:
+            head += f" Newest denial: {reason}."
+    return head
+
+
+def _fit(result: dict[str, Any], max_bytes: int) -> dict[str, Any]:
+    """`result` within `max_bytes` (less a share for the envelope): the policy evaluation is
+    the part that can grow, so its detail goes first, least useful first: candidates past the
+    closest one, then undecided rows (their counts stay), then older denials."""
+    budget = int(max_bytes * _BUDGET_SHARE)
+
+    def size() -> int:
+        return len(json.dumps(result, separators=(",", ":")))
+
+    evaluations = cast(list[dict[str, Any]], result.get("policy_evaluation", []))
+    rules = [r for e in evaluations for r in cast(list[dict[str, Any]], e.get("rules", []))]
+    steps: list[Callable[[], None]] = []
+
+    def one_candidate() -> None:
+        for r in rules:
+            if len(r.get("candidates", [])) > 1:
+                r.setdefault("candidates_total", len(r["candidates"]))
+                r["candidates"] = r["candidates"][:1]
+
+    def no_undecided() -> None:
+        for holder in [*rules, *(c for r in rules for c in r.get("candidates", []))]:
+            if "undecided" in holder:
+                holder["undecided_count"] = len(holder.pop("undecided"))
+
+    def newest_only() -> None:
+        if len(evaluations) > 1:
+            del evaluations[1:]
+
+    steps += [one_candidate, no_undecided, newest_only]
+    for step in steps:
+        if size() <= budget:
+            return result
+        step()
+        result["trimmed"] = True
+    return result
 
 
 # --- small helpers -----------------------------------------------------------------------

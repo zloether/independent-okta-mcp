@@ -10,7 +10,8 @@ commands:
   # Reads the user's System Log failures (audit-log, risk: sign-in risk and behaviors), the user
   # (pii) and their authenticator enrollments (mfa-state): sensitive, so a role must name it.
   # A role granted only this command sees attributes pulled from the events (IP, geo, device,
-  # policy and rule IDs and names), never the events, the policies or other users.
+  # policy and rule IDs and names) and the failing or undecided checks of the rules behind a
+  # denial (required vs actual), never whole events, policies or other users.
   login-failures:
     handler: login-failures
     summary: Why a user can't sign in
@@ -24,7 +25,12 @@ commands:
       until:
         pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$'
         description: End, UTC; default now
+    # Optional: each is skipped and reported without its scope. Policies, rules, zones and
+    # authenticators are org config; group IDs and enrollments are the named user's own.
     uses:
       required: [getUser, listLogEvents]
-      optional: [getApplicationUser, listAuthenticatorEnrollments, listUserBlocks]
-    data_classes: [audit-log, pii, risk, mfa-state]
+      optional:
+        [getApplicationUser, listAuthenticatorEnrollments, listUserBlocks,
+         getPolicy, listPolicies, listPolicyRules, listNetworkZones, listUserGroups,
+         listAuthenticators, listAuthenticatorMethods]
+    data_classes: [audit-log, pii, risk, mfa-state, org-config]

@@ -461,6 +461,7 @@ class Executor:
             engine=self._engine,
             resolver=cast(UserResolver, self._resolver),  # `__init__` refused None
             org_url=self._org_url,
+            max_bytes=self._max_bytes,
         )
         result = await self._handlers[cast(str, command.handler)](context, options.args)
         return item_result(

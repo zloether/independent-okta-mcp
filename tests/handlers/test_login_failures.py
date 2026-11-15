@@ -99,6 +99,15 @@ class Org:
             {"id": "e1", "key": "okta_verify", "type": "app", "status": "ACTIVE", "name": "OV"}
         ]
         self.blocks: list[dict[str, Any]] = []
+        # Slice 2: what the policy evaluation reads.
+        self.verify_events: list[dict[str, Any]] = []
+        self.membership_events: list[dict[str, Any]] = []
+        self.policies: dict[str, dict[str, Any]] = {}
+        self.rules: dict[str, list[dict[str, Any]]] = {}
+        self.zones: list[dict[str, Any]] = []
+        self.groups: list[str] = []
+        self.authenticators: list[dict[str, Any]] = []
+        self.methods: dict[str, list[dict[str, Any]]] = {}
         self.override: Callable[[httpx2.Request], httpx2.Response | None] | None = None
 
     @property
@@ -123,13 +132,40 @@ class Org:
                 return _missing()
             case ["logs"]:
                 query = parse_qs(request.url.query.decode())
+                filt = query["filter"][0]
+                events = (
+                    self.verify_events
+                    if "user.authentication.verify" in filt
+                    else self.membership_events
+                    if "group.user_membership" in filt
+                    else self.events
+                )
                 size = int(query["limit"][0])
                 start = int(query.get("after", ["0"])[0])
                 headers = {}
-                if start + size < len(self.events):
+                if start + size < len(events):
                     nxt = request.url.copy_merge_params({"after": str(start + size)})
                     headers["Link"] = f'<{nxt}>; rel="next"'
-                return httpx2.Response(200, json=self.events[start : start + size], headers=headers)
+                return httpx2.Response(200, json=events[start : start + size], headers=headers)
+            case ["policies"]:
+                kind = parse_qs(request.url.query.decode())["type"][0]
+                return httpx2.Response(
+                    200, json=[p for p in self.policies.values() if p.get("type") == kind]
+                )
+            case ["policies", pid]:
+                found = self.policies.get(pid)
+                return httpx2.Response(200, json=found) if found else _missing()
+            case ["policies", pid, "rules"]:
+                return httpx2.Response(200, json=self.rules.get(pid, []))
+            case ["zones"]:
+                return httpx2.Response(200, json=self.zones)
+            case ["users", uid, "groups"]:
+                assert uid == UID
+                return httpx2.Response(200, json=[{"id": g} for g in self.groups])
+            case ["authenticators"]:
+                return httpx2.Response(200, json=self.authenticators)
+            case ["authenticators", aid, "methods"]:
+                return httpx2.Response(200, json=self.methods.get(aid, []))
             case ["apps", app, "users", uid]:
                 assert uid == UID
                 return (
@@ -399,7 +435,12 @@ async def test_a_locked_account(ex: Executor, org: Org) -> None:
     assert "unknown devices" in checks["sign_in_blocks"]["note"]
     assert "authenticator_enrollment" not in checks  # no MFA cause: not fetched
     assert "/api/v1/users/00u1alice00000000000/authenticator-enrollments" not in org.paths
-    assert out["pending"] == [{"check": "password_policy", "note": out["pending"][0]["note"]}]
+    # Password causes: the password policy is read; without okta.policies.read it is skipped.
+    assert out["password_policy"]["evaluated"] is False
+    assert {
+        "check": "policy evaluation: PASSWORD policies",
+        "reason": "the service app needs okta.policies.read",
+    } in out["skipped"]
 
 
 @pytest.mark.anyio
@@ -506,9 +547,7 @@ async def test_a_sign_on_policy_deny(ex: Executor, org: Org) -> None:
     assert denied["risk"] == {"HIGH": 2}
     assert denied["behaviors"] == {"New Geo-Location": 2, "New IP": 2}
     assert denied["user_agents"] == [{"os": "Mac OS X", "browser": "CHROME", "count": 2}]
-    assert out["pending"][0]["check"] == "policy_evaluation"
-    assert out["pending"][0]["cause"] == "sign_on_policy_deny"
-    assert "policies" not in out["pending"][0]  # once, in the cause
+    assert "pending" not in out  # slice 2 evaluates the rules (see the policy tests)
     # A policy cause calls for the enrollments (what the rule's authenticators could be).
     checks = {c["check"]: c for c in out["checks"]}
     assert checks["authenticator_enrollment"]["enrolled"] == [
@@ -694,7 +733,8 @@ async def test_follow_ups_run_concurrently(ex: Executor, org: Org) -> None:
     )
     ex._client = client  # pyright: ignore[reportPrivateUsage]
     out = await diagnose(ex)
-    assert len(started) == 3
+    # The three follow-ups ran at once (the gate opened); the policy lookups come after.
+    assert len(started) >= 3
     assert {c["check"] for c in out["checks"]} == {
         "user_status",
         "app_assignment",
@@ -819,7 +859,8 @@ async def test_a_bug_in_one_check_costs_only_that_check(
     org.user["status"] = "LOCKED_OUT"
     org.events = [event("policy.evaluate_sign_on", "DENY", "x")]
     out = await diagnose(ex)
-    assert out["skipped"] == [{"check": "sign_in_blocks", "reason": lf.INTERNAL}]
+    follow_ups = [x for x in out["skipped"] if not x["check"].startswith("policy evaluation")]
+    assert follow_ups == [{"check": "sign_in_blocks", "reason": lf.INTERNAL}]
     assert [c["check"] for c in out["checks"]] == ["user_status", "authenticator_enrollment"]
 
 

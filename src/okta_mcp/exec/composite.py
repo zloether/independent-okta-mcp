@@ -46,6 +46,7 @@ class Context:
         engine: Engine,
         resolver: UserResolver,
         org_url: str,
+        max_bytes: int = 65536,
     ) -> None:
         if command.handler is None:
             raise RuntimeError("a Context is for handler commands")
@@ -54,6 +55,9 @@ class Context:
         self._engine = engine
         self._resolver = resolver
         self._org_url = org_url
+        self.max_bytes = max_bytes
+        """The result's budget (`MCP_MAX_BYTES`), envelope included: a handler that can make
+        more detail than fits trims it, rather than failing as `result_too_large`."""
 
     def available(self, operation_id: str) -> bool:
         """The command may call it and the service app holds its scopes."""
