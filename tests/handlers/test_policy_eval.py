@@ -564,3 +564,12 @@ def test_password_policy_with_cut_groups_says_so() -> None:
     assert "higher-priority" in out["note"]
     out = pe.password_policy([p], frozenset(), {"id": UID}, {"locked_out": 1}, NOW, complete=False)
     assert out["evaluated"] is False
+
+
+def test_a_rule_s_user_list_never_names_other_users() -> None:
+    other = "00u1other00000000000"
+    cond = {"people": {"users": {"include": [other, UID]}, "groups": {"include": []}}}
+    r = only(pe.conditions(cond, denial(), facts()))
+    assert r["pass"] is True
+    assert r["required"] == {"groups": [], "users_listed": 2, "named_user_listed": True}
+    assert other not in str(r)

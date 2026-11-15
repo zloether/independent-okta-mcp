@@ -371,7 +371,7 @@ def _people(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
         rows.append(
             row(
                 "people.include",
-                {"groups": sorted(gi), "users": sorted(ui)},
+                {"groups": sorted(gi)} | _users_listed(ui, uid),
                 {"member_of": actual},
                 ok,
                 d.groups_note,
@@ -384,13 +384,21 @@ def _people(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
         rows.append(
             row(
                 "people.exclude",
-                {"not_groups": sorted(ge), "not_users": sorted(ue)},
+                {"not_groups": sorted(ge)} | _users_listed(ue, uid, prefix="not_"),
                 {"member_of": actual},
                 ok,
                 d.groups_note,
             )
         )
     return rows
+
+
+def _users_listed(ids: set[str], uid: object, prefix: str = "") -> dict[str, Any]:
+    """A rule's user list without the other users' IDs (it can name exempt or break-glass
+    accounts): how many, and whether the named user is one (security review, 9.1)."""
+    if not ids:
+        return {}
+    return {f"{prefix}users_listed": len(ids), f"{prefix}named_user_listed": uid in ids}
 
 
 def _user_type(cond: Mapping[str, Any], d: Denial, facts: Facts) -> list[Row]:
