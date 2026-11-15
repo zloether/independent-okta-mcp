@@ -462,6 +462,7 @@ Verify: someone (or a fresh Claude session) follows the runbook on a clean machi
 
 ### 8.2 Compatibility matrix & E2E ☐
 - [ ] Complete `docs/compatibility-matrix.md` for all target clients (Path A)
+- [ ] `scripts/okta-setup.py check` against a real org that has a role group with members (from the 8.1 second sweep, 2026-11-15): the existing-group check reads `GET /api/v1/groups/{id}/users?limit=200` and the `status` of the managed server, policy and rule, all tested against the in-memory fake only. Confirm a populated group not yet in the rule is reported `manual` with its ID, creation date and member count; that listing its ID under `reviewed_groups` clears it; and that a group already in the rule stays `ok` with members
 - [ ] E2E checklist: groups claim; per-role tool lists; revocation (A: group removal takes effect within one access-token lifetime; B: group removal and role changes at the next refresh, token revocation ends the chain, an expired Okta session doesn't); 429 behavior under load
 
 ### 8.2.1 Live-org CI 🔒 ☐
