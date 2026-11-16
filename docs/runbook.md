@@ -103,7 +103,7 @@ A configuration, key or policy error stops the server with exit status `2` and t
 
 Point the proxy at `127.0.0.1:8080`, or at `okta-mcp:8080` with the shared-network option in the compose file, and serve it at `MCP_PUBLIC_URL`. Then confirm that only the proxy can reach the port. Docker's published ports bypass host firewalls such as ufw (§11.4).
 
-The proxy should cap what it accepts. A minimal Caddyfile (unverified: not yet run against this server; tracked in plan 7.3):
+The proxy should cap what it accepts. A minimal Caddyfile (run in front of this server on 2026-11-16, as part of a fuller one: a body over 1 MB is refused with 413, sign-in and tool calls pass through):
 
 ```
 mcp.example.com {
