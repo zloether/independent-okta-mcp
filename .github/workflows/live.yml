@@ -1,0 +1,100 @@
+# Live-org checks (plan 8.2.1): tests/live against the CI Okta org, with the CI service app.
+#
+# Never on pull_request: the job holds the CI service key, and a pull request's workflow file is
+# the pull request's own. The key is an Environment secret on `okta-dev`, whose deployment
+# branches are limited to main, so a workflow pushed on any other branch can't read it.
+# A failure opens (or comments on) one issue; it does not gate merges, since Okta releases and
+# org drift fail this as often as code does.
+#
+# Setup (by hand, once): the `okta-dev` environment with deployment branches `main` only;
+# variables OKTA_ORG_URL, OKTA_CLIENT_ID, OKTA_KEY_ID, OKTA_SCOPES from
+# `terraform output github_environment_variables` (infra repo, okta-ci-org-terraform); secret
+# OKTA_CI_PRIVATE_KEY, the CI service app's private key (PEM).
+name: live
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: okta-live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: okta-dev
+    env:
+      OKTA_LIVE: "1"
+      OKTA_ORG_URL: ${{ vars.OKTA_ORG_URL }}
+      OKTA_CLIENT_ID: ${{ vars.OKTA_CLIENT_ID }}
+      OKTA_KEY_ID: ${{ vars.OKTA_KEY_ID }}
+      OKTA_SCOPES: ${{ vars.OKTA_SCOPES }}
+      # Low, so a looping test can't take much of the CI org's shared rate limit.
+      MCP_REQUESTS_PER_MINUTE: "60"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.24"
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - name: Write the service key
+        env:
+          KEY: ${{ secrets.OKTA_CI_PRIVATE_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/ci-service.pem"
+          echo "OKTA_PRIVATE_KEY_FILE=$RUNNER_TEMP/ci-service.pem" >> "$GITHUB_ENV"
+      - name: Live tests
+        env:
+          OKTA_LIVE_REPORT: ${{ runner.temp }}/commands.json
+          OKTA_LIVE_REPORT_ROUTING: ${{ runner.temp }}/routing.json
+        # --tb=line: pytest prints both sides of a failed assert; the tests assert only on
+        # derived values, and this keeps a traceback's locals out of the log as well.
+        run: uv run pytest tests/live --tb=line -p no:cacheprovider -rA
+      - name: Summary
+        if: always()
+        # Command names, codes, counts and key names only (tests/live/test_commands.py).
+        run: |
+          for f in commands routing; do
+            if [ -f "$RUNNER_TEMP/$f.json" ]; then
+              { echo "### $f"; echo '```json'; cat "$RUNNER_TEMP/$f.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+      - name: Remove the service key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/ci-service.pem"
+
+  report:
+    # Its own job: it needs to write issues, and gets no environment, secret or checkout.
+    needs: live
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Live-org checks failing"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number')
+          body="The live workflow failed: $RUN_URL"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
