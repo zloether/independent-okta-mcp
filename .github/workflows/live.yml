@@ -78,7 +78,9 @@ jobs:
   report:
     # Its own job: it needs to write issues, and gets no environment, secret or checkout.
     needs: live
-    if: failure()
+    # Not only failure(): a run stopped by its timeout ends cancelled, and should open the
+    # issue too.
+    if: always() && needs.live.result != 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

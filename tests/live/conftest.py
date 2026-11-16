@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import secrets
+import sys
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,7 @@ if not LIVE:
     collect_ignore_glob = ["test_*.py"]
 
 
-def _env(tmp: Path) -> dict[str, str]:
+def _env() -> dict[str, str]:
     missing = [
         v
         for v in ("OKTA_ORG_URL", "OKTA_CLIENT_ID", "OKTA_SCOPES", "OKTA_PRIVATE_KEY_FILE")
@@ -88,8 +89,8 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture(scope="session")
-def live_env(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
-    return _env(tmp_path_factory.mktemp("live"))
+def live_env() -> dict[str, str]:
+    return _env()
 
 
 @pytest.fixture(scope="session")
@@ -141,6 +142,7 @@ def call(runtime: Any, admin: Any) -> Call:
         select: str | None = None,
         limit: int | None = None,
         cursor: str | None = None,
+        links: bool = False,
         principal: Any = None,
     ) -> Result:
         arguments: dict[str, Any] = {"command": command, "args": args or {}}
@@ -150,6 +152,8 @@ def call(runtime: Any, admin: Any) -> Call:
             arguments["limit"] = limit
         if cursor is not None:
             arguments["cursor"] = cursor
+        if links:
+            arguments["links"] = True
         who = principal or admin
         for attempt in (1, 2):
             outcome = await runtime.tools.call(who, tool_name(domain), arguments)
@@ -217,8 +221,9 @@ def no_secrets(
     text = out + err + "\n".join(r.getMessage() for r in caplog.records)
     for secret in _secrets():
         assert secret not in text, "a secret value appeared in the test's output"
-    # Put it back for pytest's own report.
-    print(out, end="")
+    # Put both back for pytest's own report.
+    sys.stdout.write(out)
+    sys.stderr.write(err)
 
 
 def _secrets() -> list[str]:

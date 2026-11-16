@@ -43,8 +43,13 @@ _SECRET_LIKE = re.compile(
     re.IGNORECASE,
 )
 _SKIP_KEYS = ("_links", "_embedded")
-# Args the sweep fills when a command requires them and the registry closes their values.
-_REQUIRED_DEFAULTS = {("policies", "list", "type"): "PASSWORD"}
+# Args the sweep always sends: Okta requires them though the spec doesn't mark them required.
+_DEFAULTS = {("policies", "list", "type"): "PASSWORD"}
+# A failure here is the harness's or the config's, not the org's: it fails check 2.
+_FATAL = ("invalid_arguments", "internal_error", "unavailable", "rate_limited", "timeout")
+_ID_KEYS = ("id", "kid", "client_id", "type", "label", "name", "contactType")
+"""Where a list item keeps the value its child path takes, tried in order after the
+placeholder's own name (`{clientId}` → `clientId`, `client_id`)."""
 
 REGISTRY: Registry = load_registry(load_spec())
 COMMANDS: list[Command] = [
@@ -68,12 +73,17 @@ for _c in COMMANDS:
 @dataclass
 class Sweep:
     ran: list[str] = field(default_factory=list[str])
+    ok: list[str] = field(default_factory=list[str])
     skipped: dict[str, str] = field(default_factory=dict[str, str])
     failed: dict[str, str] = field(default_factory=dict[str, str])
     """Command → why it fails check 2. Names and codes only."""
     upstream: dict[str, str] = field(default_factory=dict[str, str])
     """Command → an error code Okta or the executor gave that isn't a check-2 failure."""
     missing_view: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    """View fields absent from every item and unknown to the spec: a registry bug (fails)."""
+    unseen_view: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    """View fields absent from every item but in the spec: null or empty here, so pruned
+    (reported)."""
     secret_like: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     new_keys: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
 
@@ -100,7 +110,7 @@ class Ids:
             prefix_template = template[: m.start()].rstrip("/")
             prefix = _fill(prefix_template, values)
             if prefix not in self._cache:
-                self._cache[prefix] = await self._first_id(prefix_template, values)
+                self._cache[prefix] = await self._first_id(prefix_template, values, m.group(1))
             value = self._cache[prefix]
             if value is None:
                 self.why = f"no id under {_shape(prefix_template)}"
@@ -108,7 +118,7 @@ class Ids:
             values.append(value)
         return values
 
-    async def _first_id(self, prefix_template: str, values: list[str]) -> str | None:
+    async def _first_id(self, prefix_template: str, values: list[str], param: str) -> str | None:
         lister = LISTS.get(_shape(prefix_template))
         if lister is None or lister.operation is None:
             return None
@@ -120,10 +130,17 @@ class Ids:
             return None
         items = result.body.get("items") or []
         first = items[0] if items else None
-        if isinstance(first, dict):
-            value = first.get("id") or first.get("kid")  # pyright: ignore[reportUnknownMemberType]
-            return value if isinstance(value, str) else None
+        if not isinstance(first, dict):
+            return None
+        for key in (param, _snake(param), *_ID_KEYS):
+            value = first.get(key)  # pyright: ignore[reportUnknownMemberType]
+            if isinstance(value, str) and value:
+                return value
         return None
+
+
+def _snake(name: str) -> str:
+    return re.sub(r"(?<!^)([A-Z])", r"_\1", name).lower()
 
 
 def _fill(template: str, values: list[str]) -> str:
@@ -132,8 +149,8 @@ def _fill(template: str, values: list[str]) -> str:
 
 
 def _args_for(command: Command, values: list[str]) -> dict[str, Any] | None:
-    """The command's args: its path params from `values` (in template order), and any other
-    required arg the sweep knows a value for. None if one is required and unknown."""
+    """The command's args: its path params from `values` (in template order), `_DEFAULTS`, and
+    any other required arg with a closed set of values. None if one is required and unknown."""
     assert command.operation is not None
     names = _PLACEHOLDER.findall(command.operation.path)
     by_param = {a.path_param: n for n, a in command.entry.args.items() if a.path_param}
@@ -143,27 +160,30 @@ def _args_for(command: Command, values: list[str]) -> dict[str, Any] | None:
             return None
         args[by_param[param]] = value
     for name, arg in command.entry.args.items():
-        if arg.required and not arg.path_param and name not in args:
-            default = _REQUIRED_DEFAULTS.get((command.domain, command.name, name))
-            if default is None and arg.allowed_values:
-                default = arg.allowed_values[0]
-            if default is None:
-                return None
+        if arg.path_param or name in args:
+            continue
+        default = _DEFAULTS.get((command.domain, command.name, name))
+        if default is None and arg.required and arg.allowed_values:
+            default = arg.allowed_values[0]
+        if default is not None:
             args[name] = default
+        elif arg.required:
+            return None
     return args
 
 
-def _paths(value: Any, prefix: str = "") -> dict[str, Any]:
-    """Dotted key paths of an object's leaves (arrays are leaves, as in the spec index)."""
+def _paths(value: Any, prefix: str = "", *, links: bool = False) -> dict[str, Any]:
+    """Dotted key paths of an object's leaves (arrays are leaves, as in the spec index).
+    `_links` and `_embedded` are left out unless `links`."""
     out: dict[str, Any] = {}
     if isinstance(value, dict):
         for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]
             key = str(k)  # pyright: ignore[reportUnknownArgumentType]
-            if not prefix and key in _SKIP_KEYS:
+            if not prefix and key in _SKIP_KEYS and not links:
                 continue
             path = f"{prefix}.{key}" if prefix else key
             if isinstance(v, dict) and v:
-                out |= _paths(v, path)
+                out |= _paths(v, path, links=links)
             else:
                 out[path] = v
     return out
@@ -172,8 +192,10 @@ def _paths(value: Any, prefix: str = "") -> dict[str, Any]:
 def _spec_fields(command: Command) -> frozenset[str]:
     assert command.operation is not None
     response = command.operation.response
-    if command.entry.items_key:
-        return response.item_fields.get(command.entry.items_key, frozenset())
+    if command.entry.items_key and command.entry.items_key in response.item_fields:
+        return response.item_fields[command.entry.items_key]
+    # A `response_override: wrapped` command: the spec says a bare list, whose item schema
+    # is `fields`.
     return response.fields
 
 
@@ -215,27 +237,32 @@ async def test_every_command(call: Call, seeds: Seeds, refusals: Refusals) -> No
             sweep.skipped[name] = "a required arg the sweep can't fill"
             continue
         seen = len(refusals.codes)
-        result = await call(command.domain, command.name, args, select="*", limit=3)
+        # links: a view may name a `_links` href, which `links=False` would strip.
+        result = await call(command.domain, command.name, args, select="*", limit=3, links=True)
         codes = refusals.codes[seen:]
         sweep.ran.append(name)
         if "E0000006" in codes:
             sweep.failed[name] = "E0000006: the service app's admin role is too narrow"
             continue
         if not result.ok:
-            if result.code in ("invalid_arguments", "internal_error"):
+            if result.code in _FATAL:
                 sweep.failed[name] = str(result.code)
             else:
                 sweep.upstream[name] = f"{result.code} {','.join(c or '-' for c in codes)}".strip()
             continue
+        sweep.ok.append(name)
         items = _items(result.body)
         if not items:
             continue
-        found = [_paths(i) for i in items]
+        found = [_paths(i, links=True) for i in items]
+        spec = _spec_fields(command)
         view = command.entry.view or ()
         absent = [v for v in view if not any(_present(v, f) for f in found)]
-        if absent:
-            sweep.missing_view[name] = absent
-        spec = _spec_fields(command)
+        if unknown := [v for v in absent if not _known(v, spec) and not v.startswith("_links.")]:
+            sweep.missing_view[name] = unknown
+        if seen_none := [v for v in absent if v not in unknown]:
+            sweep.unseen_view[name] = seen_none
+        found = [_paths(i) for i in items]
         new: set[str] = set()
         for paths in found:
             for path, value in paths.items():
@@ -249,10 +276,10 @@ async def test_every_command(call: Call, seeds: Seeds, refusals: Refusals) -> No
             sweep.new_keys[name] = sorted(new)
     _report(sweep)
     print(
-        f"ran {len(sweep.ran)}, skipped {len(sweep.skipped)}, "
+        f"ran {len(sweep.ran)}, answered {len(sweep.ok)}, skipped {len(sweep.skipped)}, "
         f"upstream errors {len(sweep.upstream)}, new keys in {len(sweep.new_keys)} commands"
     )
-    assert len(sweep.ran) > 0, "no command ran"
+    assert sweep.ok, "no command was answered"
     assert not sweep.failed, f"check 2 failures: {sweep.failed}"
     assert not sweep.missing_view, f"view fields missing from every item: {sweep.missing_view}"
     assert not sweep.secret_like, f"unredacted secret-like new keys: {sweep.secret_like}"
@@ -264,12 +291,14 @@ async def test_paging_raw(okta: tuple[Any, Any, list[Any]], org_url: str, seeds:
     command = REGISTRY.domains["groups"].commands["get-members"]
     assert command.operation is not None
     url = org_url + _fill(command.operation.path, [seeds.paging_group_id])
+    path = _fill(command.operation.path, [seeds.paging_group_id])
     before = len(sent)
     ids: list[str] = []
     async for item, _state, _index in paginate(client, url, {"limit": "10"}, mode="link"):
         if isinstance(item, dict) and isinstance(item.get("id"), str):  # pyright: ignore[reportUnknownMemberType]
             ids.append(item["id"])  # pyright: ignore[reportUnknownArgumentType]
-    pages = len(sent) - before
+    # Requests to the members path only: token POSTs and nonce retries aren't pages.
+    pages = len([r for r in sent[before:] if r.url.path == path])
     assert len(ids) == PAGING_SIZE, f"members read: {len(ids)}, seeded: {PAGING_SIZE}"
     assert len(set(ids)) == len(ids), "a member came back twice"
     assert pages >= -(-PAGING_SIZE // 10), f"pages fetched: {pages}"

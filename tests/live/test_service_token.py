@@ -44,11 +44,10 @@ async def test_dpop_token_nonce_and_cache(
 ) -> None:
     provider, sent = fresh
     token_url = org_url + "/oauth2/v1/token"
-    before = 0
 
     first = await provider.token()
     remember_token(first.value)
-    posts = [r for r in sent[before:] if str(r.url) == token_url]
+    posts = [r for r in sent if str(r.url) == token_url]
 
     # Okta asks for a nonce on the first DPoP token request (V15), so there are two POSTs.
     # A token_type other than DPoP would have raised in the provider: a Bearer downgrade fails.
@@ -61,7 +60,7 @@ async def test_dpop_token_nonce_and_cache(
     again = await provider.token()
     cached = again is first
     assert cached, "the second call wasn't served from the cache"
-    assert len([r for r in sent[before:] if str(r.url) == token_url]) == 2
+    assert len([r for r in sent if str(r.url) == token_url]) == 2
 
 
 async def test_resource_call_with_dpop(okta: tuple[Any, Any, list[Any]], org_url: str) -> None:
