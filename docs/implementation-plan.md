@@ -143,7 +143,7 @@ Verify: `uv run pytest tests/registry/test_spec.py`
 ### 1.3 Registry model & loader ☑
 Design: §6.2, [T1](design/t1-tool-surface.md) D3, D5 · Depends: 1.2
 - [x] Spec index follow-up (T1 D5): `Response.fields` / `item_fields` hold the response's dotted property paths, base schema only for polymorphic items
-- [x] `registry/model.py`: pydantic models for domain file, command (simple/resolved; `handler` reserved for post-v1), args (`path_param`, `query`, `resolve: user_id`, `pattern`, `allowed_values`, `arg_rule`, `type`, `maxItems`), `paginate` (`link | body_links | link_or_body | none`), `items_key`, `page_size`, `view`, `data_classes`, `resumable`, `okta_scopes_override`, `response_override`
+- [x] `registry/model.py`: pydantic models for domain file, command (simple/resolved; `handler` reserved for post-v1, used since 9.1), args (`path_param`, `query`, `resolve: user_id`, `pattern`, `allowed_values`, `arg_rule`, `type`, `maxItems`), `paginate` (`link | body_links | link_or_body | none`), `items_key`, `page_size`, `view`, `data_classes`, `resumable`, `okta_scopes_override`, `response_override`
 - [x] Data-class → sensitivity table (reviewed config); sensitivity derived, never declared
 - [x] `registry/loader.py`: load all `registry/*.yaml`, resolve against spec index, run **checks 1–6, 8–10** from design §6.2 (no derived scope set is an error without override; check 7 is 3.4's guide test), produce immutable `Registry`
 - [x] Tests: one fixture registry per failure mode (non-GET op, missing path param, unknown query, no scope set without override, missing/unknown data class, same-operationId sensitivity mismatch, widening arg without rule, unknown operation, `items_key` not an array-of-objects property of the response, list without view, view path not in the (base) schema, duplicate classification on one operation)
@@ -465,16 +465,16 @@ Verify: someone (or a fresh Claude session) follows the runbook on a clean machi
 - [ ] `scripts/okta-setup.py check` against a real org that has a role group with members (from the 8.1 second sweep, 2026-11-15; after that change merges and before the public release, user decision): the existing-group check reads `GET /api/v1/groups/{id}/users?limit=200` and the `status` of the managed server, policy and rule, all tested against the in-memory fake only. Confirm a populated group not yet in the rule is reported `manual` with its ID, creation date and member count; that listing its ID under `reviewed_groups` clears it; and that a group already in the rule stays `ok` with members
 - [ ] E2E checklist: groups claim; per-role tool lists; revocation (A: group removal takes effect within one access-token lifetime; B: group removal and role changes at the next refresh, token revocation ends the chain, an expired Okta session doesn't); 429 behavior under load
 
-### 8.2.1 Live-org CI 🔒 ☐
+### 8.2.1 Live-org CI 🔒 ◐
 Design: §14, §6.4, §12.1 · Depends: 5.x, 7.2, 0.5 · Decided 2026-11-14 (see the [decisions log](decisions-log.md))
 
 Live checks of what only Okta decides: the service token, routing, response shapes, roles and paging. The user side stays on the local test issuer: automating a real Okta sign-in needs a user that gets tokens unattended (password grant, or MFA off), which weakens the org being tested.
 
 - [ ] **Org and service app:** a long-lived developer org (the trial org expires); a CI-only service app made by `scripts/okta-setup.py` (DPoP on, its own key, the roles `SCOPE_ROLES` requires). **Key:** an `okta-dev` **Environment** secret, not a repository secret, with the Environment's deployment branches limited to `main`: a repository secret is readable by a workflow pushed on any branch by anyone with write access. The job writes it to a `0600` file under `$RUNNER_TEMP` and never echoes it. Rotate it on a schedule (runbook, 7.3) and whenever a collaborator with admin on the repo leaves
-- [ ] **Seed data** by Terraform or the setup script, never by CI: a known user, group, app and policy, and a group large enough to page. Tests find IDs by name or from a checked-in map of non-secret IDs
-- [ ] **Workflow** `live.yml`: `schedule` (nightly), `workflow_dispatch`, `push` to `main`; **never `pull_request`**. Environment `okta-dev`, `concurrency: okta-live`, `permissions: contents: read`, a low `MCP_REQUESTS_PER_MINUTE`. A failure opens an issue; it does not gate merges (Okta releases and org drift fail it as often as code does)
-- [ ] **Output hygiene:** `tests/live/` asserts only on derived values (status codes, error codes, key sets, lengths), never on body values, since pytest prints both sides of a failed `assert`; run with `--tb=line`. A test fails if a known secret-like value appears in captured output
-- [ ] **Checks:**
+- [x] **Seed data** by Terraform or the setup script, never by CI (the infra repo's CI-org Terraform, 2026-11-16; tests find objects by name from a prefix): a known user, group, app and policy, and a group large enough to page. Tests find IDs by name or from a checked-in map of non-secret IDs
+- [ ] **Workflow** `live.yml` (written 2026-11-16; not yet run: needs the `okta-dev` Environment and its secret): `schedule` (nightly), `workflow_dispatch`, `push` to `main`; **never `pull_request`**. Environment `okta-dev`, `concurrency: okta-live`, `permissions: contents: read`, a low `MCP_REQUESTS_PER_MINUTE`. A failure opens an issue; it does not gate merges (Okta releases and org drift fail it as often as code does)
+- [x] **Output hygiene:** `tests/live/` asserts only on derived values (status codes, error codes, key sets, lengths), never on body values, since pytest prints both sides of a failed `assert`; run with `--tb=line`. A test fails if a known secret-like value appears in captured output
+- [ ] **Checks** (written 2026-11-16 in `tests/live/`, none run yet; check 5 runs in process, not in the image, see the [decisions log](decisions-log.md)):
   1. Service token: nonce retry, `DPoP` token type (a `Bearer` downgrade fails), second call served from the cache
   2. Every registry command once through the executor: no `E0000006` (keeps V6 current), every view field present, paged lists follow `next`
   3. Schema drift and secret canary: live keys vs the pinned spec's schema; fail on a new key that looks secret- or credential-like or is not covered by `scrub.yaml` (keeps V14 current); report other new keys
@@ -484,8 +484,8 @@ Live checks of what only Okta decides: the service token, routing, response shap
 
 Verify: a manual `workflow_dispatch` run is green; a planted failure (a command whose role is removed, a view naming a missing field) fails it with no response body in the log; `/security-review` of the workflow and `tests/live/`.
 
-### 8.3 Documentation pass ☐
-- [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed). 8.3.1 fixed the design's header, domain and tool counts, V5 and the §17 row; still to do: §15's milestones and the remaining "post-v1" wording against what shipped, README usage once 4.6 has run
+### 8.3 Documentation pass ◐
+- [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed). 8.3.1 fixed the design's header, domain and tool counts, V5 and the §17 row; §15's milestones and the "post-v1" wording were brought up to date on 2026-11-16 (a status column, the composite milestone M8, §7.2's composite resumability). Still to do: README usage once 4.6 has run, then a last check of AGENTS.md and the design against what ships
 
 ### 8.3.1 Public readiness ◐
 Review of 2026-11-15 before making the repository public (see the [decisions log](decisions-log.md)): docs, design, history and repo hygiene; not a code review.
