@@ -1,6 +1,6 @@
 # Okta MCP Server — Design
 
-Status: **r4, with the changes in §0.0 as built** (pre-release; the plan's step 8.3 does the final pass) · r4: 2026-10-23 · Last updated: 2026-11-15 · Owner: zloether
+Status: **r4, with the changes in §0.0 as built** (pre-release; the plan's step 8.3 does the final pass) · r4: 2026-10-23 · Last updated: 2026-11-16 · Owner: zloether
 
 A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that exposes the Okta Management API's read surface to MCP clients, with OAuth-based user authentication and Okta-group-driven authorization of which tools each user may call.
 
@@ -493,7 +493,7 @@ Rules:
 - **Deadline:** a resumable list stops 1 s before the call's deadline and returns what it has (`truncated: "deadline"`); with nothing yet, the call fails with `timeout`, for the same reason as above. A non-resumable list isn't cut; the call fails with `timeout`. Any other cut of a non-resumable list is reported as `truncated: "non_resumable"`.
 - **The executor owns `truncated`** and `warnings`: it passes the envelope builder a cursor-issuing function (or none, for a non-resumable call) and the warnings to add.
 - **Unpaged queries:** `unpaged_args: [q]` in the registry names args with which Okta doesn't page the list (`listGroups` `q`). A call that passes one still sends `page_size` as `limit`, is read as one page (links ignored) and is never resumable. The executor reads that page whole before building the envelope; if it holds `page_size` items or more, the result is reported `truncated: "non_resumable"` with a warning to narrow the query, however many items `limit` or the byte budget let out (and even when all were), since Okta gives no other sign that it cut the list. An arg can't be in both `unpaged_args` and `resumable.unless_args` (load error).
-- **Resumability is a property of (command, args):** `resumable: true | false | {unless_args: […]}` in the registry. Simple and resolved commands are resumable. Post-v1 composite handlers default to non-resumable (`truncated: "non_resumable"`), are capped at `MCP_MAX_BATCH` (50) keys for batch results, and get their own aggregation caps when they are designed.
+- **Resumability is a property of (command, args):** `resumable: true | false | {unless_args: […]}` in the registry. Simple and resolved commands are resumable. Composite handlers are non-resumable: the executor accepts no `cursor`, `limit`, `select` or `links` for them (§5.6). Batch composites (post-v1) will be capped at `MCP_MAX_BATCH` (50) keys and get their own aggregation caps when they are designed.
 
 ### 7.3 Cursors
 
@@ -898,18 +898,19 @@ Results include PII. Roles should be scoped accordingly; `select` is a convenien
 
 ## 15. Plan, effort, and verification
 
-| # | Milestone | Verified by | LOE |
-|---|---|---|---|
-| M0 | Repo bootstrap: `pyproject.toml`, `uv.lock`, `AGENTS.md` (+ `CLAUDE.md` → `@AGENTS.md`), CI workflow. Spikes: SDK v2 stateless Streamable HTTP with per-request principal, per-principal `tools/list` with `cacheScope`, both protocol revisions, `httpx` vs `httpx2` (V5); Okta dev org: groups claim (IDs), `uid`/`sub`, `resource` handling, discovery, loopback redirects, DPoP requirement (V1, V9–V11, V13, V15) | CI green on an empty package; demo with two users seeing different tool lists; written V-item findings | 5 d |
-| M1 | Spec pinning + `update-spec.py`; registry model/loader/spec resolution; JSON Schema generation; coverage inventory classifying every okta-skills catalogue entry (minus ai-agents) | Registry tests green on 2 domains; coverage report checked in; effort re-estimated | 4 d |
-| M2 | Okta client: token providers, DPoP, pagination (all modes), 429 retry, in-flight cap, deadlines; params/URL builder with injection controls; resolver; executor, output options, scrub, envelope, cursors | Client, pagination, budget, cursor, injection suites green | 6 d |
-| M3 | Registry authoring for all simple/resolved commands across 23 domains, with classification, `arg_rules`, generated fixtures (recorded only for gotcha endpoints) | Registry CI checks green; fixture test per command; coverage report shows simple+resolved complete | 7–9 d |
-| M4 | stdio dev mode; HTTP app, PRM (both URLs), JWT verifier, 401/403, health; policy engine/loader, per-principal tool lists, call-time enforcement, `okta_help`/`okta_status`; resources | Auth, policy and integration suites green; Inspector smoke | 4 d |
-| M5 | Audit log, per-principal limiter, error mapping | Audit/limit tests | 1 d |
-| M6 | Dockerfile, compose, config validation, runbook (exposure decision, kill switch, Okta setup) | Container tests; fresh-machine bring-up from the runbook | 2 d |
-| M7 | Hardening, `/security-review` on §12.2 paths, client compatibility matrix, E2E | Findings resolved; matrix and E2E checklist signed off | 3–4 d |
-| | **Total (v1)** | | **≈32–35 d** |
-| Post-v1 | Composite handlers on demand (batch `get-factors`/`get-enrollments`, `policies get-rules` multi, `logs list --member-of/--count-by`, `logs timeline`, `logs login-failures`, `logs diagnose`); Path B; metrics | Per item | 4–6 d for the handler set; others TBD |
+| # | Milestone | Verified by | LOE | Status (plan) |
+|---|---|---|---|---|
+| M0 | Repo bootstrap: `pyproject.toml`, `uv.lock`, `AGENTS.md` (+ `CLAUDE.md` → `@AGENTS.md`), CI workflow. Spikes: SDK v2 stateless Streamable HTTP with per-request principal, per-principal `tools/list` with `cacheScope`, both protocol revisions, `httpx` vs `httpx2` (V5); Okta dev org: groups claim (IDs), `uid`/`sub`, `resource` handling, discovery, loopback redirects, DPoP requirement (V1, V9–V11, V13, V15) | CI green on an empty package; demo with two users seeing different tool lists; written V-item findings | 5 d | ◐ 0.6: target clients other than Claude Code |
+| M1 | Spec pinning + `update-spec.py`; registry model/loader/spec resolution; JSON Schema generation; coverage inventory classifying every okta-skills catalogue entry (minus ai-agents) | Registry tests green on 2 domains; coverage report checked in; effort re-estimated | 4 d | ☑ |
+| M2 | Okta client: token providers, DPoP, pagination (all modes), 429 retry, in-flight cap, deadlines; params/URL builder with injection controls; resolver; executor, output options, scrub, envelope, cursors | Client, pagination, budget, cursor, injection suites green | 6 d | ☑ |
+| M3 | Registry authoring for all simple/resolved commands across 23 domains, with classification, `arg_rules`, generated fixtures (recorded only for gotcha endpoints) | Registry CI checks green; fixture test per command; coverage report shows simple+resolved complete | 7–9 d | ◐ V6 open for a few scopes |
+| M4 | stdio dev mode; HTTP app, PRM (both URLs), JWT verifier, 401/403, health; policy engine/loader, per-principal tool lists, call-time enforcement, `okta_help`/`okta_status`; resources | Auth, policy and integration suites green; Inspector smoke | 4 d | ◐ 4.6: TLS run done for Claude Code; other clients, option B refresh |
+| M5 | Audit log, per-principal limiter, error mapping | Audit/limit tests | 1 d | ◐ 6.2: V16 |
+| M6 | Dockerfile, compose, config validation, runbook (exposure decision, kill switch, Okta setup) | Container tests; fresh-machine bring-up from the runbook | 2 d | ◐ 7.2, 7.3: example compose with dev-org values, clean-machine walkthrough, unverified runbook items |
+| M7 | Hardening, `/security-review` on §12.2 paths, client compatibility matrix, E2E | Findings resolved; matrix and E2E checklist signed off | 3–4 d | ◐ 8.1 ☑; 8.2, 8.2.1, 8.3, 8.3.1 open |
+| M8 | Composite mechanism (`handler:` + `uses:`) and `diagnostics login-failures`, pulled forward from post-v1 (§0.0) | Handler, composite and loader suites green; live check with simulated failures | not in r4 | ◐ 9.1: live check with real failures |
+| | **Total (v1)** | | **≈32–35 d** (r4 estimate, excluding M8; actual effort wasn't tracked) | |
+| Post-v1 | Composite handlers on demand (batch `get-factors`/`get-enrollments`, `policies get-rules` multi, `logs list --member-of/--count-by`, `logs timeline`); Path B; metrics | Per item | 4–6 d for the handler set; others TBD | ☐ plan backlog |
 
 M3 is the least certain line. The step 1.5 inventory (`docs/coverage/report.md`) counts 206 catalogue commands: 170 simple, 30 resolved, 4 composite (post-v1), 2 excluded. That leaves 200 commands, about 25 a day, plus a domain guide per domain. They map to 198 registry entries, since `users search` and `groups search` are arguments of `list` (one command per operation). Only 5 commands (2.5%) are gotcha endpoints that need a recorded fixture; the rest use generated ones. 53 commands paginate (10 of them `link_or_body` over a wrapped list), and 12 need an `items_key`. Two of the gotchas (`listJwk`, `listOAuth2ResourceServerJsonWebKeys`) return `{"keys": [...]}` where the spec says a list; step 5.4 added `response_override: {kind: wrapped}` for them (`listJwk` waits for a live recording, as its spec example shows a third shape).
 

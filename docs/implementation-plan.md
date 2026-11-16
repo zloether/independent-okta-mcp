@@ -143,7 +143,7 @@ Verify: `uv run pytest tests/registry/test_spec.py`
 ### 1.3 Registry model & loader ☑
 Design: §6.2, [T1](design/t1-tool-surface.md) D3, D5 · Depends: 1.2
 - [x] Spec index follow-up (T1 D5): `Response.fields` / `item_fields` hold the response's dotted property paths, base schema only for polymorphic items
-- [x] `registry/model.py`: pydantic models for domain file, command (simple/resolved; `handler` reserved for post-v1), args (`path_param`, `query`, `resolve: user_id`, `pattern`, `allowed_values`, `arg_rule`, `type`, `maxItems`), `paginate` (`link | body_links | link_or_body | none`), `items_key`, `page_size`, `view`, `data_classes`, `resumable`, `okta_scopes_override`, `response_override`
+- [x] `registry/model.py`: pydantic models for domain file, command (simple/resolved; `handler` reserved for post-v1, used since 9.1), args (`path_param`, `query`, `resolve: user_id`, `pattern`, `allowed_values`, `arg_rule`, `type`, `maxItems`), `paginate` (`link | body_links | link_or_body | none`), `items_key`, `page_size`, `view`, `data_classes`, `resumable`, `okta_scopes_override`, `response_override`
 - [x] Data-class → sensitivity table (reviewed config); sensitivity derived, never declared
 - [x] `registry/loader.py`: load all `registry/*.yaml`, resolve against spec index, run **checks 1–6, 8–10** from design §6.2 (no derived scope set is an error without override; check 7 is 3.4's guide test), produce immutable `Registry`
 - [x] Tests: one fixture registry per failure mode (non-GET op, missing path param, unknown query, no scope set without override, missing/unknown data class, same-operationId sensitivity mismatch, widening arg without rule, unknown operation, `items_key` not an array-of-objects property of the response, list without view, view path not in the (base) schema, duplicate classification on one operation)
@@ -484,8 +484,8 @@ Live checks of what only Okta decides: the service token, routing, response shap
 
 Verify: a manual `workflow_dispatch` run is green; a planted failure (a command whose role is removed, a view naming a missing field) fails it with no response body in the log; `/security-review` of the workflow and `tests/live/`.
 
-### 8.3 Documentation pass ☐
-- [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed). 8.3.1 fixed the design's header, domain and tool counts, V5 and the §17 row; still to do: §15's milestones and the remaining "post-v1" wording against what shipped, README usage once 4.6 has run
+### 8.3 Documentation pass ◐
+- [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed). 8.3.1 fixed the design's header, domain and tool counts, V5 and the §17 row; §15's milestones and the "post-v1" wording were brought up to date on 2026-11-16 (a status column, the composite milestone M8, §7.2's composite resumability). Still to do: README usage once 4.6 has run, then a last check of AGENTS.md and the design against what ships
 
 ### 8.3.1 Public readiness ◐
 Review of 2026-11-15 before making the repository public (see the [decisions log](decisions-log.md)): docs, design, history and repo hygiene; not a code review.
