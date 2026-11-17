@@ -2,8 +2,6 @@
 
 Where to run okta-mcp, and how. This page helps you choose; the [runbook](runbook.md) has the steps for each choice.
 
-**okta-mcp is pre-release.** No independent security review yet, and some live checks still open (README status, [`SECURITY.md`](../SECURITY.md#review-status)). The scenarios below describe where it is headed; weigh that before you run it against an org you depend on.
-
 The server is one stateless process: no database, no disk writes, no session store. Everything it needs is a config, a policy file and two secrets: the service app's private key and the cursor key. So the hosting choice comes down to who can reach the endpoint, how much downtime you can accept, and how much platform you already run. Not to capacity.
 
 ## Choose
@@ -31,6 +29,7 @@ These hold whatever you pick. The runbook explains each one.
 - **TLS ends at a reverse proxy or load balancer, and nothing else reaches the server's port** ([runbook §3.3](runbook.md#33-proxy-and-exposure)). The container speaks plain HTTP. Docker's published ports bypass host firewalls such as ufw.
 - **`MCP_TRUST_PROXY` trusts `X-Forwarded-*` from any peer.** Turn it on only once nothing but the proxy can reach the port. It changes log lines only: identity, limits and audit key on the token.
 - **Secrets as files** (`OKTA_PRIVATE_KEY_FILE`, `MCP_CURSOR_KEY_FILE`). They never go in environment variables or the image. On a platform, mount them from its secrets manager as files. The policy is a file too (`MCP_POLICY_FILE`), mounted read-only. All three must be readable by uid 10001, the container's user: a root-owned `0600` mount fails at startup.
+- **A pinned image.** Run an image tag pinned by digest (`image:tag@sha256:…`), never `:latest`, and bump it deliberately after reading the changelog.
 - **The runtime hardening in [`docker/compose.example.yaml`](../docker/compose.example.yaml)**: read-only root filesystem, all capabilities dropped, `no-new-privileges`. Carry it over to any platform, for example Kubernetes' `readOnlyRootFilesystem`, `capabilities.drop: [ALL]`, `allowPrivilegeEscalation: false` and `runAsNonRoot`.
 - **Health:** `/healthz` answers while the process runs. `/readyz` turns 503 without a service token or the issuer's signing keys. Both need no token, so keep `/readyz` internal; the proxy needs to route only `/mcp`, the two `/.well-known/oauth-protected-resource` paths (also tokenless, by design), and `/healthz` if an outside uptime check uses it.
 - **A request body limit and timeouts at the proxy.** The proxy's timeout for the upstream's response must be above `MCP_CALL_TIMEOUT` (default 60 s), or a long list ends in the proxy's 504 instead of the server's own `timeout` error. nginx's `proxy_read_timeout` defaults to exactly 60 s, so raise it; with Caddy, its server `write` timeout. Don't cache responses: tool lists differ per user.
@@ -78,8 +77,3 @@ The bottleneck is Okta, not the host. One process serves many users at once: cal
 - `diagnostics login-failures` makes several.
 
 All of them draw on your org's rate limits, which the service app shares with every other integration. Plan from those limits, and set the service app's rate-limit share in Okta so that okta-mcp gets 429s before your other integrations do. A small VM (1 vCPU, 1 GB) is a reasonable start for a team. Measure under your own load before sizing up: run a load test against a mocked Okta, which costs none of your org's quota.
-
-## Not yet
-
-- **No published image.** Until the first release, compose builds from a checkout ([`CHANGELOG.md`](../CHANGELOG.md)). On a platform, build the image in your own CI and pin it by digest.
-- **Pre-release.** See the README's status, including what has and hasn't been checked against a live org, and [`SECURITY.md`](../SECURITY.md#review-status) for the review status.
