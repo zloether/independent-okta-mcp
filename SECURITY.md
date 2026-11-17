@@ -1,6 +1,6 @@
 # Security policy
 
-okta-mcp holds a service credential that can read an Okta org, so reports about it are welcome and handled first.
+independent-okta-mcp holds a service credential that can read an Okta org, so reports about it are welcome and handled first.
 
 ## Reporting a vulnerability
 

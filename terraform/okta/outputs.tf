@@ -1,5 +1,5 @@
 output "server_env" {
-  description = "Environment for the okta-mcp server (plus OKTA_PRIVATE_KEY_FILE, which Terraform never sees)."
+  description = "Environment for the independent-okta-mcp server (plus OKTA_PRIVATE_KEY_FILE, which Terraform never sees)."
   value = {
     MCP_PUBLIC_URL         = var.mcp_public_url
     OKTA_ORG_URL           = var.okta_org_url

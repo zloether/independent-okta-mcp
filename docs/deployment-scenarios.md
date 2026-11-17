@@ -1,6 +1,6 @@
 # Deployment scenarios
 
-Where to run okta-mcp, and how. This page helps you choose; the [runbook](runbook.md) has the steps for each choice.
+Where to run independent-okta-mcp, and how. This page helps you choose; the [runbook](runbook.md) has the steps for each choice.
 
 The server is one stateless process: no database, no disk writes, no session store. Everything it needs is a config, a policy file and two secrets: the service app's private key and the cursor key. So the hosting choice comes down to who can reach the endpoint, how much downtime you can accept, and how much platform you already run. Not to capacity.
 
@@ -76,4 +76,4 @@ The bottleneck is Okta, not the host. One process serves many users at once: cal
 - a paged list makes one per page;
 - `diagnostics login-failures` makes several.
 
-All of them draw on your org's rate limits, which the service app shares with every other integration. Plan from those limits, and set the service app's rate-limit share in Okta so that okta-mcp gets 429s before your other integrations do. A small VM (1 vCPU, 1 GB) is a reasonable start for a team. Measure under your own load before sizing up: run a load test against a mocked Okta, which costs none of your org's quota.
+All of them draw on your org's rate limits, which the service app shares with every other integration. Plan from those limits, and set the service app's rate-limit share in Okta so that independent-okta-mcp gets 429s before your other integrations do. A small VM (1 vCPU, 1 GB) is a reasonable start for a team. Measure under your own load before sizing up: run a load test against a mocked Okta, which costs none of your org's quota.

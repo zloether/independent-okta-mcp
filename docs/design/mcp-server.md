@@ -1,4 +1,4 @@
-# Okta MCP Server — Design
+# independent-okta-mcp — Design
 
 Status: **r4, with the changes in §0.0 as built** (pre-release; the plan's step 8.3 does the final pass) · r4: 2026-10-23 · Last updated: 2026-11-16 · Owner: zloether
 
@@ -146,7 +146,7 @@ A self-hosted, read-only [MCP](https://modelcontextprotocol.io) server that expo
                                     │ JWKS (cached)                      │ HTTPS (service token)
   ┌─────────┐  Bearer access token  │                                    │
   │ MCP     │ ──────────────────►┌──┴────────────────────────────────────┴──────────────┐
-  │ client  │  Streamable HTTP   │ okta-mcp server (single container, stateless, async) │
+  │ client  │  Streamable HTTP   │ independent-okta-mcp (one container, stateless)      │
   └─────────┘ ◄──────────────────│                                                      │
         TLS proxy ──►            │  Auth ─► Policy ─► Tool registry (per-principal)     │
                                  │                         │                            │

@@ -1,12 +1,12 @@
 # Okta setup
 
-`scripts/okta-setup.py` checks, and optionally creates, everything okta-mcp needs on the Okta side (design Appendix C). Run `check` at any time; it only reads. `apply` creates what is missing after showing you the list and asking.
+`scripts/okta-setup.py` checks, and optionally creates, everything independent-okta-mcp needs on the Okta side (design Appendix C). Run `check` at any time; it only reads. `apply` creates what is missing after showing you the list and asking.
 
 If you manage Okta with Terraform, use [`terraform/okta/`](../terraform/okta/) instead; see [Terraform](#terraform). It creates the same objects. Pick one tool per org.
 
 ## Prerequisites
 
-**A custom authorization server, which needs Okta's API Access Management add-on.** Users sign in to okta-mcp through a custom authorization server, because the org authorization server can't issue access tokens with your own audience or the `groups` claim. Both setup tools create a new one (`okta-mcp` by default). Okta says:
+**A custom authorization server, which needs Okta's API Access Management add-on.** Users sign in to independent-okta-mcp through a custom authorization server, because the org authorization server can't issue access tokens with your own audience or the `groups` claim. Both setup tools create a new one (`okta-mcp` by default). Okta says:
 
 - Custom authorization servers are part of API Access Management, an optional add-on in production orgs.
 - Since March 2023, an Enterprise or One-App subscription without the add-on includes only the built-in `default` custom authorization server and can't create new ones. Servers created before then keep working.

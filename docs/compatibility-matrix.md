@@ -1,10 +1,10 @@
 # MCP clients
 
-How an MCP client connects to okta-mcp, and which clients have been tried. The Okta side is in [`okta-setup.md`](okta-setup.md); the evidence behind each rule is in [`design/spike-findings.md`](design/spike-findings.md).
+How an MCP client connects to independent-okta-mcp, and which clients have been tried. The Okta side is in [`okta-setup.md`](okta-setup.md); the evidence behind each rule is in [`design/spike-findings.md`](design/spike-findings.md).
 
 ## What a client must support
 
-okta-mcp is an OAuth resource server; Okta is the authorization server (design §8.3). A client connects if it can do all of these:
+independent-okta-mcp is an OAuth resource server; Okta is the authorization server (design §8.3). A client connects if it can do all of these:
 
 - **Streamable HTTP** to `MCP_PUBLIC_URL`, with `Authorization: Bearer`.
 - **Discovery from the 401.** The server answers an unauthenticated request with `WWW-Authenticate: Bearer resource_metadata=…`; the client reads that document, then Okta's metadata (OIDC discovery or RFC 8414; Okta serves both).
