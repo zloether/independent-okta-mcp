@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check and set up the Okta side of okta-mcp.
+"""Check and set up the Okta side of independent-okta-mcp.
 
     uv run python scripts/okta-setup.py check --config okta-setup.yaml
     uv run python scripts/okta-setup.py apply --config okta-setup.yaml [--yes]
@@ -693,8 +693,8 @@ class Setup:
                 self.problem(
                     f"{kind} {item['name']!r}",
                     ("a second one with this name" if item["name"] == ours else "not managed")
-                    + f" on the authorization server this tool dedicates to okta-mcp: it can "
-                    f"issue tokens {ours!r} doesn't bound; remove it",
+                    + " on the authorization server this tool dedicates to independent-okta-mcp: "
+                    f"it can issue tokens {ours!r} doesn't bound; remove it",
                 )
         return mine, found
 

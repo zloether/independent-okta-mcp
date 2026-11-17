@@ -1,6 +1,6 @@
 # Runbook
 
-How to stand up, run and shut down an okta-mcp deployment. The Okta details are in [`okta-setup.md`](okta-setup.md), and the reasons behind each control are in the [design](design/mcp-server.md) (§ numbers below). This page gives the order of steps and the checks between them.
+How to stand up, run and shut down an independent-okta-mcp deployment. The Okta details are in [`okta-setup.md`](okta-setup.md), and the reasons behind each control are in the [design](design/mcp-server.md) (§ numbers below). This page gives the order of steps and the checks between them.
 
 Steps marked **unverified** haven't been tried against a real org yet. They are tracked in the [plan](implementation-plan.md).
 
@@ -140,7 +140,7 @@ Then sign in from an MCP client as one test user per role. Check that `okta_stat
 
 ### 3.5 Tell your users
 
-Results are Okta data, and some of it is controlled by outsiders. For example, failed sign-ins put an attacker-chosen username into the System Log, and users write their own profile fields. A model can read instructions planted there as if they came from the user (§12.1, prompt injection). Ask users to connect okta-mcp in a session that has no tools able to send data out (web fetch, email, write access to other systems), or to keep human approval on for those tools.
+Results are Okta data, and some of it is controlled by outsiders. For example, failed sign-ins put an attacker-chosen username into the System Log, and users write their own profile fields. A model can read instructions planted there as if they came from the user (§12.1, prompt injection). Ask users to connect independent-okta-mcp in a session that has no tools able to send data out (web fetch, email, write access to other systems), or to keep human approval on for those tools.
 
 ## 4. Operate
 
