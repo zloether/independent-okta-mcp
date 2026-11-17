@@ -2,6 +2,8 @@
 
 Where to run okta-mcp, and how. This page helps you choose; the [runbook](runbook.md) has the steps for each choice.
 
+**okta-mcp is pre-release.** No independent security review yet, and some live checks still open (README status, [`SECURITY.md`](../SECURITY.md#review-status)). The scenarios below describe where it is headed; weigh that before you run it against an org you depend on.
+
 The server is one stateless process: no database, no disk writes, no session store. Everything it needs is a config, a policy file and two secrets: the service app's private key and the cursor key. So the hosting choice comes down to who can reach the endpoint, how much downtime you can accept, and how much platform you already run. Not to capacity.
 
 ## Choose
@@ -28,11 +30,11 @@ These hold whatever you pick. The runbook explains each one.
 
 - **TLS ends at a reverse proxy or load balancer, and nothing else reaches the server's port** ([runbook §3.3](runbook.md#33-proxy-and-exposure)). The container speaks plain HTTP. Docker's published ports bypass host firewalls such as ufw.
 - **`MCP_TRUST_PROXY` trusts `X-Forwarded-*` from any peer.** Turn it on only once nothing but the proxy can reach the port. It changes log lines only: identity, limits and audit key on the token.
-- **Secrets as files** (`OKTA_PRIVATE_KEY_FILE`, `MCP_CURSOR_KEY_FILE`), readable by uid 10001. They never go in environment variables or the image. On a platform, mount them from its secrets manager as files.
+- **Secrets as files** (`OKTA_PRIVATE_KEY_FILE`, `MCP_CURSOR_KEY_FILE`). They never go in environment variables or the image. On a platform, mount them from its secrets manager as files. The policy is a file too (`MCP_POLICY_FILE`), mounted read-only. All three must be readable by uid 10001, the container's user: a root-owned `0600` mount fails at startup.
 - **The runtime hardening in [`docker/compose.example.yaml`](../docker/compose.example.yaml)**: read-only root filesystem, all capabilities dropped, `no-new-privileges`. Carry it over to any platform, for example Kubernetes' `readOnlyRootFilesystem`, `capabilities.drop: [ALL]`, `allowPrivilegeEscalation: false` and `runAsNonRoot`.
-- **Health:** `/healthz` for liveness, `/readyz` for readiness. `/readyz` turns 503 without a service token or the issuer's signing keys. Keep `/readyz` internal; the proxy needs to route only `/mcp`, the two `/.well-known/oauth-protected-resource` paths, and `/healthz` if an outside uptime check uses it.
-- **A request body limit and timeouts at the proxy.** The proxy's write timeout must be above `MCP_CALL_TIMEOUT` (default 60 s). Don't cache responses: tool lists differ per user.
-- **Logs:** the audit log goes to stdout by default, one JSON line per call. Ship it to your log store or SIEM, restrict who can read it, and set a retention period. `MCP_AUDIT_ARGS=full` keeps tool arguments in clear, which are personal data. Alert on the operational events in [runbook §4.7](runbook.md#47-operational-logs-and-alerts).
+- **Health:** `/healthz` answers while the process runs. `/readyz` turns 503 without a service token or the issuer's signing keys. Both need no token, so keep `/readyz` internal; the proxy needs to route only `/mcp`, the two `/.well-known/oauth-protected-resource` paths (also tokenless, by design), and `/healthz` if an outside uptime check uses it.
+- **A request body limit and timeouts at the proxy.** The proxy's timeout for the upstream's response must be above `MCP_CALL_TIMEOUT` (default 60 s), or a long list ends in the proxy's 504 instead of the server's own `timeout` error. nginx's `proxy_read_timeout` defaults to exactly 60 s, so raise it; with Caddy, its server `write` timeout. Don't cache responses: tool lists differ per user.
+- **Logs:** the audit log goes to stdout by default, one JSON line per call. Ship it to your log store or SIEM, restrict who can read it, and set a retention period. The default, `MCP_AUDIT_ARGS=full`, keeps tool arguments in clear, and they are personal data (logins, names); set `hash` for keyed hashes instead ([runbook §4.6](runbook.md#46-audit-log)). Alert on the operational events in [runbook §4.7](runbook.md#47-operational-logs-and-alerts).
 - **No proxy access log**, or one without request headers: each request carries a bearer token.
 - **Okta's side is unchanged by any of this.** The [Okta-side controls](runbook.md#2-okta-setup) apply to every scenario: role-group membership, MFA on the client apps, and the service app's rate-limit share.
 
@@ -47,7 +49,7 @@ The [runbook](runbook.md) as written: the compose example on one Linux host, a r
 
 ## B. One host, internet-facing
 
-A, with the endpoint public. Every request without a valid token gets a 401, but nothing in the server limits unauthenticated senders.
+A, with the endpoint public. `/mcp` answers 401 to a request without a valid token (503 while the server can't yet verify tokens, 403 for a foreign `Origin`), and the health and metadata paths answer without one. Nothing in the server limits unauthenticated senders.
 
 - **Edge rate limiting per client address.** Use the proxy's own (Caddy needs a plugin for this; nginx has `limit_req`), or a CDN or WAF in front. The server limits each signed-in user (`MCP_REQUESTS_PER_MINUTE`), not anonymous traffic.
 - **An allowlist where you can:** the egress ranges of your hosted clients, plus your offices or VPN.
@@ -58,12 +60,14 @@ A, with the endpoint public. Every request without a valid token gets a 401, but
 
 Two or more replicas in different zones behind a load balancer: a managed container service (for example ECS on Fargate, Cloud Run or Azure Container Apps) or Kubernetes. The server is stateless, so replicas need no coordination. Four things change:
 
-- **Divide the per-process limits by the replica count.** `MCP_REQUESTS_PER_MINUTE` and `MCP_OKTA_MAX_INFLIGHT` are counted per process, so N replicas allow N times as much. Set each to the total you want divided by N. (The audit log still names every caller.)
-- **Give every replica the same cursor key.** A list's `next_cursor` is signed with `MCP_CURSOR_KEY`, and a resumed call can land on any replica. Rotate it on all of them together ([runbook §4.5](runbook.md#45-cursor-key-rotation)).
+- **The limits are per process.** Each replica keeps its own counts, so with N replicas:
+  - `MCP_REQUESTS_PER_MINUTE` is a cap on Okta requests **per signed-in user, per replica**. A user whose calls the load balancer spreads over N replicas gets up to N times it; it never was a total across users. Set it to the per-user budget you want divided by N, or accept the multiple. The org-wide ceiling is the service app's rate-limit share in Okta, not this setting.
+  - `MCP_OKTA_MAX_INFLIGHT` (default 10) is the replica's concurrent Okta requests; one user may hold at most half of them, rounded up. Keep it at 4 or more per replica, so one slow list doesn't take every slot. Scaling out adds slots; that is usually what you want.
+- **Give every replica the same cursor key.** A list's `next_cursor` is signed with `MCP_CURSOR_KEY`, and a resumed call can land on any replica. The audit log's `hash` mode is keyed from it too, so replicas with different keys hash the same argument differently. Rotate it on all of them together ([runbook §4.5](runbook.md#45-cursor-key-rotation)).
 - **Give every replica the same policy file and config.** Roll out a policy change as a new deployment, after `okta-mcp --check` passes on it ([runbook §4.2](runbook.md#42-policy-change)). A replica set running two policies at once grants two sets of access.
 - **Expect one service token per replica.** Each replica gets its own service token and its own DPoP key. That's fine, but each one draws on the service app's rate-limit share.
 
-The load balancer does TLS and health checks: `/healthz` for liveness, `/readyz` to take a replica out of rotation. Put a WAF with per-address rate rules on a public load balancer, or use an internal load balancer if every client is on your network. The [every-scenario](#every-scenario) requirements still apply to the tasks. The secrets come from the platform's secrets manager as files, and the platform's own role reads them, not the containers'.
+The load balancer does TLS and health checks. **Health-check on `/healthz`, alert on `/readyz`.** `/readyz` fails when the service token or the issuer's keys can't be had, and every replica shares the service app and the issuer: an Okta-side failure fails them all at once, and a load balancer checking `/readyz` would then drain every replica and answer clients with its own 502s instead of the server's errors. Put a WAF with per-address rate rules on a public load balancer, or use an internal load balancer if every client is on your network. The [every-scenario](#every-scenario) requirements still apply to the tasks. The secrets come from the platform's secrets manager as files, and the platform's own role reads them, not the containers'.
 
 ## Capacity
 
