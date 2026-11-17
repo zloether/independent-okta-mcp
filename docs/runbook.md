@@ -6,7 +6,7 @@ Steps marked **unverified** haven't been tried against a real org yet. They are 
 
 ## 1. Before you start
 
-Decide these first. Each is hard to change later.
+Decide these first. Each is hard to change later. Where to host it (one host or replicated, internal or internet-facing) is in [`deployment-scenarios.md`](deployment-scenarios.md).
 
 | Decision | Options | Where it's set |
 |---|---|---|

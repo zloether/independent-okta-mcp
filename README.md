@@ -20,6 +20,7 @@ What is left is tracked in the [plan](docs/implementation-plan.md).
 ## Read more
 
 - [Okta setup](docs/okta-setup.md): prerequisites (API Access Management), clients, service app
+- [Deployment scenarios](docs/deployment-scenarios.md): where to host it, internal or internet-facing, one host or replicated
 - [Runbook](docs/runbook.md): deploy, operate, rotate, kill switch
 - [Clients](docs/compatibility-matrix.md): how an MCP client connects, and which have been tried
 - [Design](docs/design/mcp-server.md) · [Plan](docs/implementation-plan.md) · [Changelog](CHANGELOG.md)
