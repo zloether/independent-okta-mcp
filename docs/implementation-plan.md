@@ -31,6 +31,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 | 7. Packaging & deployment | 7.1–7.3 | ◐ |
 | 8. Hardening & release | 8.1–8.4 | ◐ |
 | 9. Composite commands (before 8.4) | 9.1 | ◐ |
+| 10. Post-v1 enhancements (not release-blocking) | 10.1–10.3 | ☐ |
 
 **Ordering note vs design §15:** the MCP server (Phase 4) comes *before* bulk registry authoring (Phase 5), so two pilot domains run end to end early and every later registry entry can be smoke-tested through the real server.
 
@@ -527,6 +528,63 @@ Helpdesk-style roles diagnose a user's failed sign-ins without read access to lo
 - [ ] `/code-review` and `/security-review` per slice; dev-org live checks per slice
 
 Verify: `uv run pytest tests/handlers tests/exec/test_composite.py tests/registry/test_loader.py`; through stdio dev mode, a helpdesk principal with only `diagnostics: [login-failures]` gets a diagnosis and nothing from `okta_logs`, `okta_policies` or `okta_users`.
+
+---
+
+## Phase 10 — Post-v1 enhancements
+
+**Not v1 release blockers.** These do not gate 8.4. Each is independent of the others; pick them up on demand. They must preserve the invariants in [AGENTS.md](../AGENTS.md): read-only, registry-first, fail-closed, policy as the single gate, no secrets logged or returned. None may add a path that widens access or egress without its own review.
+
+### 10.1 Progressive tool discovery (optional meta-tool surface) 🔒 ☐
+Design: §5.1–5.3, [T1](design/t1-tool-surface.md) · Depends: 3.3, 4.2
+
+**Problem.** Today the per-principal tool surface advertises every permitted command (filtered enum + synopsis) up front (3.3). As the registry grows across ~24 domains, that list and its synopses spend model context before any work is done — the T1 token-consciousness goal erodes as coverage grows.
+
+**Idea.** An *optional* mode (config flag, e.g. `MCP_TOOL_SURFACE=eager|progressive`; eager stays the default) where the model discovers commands on demand through a small fixed set of meta-tools (e.g. a catalog tool that lists domains/commands the principal may call, and a describe tool returning one command's synopsis + argument schema) instead of enumerating every command up front. Trades upfront context for a discovery round-trip.
+
+**Invariant — discovery narrows what is *advertised*, never what is *allowed*.** The executor's policy check (2.10 / 3.2) stays the one and only gate. Both meta-tools filter by `engine.permitted(principal)` and fail closed: a command the principal can't call is absent from the catalog, and describing it returns `forbidden_by_policy` — exactly as `okta_help` does today (3.3). No command becomes callable merely because it was discovered, and no discovery path may reveal a command, argument, or value the principal isn't permitted (no cross-role leakage, same as `okta_status`).
+
+- [ ] Config flag with eager default; `--check` validates it
+- [ ] Meta-tool definitions, visible to every principal; per-principal catalog/describe filtered by `engine.permitted`; `cacheScope: "private"` on results that vary by principal
+- [ ] Executor unchanged: policy + schema checks run identically in both modes
+- [ ] Tests: progressive mode advertises only the meta-tools (not the full command enum); catalog lists exactly the permitted (domain, command) set for two different principals; describe on a forbidden command → `forbidden_by_policy`; describe leaks no other role's commands/args; a permitted command still executes and a forbidden one is still refused with the flag on; token/size comparison recorded (eager vs progressive) on a large registry
+- [ ] T1 re-check: give the model real tasks in progressive mode; confirm it discovers and calls correctly, and record the context saving
+
+Verify: `uv run pytest tests/test_tools.py`; `/security-review` (per-principal exposure is a trust boundary).
+
+### 10.2 Large-result file export (out-of-band results) 🔒 ☐
+Design: §7.1–7.2, §9.2, §11.4 · Depends: 2.8, 4.2, 6.1
+
+**Problem.** Envelopes cap results by items/bytes/deadline (2.8) and offer HMAC cursors for resumption (2.9). For a genuinely large read (e.g. a full user or log export), the model either gets truncated data or pages many times, spending context on rows a human ultimately wants in a file, not in the transcript.
+
+**Idea.** An *optional* per-call mode that writes the full result set to a file (CSV and/or JSON) served out of band, returning to the model only a summary (counts, field list) plus a reference to fetch the file — instead of streaming every row through context.
+
+**Invariants to hold (this is an egress change).** Read-only: export never changes Okta. Scrubbing, `select`/view, and `_links` handling (2.7, §9.2) apply per item *before* anything is written — the file must not contain more than the same call would return inline. Honor per-principal data classification and policy: no command or field the principal couldn't already read. Never write secrets. File serving must be safe in the HTTP deployment: unguessable filenames, a restricted directory, path-traversal rejection, a short TTL with automatic cleanup, and per-principal scoping (one principal cannot fetch another's export). The audit log (6.1) records every export (who, which command, row count, file id) and still never logs result bodies.
+
+**Open design decisions (resolve before building).** Where files are served and who can reach that endpoint behind a reverse proxy (§11.4) — an authenticated fetch vs. a signed, expiring URL. Whether export is allowed at all in a given deployment (a config flag; some operators will forbid writing result data to disk). Interaction with the read-only container filesystem (7.1) — exports need a writable, non-persistent volume. Disk pressure and cleanup guarantees on crash.
+
+- [ ] Config flag to enable export and set the directory, TTL, and max file size; disabled by default; `--check` validates it and the writable path
+- [ ] Per-item scrub/select/view applied before write; JSON and CSV encoders; summary + reference returned to the model
+- [ ] Serving endpoint: unguessable id, per-principal scope, TTL expiry + background cleanup, traversal rejected, correct content type; works under the read-only root FS with a dedicated writable mount
+- [ ] Audit line per export; no secrets or bodies in logs
+- [ ] Tests: file content equals the scrubbed/selected inline result (no extra fields); forbidden command/field never exported; filenames unguessable and traversal-safe; TTL cleanup removes files; one principal can't fetch another's; disabled-by-default; oversize handled
+- [ ] Runbook (7.3): operator guidance on enabling exports, the serving/exposure decision, retention, and that exported files carry the same sensitivity as the data in them
+
+Verify: `uv run pytest tests/exec/ tests/test_app.py tests/test_audit.py`; `/security-review` (data egress).
+
+### 10.3 Rate-limit sizing guidance (per Okta plan) ☐
+Design: §6.5, §13, §11.4 · Depends: 6.2, 7.3
+
+**Problem.** Operators must set the in-flight concurrency (`MCP_OKTA_MAX_INFLIGHT`) and the per-principal request rate (`MCP_REQUESTS_PER_MINUTE`), but the runbook gives no concrete starting values tied to Okta's per-tenant API rate limits. Guessing high causes 429 storms (2.4); guessing low wastes capacity.
+
+**Idea.** A runbook section that helps an operator *derive* starting values from their own tenant rather than from a copied table (Okta's per-tier numbers drift and vary by endpoint and the org's configured rate-limit percentage). Docs only — no code.
+
+- [ ] Runbook (7.3) sizing section: how to read the tenant's actual Management API rate-limit budget from the Okta Admin console (per-endpoint limits and the org's rate-limit percentage), then a method to pick starting values for `MCP_OKTA_MAX_INFLIGHT` and `MCP_REQUESTS_PER_MINUTE` as a fraction of that budget, leaving headroom for other Okta API consumers
+- [ ] Tie in V16 (the service app's own rate-limit share, 6.2/7.3): the server's total draw must fit inside the share the service app is granted
+- [ ] A worked example with placeholder numbers, clearly marked as illustrative, plus the tuning rule: watch logged 429s / `rate_limited` errors (6.2) and reduce by 10–20% on repeated hits
+- [ ] Cross-reference from the `MCP_OKTA_MAX_INFLIGHT` / `MCP_REQUESTS_PER_MINUTE` entries in the config docs (§11.3)
+
+Verify: runbook has the sizing section with a derivation method (not a hardcoded vendor table) and a tuning note; config-var docs link to it.
 
 ---
 
