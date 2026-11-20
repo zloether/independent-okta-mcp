@@ -603,7 +603,7 @@ Okta group(s) ──(groups claim: IDs)──► role(s) ──► allow/deny of
 ```
 
 - A **role** names one or more Okta group **IDs** and lists `allow`/`deny` of the form `domain: [command patterns]`.
-- Effective permission = (⋃ allow) − (⋃ deny). Deny wins across roles. Default deny.
+- Effective permission = (⋃ allow) − (⋃ deny). Deny wins across roles: a role's `deny` removes the command from a principal who holds that role, even when another of their roles allows it (in the example policy, `security-analyst`'s deny of `users get-factors` overrides `helpdesk`'s allow for someone in both). Default deny.
 
 ### 9.2 Sensitivity, data classes, argument rules, scrubbing
 
