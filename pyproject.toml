@@ -1,5 +1,5 @@
 [project]
-name = "okta-mcp"
+name = "independent-okta-mcp"
 version = "0.0.0"
 description = "Read-only MCP server for the Okta Management API with group-based tool policy"
 readme = "README.md"
@@ -31,6 +31,10 @@ dev = [
 [build-system]
 requires = ["uv_build>=0.12,<0.14"]
 build-backend = "uv_build"
+
+# The import package keeps its name; uv_build would otherwise derive `independent_okta_mcp`.
+[tool.uv.build-backend]
+module-name = "okta_mcp"
 
 [tool.ruff]
 line-length = 100
