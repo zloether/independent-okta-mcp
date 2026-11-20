@@ -426,6 +426,7 @@ Verify (phase): `uv run pytest tests/test_audit.py tests/integration/test_limits
 Design: §11.2 · Depends: 4.5
 - [x] `Dockerfile`, `.dockerignore` per design (allow-list includes `LICENSE`, `README.md`; `uv sync --no-editable`); non-root; `MCP_ENV=production`
 - [x] CI job: build image, run container tests (non-root, read-only FS, health endpoints, no tests/docs/keys in image), image scan
+- [x] `BASE_IMAGE` build argument for both stages, digest-pinned only (user request, 2026-11-20; decisions log)
 
 Verify: `docker build . && docker run --read-only …` health checks pass; CI container job green; `/security-review`.
 
