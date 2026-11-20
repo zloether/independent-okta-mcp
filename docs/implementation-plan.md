@@ -28,7 +28,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 | 4. MCP server & auth | 4.1–4.6 | ◐ |
 | 5. Registry authoring (all domains) | 5.0–5.7 | ◐ |
 | 6. Audit, limits, logging | 6.1–6.2 | ◐ |
-| 7. Packaging & deployment | 7.1–7.3 | ◐ |
+| 7. Packaging & deployment | 7.1–7.4 | ◐ |
 | 8. Hardening & release | 8.1–8.4 | ◐ |
 | 9. Composite commands (before 8.4) | 9.1 | ◐ |
 
@@ -451,6 +451,14 @@ Design: §11.4, Appendix C · Depends: 7.2, 0.5
 
 Verify: someone (or a fresh Claude session) follows the runbook on a clean machine to a working `/readyz`.
 
+### 7.4 Replicated policy rollout ☐
+Design: §11.4 · Depends: 7.3 · From the deployment-model review, 2026-11-20 (decisions log)
+- [ ] `docs/deployment-scenarios.md` C: a rolling update runs two policies until it finishes (minutes), which the page now calls two sets of access. Say so, and when it matters: for a change that removes access, replace every replica at once (blue/green, or scale the old set to zero before the new one takes traffic) rather than rolling
+- [ ] Kubernetes: mount the policy from a ConfigMap (or Secret) whose name carries a hash of its content, so a policy edit is a new rollout; an in-place update changes nothing until pods restart (no hot reload) and leaves pods on different files. Note the same for `fsGroup` or `defaultMode` so the mounted secrets and policy are readable by uid 10001
+- [ ] Runbook §4.2 links the replicated variant instead of repeating it
+
+Verify: the page's C section covers both; `/code-review`.
+
 ---
 
 ## Phase 8 — Hardening & release
@@ -502,8 +510,21 @@ Review of 2026-11-15 before making the repository public (see the [decisions log
 
 Verify: the settings item is done within the hour after the visibility change; README status matches this plan.
 
+### 8.3.2 Release pipeline and distribution 🔒 ☐
+Design: §11.1, §11.2 · Depends: 7.1 · From the PyPI review, 2026-11-20 (decisions log). The image is the primary artifact; PyPI is secondary, for operators who build their own image or install another way. The risk on PyPI is installs that drop `uv.lock`, more than publishing itself.
+- [ ] **Distribution name** (decision, user): publish as `independent-okta-mcp`, not `okta-mcp`, which reads as Okta's own (Okta publishes `okta-mcp-server`, design §17) and invites a PEP 541 name claim. The import package (`okta_mcp`) and console script (`okta-mcp`) stay. Both names were free on PyPI on 2026-11-20; the first upload claims the chosen one, so do it from the pipeline below, not by hand
+- [ ] **Release workflow**, separate from `ci.yml`: runs only on a signed tag on `main` (tag protection rules); a protected `release` environment with a required reviewer; least-privilege `permissions` per job; no long-lived registry or PyPI tokens anywhere
+- [ ] **PyPI** via Trusted Publishing (OIDC) from that environment, sdist and wheel built once and uploaded with PEP 740 attestations
+- [ ] **Image** to GHCR, built once from the tag with the `Dockerfile`, signed (keyless, GitHub artifact attestations or cosign), with an SBOM and build provenance; the release notes give the digest, and the runbook and compose example switch from `build:` to `image: …@sha256:…`
+- [ ] **Hashed lock as a release asset:** `uv export --frozen --no-dev --format requirements-txt --hashes`. Install docs give `pip install --require-hashes -r requirements.lock` then the wheel (or `uv sync --frozen` from the tag); a plain `pip install independent-okta-mcp` is documented as unsupported for production, since the wheel carries ranges, not the lock
+- [ ] **Package metadata:** classifiers matching the README's status (`Development Status :: 3 - Alpha` until the live checks close), project URLs, and the license stated so a reader sees it is Apache-2.0 with the Commons Clause, not OSI-approved (an SPDX `LicenseRef-` expression); some company dependency policies block non-OSI packages, so the README's install section says so too
+- [ ] `SECURITY.md`'s support statement (fixes only in new releases, latest supported) holds for both artifacts; the changelog's **Security** entries say what to check after upgrading
+
+Verify: a release-candidate tag runs the workflow end to end to TestPyPI and a GHCR test tag; `gh attestation verify` (or `cosign verify`) passes on the image and the wheel; installing from the hashed lock in a clean container works and the image passes `tests/container/`; an unsigned tag, or a tag not on `main`, doesn't publish; `/security-review` of the workflow.
+
 ### 8.4 Release v1.0.0 ☐
-- [ ] Tag, build and publish image, changelog
+Depends: 8.3.2
+- [ ] Tag, build and publish image and package through 8.3.2's pipeline, changelog
 
 Verify: all phases ☑; CI green on tag.
 
