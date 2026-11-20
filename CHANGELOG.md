@@ -23,3 +23,4 @@ No release has been tagged and no image is published; the server builds from a c
 - Audit log, per-user request limits, JSON operational logs.
 - Container image definition and Compose example; Okta setup script and Terraform module.
 - `diagnostics login-failures`, a composite command for help-desk roles.
+- `BASE_IMAGE` build argument: build the image on your own Debian or Ubuntu Python base, pinned by digest (a tag is refused).

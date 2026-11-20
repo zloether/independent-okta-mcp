@@ -18,7 +18,9 @@ This is a personal project maintained in spare time. Expect an acknowledgement w
 
 ## Supported versions
 
-There is no release yet. Fixes land on `main` only.
+Security fixes ship only in new versions. They are not backported: only the latest release is supported, and getting a fix means upgrading to the release that has it. Each fix is listed under **Security** in the [changelog](CHANGELOG.md), with what an operator should check (for example, a role that held an affected command). Read it before upgrading ([runbook §4.1](docs/runbook.md#41-upgrade)).
+
+There is no release yet. Until the first one, fixes land on `main` only.
 
 ## What counts
 

@@ -5,6 +5,10 @@
 #
 # Rules in brief:
 #   - Default deny. Effective permission is (union of allow) minus (union of deny); deny wins.
+#     The unions are over every role the user holds, so one role's deny takes the command away
+#     even where another role allows it: a user in both helpdesk and security-analyst below
+#     loses users get-factors. Prefer a narrower allow to a deny; use deny only for a command
+#     that must be withheld from anyone who holds the role, whatever else they hold.
 #   - A pattern is a command name or "*"; no partial globs. Quote "*" (a bare * is a YAML alias).
 #   - "*" matches only normal commands. A sensitive command needs its name, or a wildcard in a
 #     domain listed in the role's include_sensitive.

@@ -603,7 +603,7 @@ Okta group(s) ──(groups claim: IDs)──► role(s) ──► allow/deny of
 ```
 
 - A **role** names one or more Okta group **IDs** and lists `allow`/`deny` of the form `domain: [command patterns]`.
-- Effective permission = (⋃ allow) − (⋃ deny). Deny wins across roles. Default deny.
+- Effective permission = (⋃ allow) − (⋃ deny). Deny wins across roles: a role's `deny` removes the command from a principal who holds that role, even when another of their roles allows it (in the example policy, `security-analyst`'s deny of `users get-factors` overrides `helpdesk`'s allow for someone in both). Default deny.
 
 ### 9.2 Sensitivity, data classes, argument rules, scrubbing
 
@@ -729,6 +729,7 @@ The [`Dockerfile`](../../Dockerfile) at the repo root (plan 7.1). Two stages on 
 
 - **Build:** uv (`ghcr.io/astral-sh/uv`, the CI version, by digest in its own `FROM` stage so Dependabot sees it; never `:latest`) runs `uv sync --frozen --no-dev --no-install-project` on `pyproject.toml uv.lock`, then copies `LICENSE README.md src/` and runs `uv sync --frozen --no-dev --no-editable`, so the package and its data files are installed into `/app/.venv` and the runtime needs no source tree; then `chmod -R go-w` on the venv (uv leaves its `.lock` at 0666).
 - **Runtime:** `apt-get upgrade` (Debian security fixes newer than the pinned digest), pip and ensurepip removed (the server installs nothing), setuid/setgid bits stripped, user and group `mcp` 10001 with no home or shell. Only `/app/.venv` is copied, root-owned. `ENV PATH=/app/.venv/bin:… PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 MCP_HOST=0.0.0.0 MCP_PORT=8080 MCP_ENV=production`, `USER 10001:10001`, `EXPOSE 8080`, `ENTRYPOINT ["okta-mcp"]`. `HEALTHCHECK` fetches `/healthz` at `MCP_HOST`/`MCP_PORT` (stripped as config does; loopback for a wildcard bind) with the image's Python (no curl in the image) and no proxy, since `HTTP(S)_PROXY` may be set for the Okta calls; every 30 s, polled every 2 s during a 10 s start period (`--start-interval` needs Docker Engine ≥ 25).
+- **`BASE_IMAGE`** build argument (default: the pinned `python-base` stage) replaces the base of both stages together, for an internal mirror or hardened base. The build's first step refuses any value but the default or `image@sha256:<64 hex>`, so a tag can't name different images in the two stages or drift between builds. The base must be Debian or Ubuntu (`apt-get`, `groupadd`, `useradd`) with Python ≥ 3.12 on `PATH`; Dependabot doesn't track it, and `tests/container/` is the check that a custom base keeps the image's guarantees (for example, a base with pip outside `/usr/local` fails `test_no_pip`). `tests/container/test_dockerfile.py` pins the stage layout and the check's pattern without Docker.
 - Base and uv digests are bumped by Dependabot (`docker` ecosystem, 14-day cooldown); a Python minor or major is ignored there and changed by hand with CI's matrix, and so is a uv minor or major, since CI's `setup-uv` version must move with it.
 
 `.dockerignore`: deny-all, then allow `pyproject.toml uv.lock LICENSE README.md src/`, and inside `src/` deny bytecode caches, key files and `.env*`. Keeps `tests/`, `docs/`, `.git`, `.claude/`, keys and `.env*` out of the build context.
