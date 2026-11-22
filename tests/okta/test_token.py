@@ -563,6 +563,11 @@ def test_backoff_is_shorter_than_the_background_refresh() -> None:
         ),
         (httpx2.Response(400, json={"error": "invalid_dpop_proof"}), True, r"proof$"),
         (
+            httpx2.Response(400, json={"errorCode": "invalid_client", "errorSummary": "x"}),
+            True,
+            r"^token request failed: HTTP 400 invalid_client \(check OKTA_CLIENT_ID",
+        ),
+        (
             httpx2.Response(400, json={"error": "Bad <script>"}),
             True,
             r"^[^<]*HTTP 400 \(JSON keys: error\)$",
