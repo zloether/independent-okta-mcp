@@ -18,6 +18,15 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    # Only what the live run executes or reads: docs-only merges would spend the CI org's
+    # rate limit and add noise to the failure issue. The nightly run still catches Okta drift.
+    paths:
+      - "src/**"
+      - "tests/live/**"
+      - "docker/policy.example.yaml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/live.yml"
 
 permissions:
   contents: read
