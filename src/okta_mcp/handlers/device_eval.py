@@ -9,9 +9,10 @@ hardware, jailbreak, third-party signal providers and advanced posture checks.
 
 Undecided, with the reason: dynamic OS requirements (they need Okta's latest-release list,
 which isn't in the Management API), third-party signal values (only an integrator error is a
-decision: an unreadable signal fails), and a posture check whose result isn't on the event. The
-event shape for posture check results is unverified (plan 9.1 live check): the result is looked
-for under the check's `variableName` in the event's device data.
+decision: an unreadable signal fails), and a posture check whose result isn't on the event. A
+posture check result is looked for under the check's `variableName` in the event's device data;
+live (plan 9.1) it is `OSQUERY: {variableName: {"queryLastUpdated": …, "value": "0"}}` in the
+`UDDevice` target's `deviceIntegrator`.
 
 Behavior follows okta-skills `okta-logs` `diagnose_login.py` where it covers the same ground
 (reference only, re-implemented); posture checks are new.
@@ -260,9 +261,14 @@ def _find(value: Any, name: str, depth: int = 0) -> tuple[bool, Any]:
             return False, None
     if isinstance(value, dict):
         for k, v in cast(dict[str, Any], value).items():
-            # A posture result is a scalar: an object or list under the name isn't one, so
-            # nothing larger than a value leaves the server (security review, 9.1).
-            if k.lower() == name.lower() and isinstance(v, str | int | float | bool):
+            if k.lower() != name.lower():
+                continue
+            # Live 9.1: osquery reports `{name: {"queryLastUpdated": …, "value": "0"}}`.
+            if isinstance(v, dict):
+                v = cast(dict[str, Any], v).get("value")
+            # A posture result is a scalar: any other object or list under the name isn't
+            # one, so nothing larger than a value leaves the server (security review, 9.1).
+            if isinstance(v, str | int | float | bool):
                 return True, v
         for v in cast(dict[str, Any], value).values():
             found, inner = _find(v, name, depth + 1)

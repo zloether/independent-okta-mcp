@@ -268,6 +268,42 @@ def test_posture_check_names() -> None:
         ({"device": {**MAC, "macOSFirewall": "0"}}, "0", False),
         ({"device": {**MAC, "macosfirewall": True}}, True, True),
         ({"device": {**MAC, "device_integrator": '{"OSQUERY":{"macOSFirewall":"1"}}'}}, "1", True),
+        # Live 9.1 shape: the result is an object with its value and when the query changed.
+        (
+            {
+                "device": MAC,
+                "target": [
+                    {
+                        "type": "UDDevice",
+                        "detailEntry": {
+                            "deviceIntegrator": json.dumps(
+                                {
+                                    "MANAGEMENT_ATTESTATION": {"errorCode": 100},
+                                    "OSQUERY": {
+                                        "macOSFirewall": {
+                                            "queryLastUpdated": 1795356022000,
+                                            "value": "0",
+                                        }
+                                    },
+                                }
+                            )
+                        },
+                    }
+                ],
+            },
+            "0",
+            False,
+        ),
+        (
+            {
+                "device": {
+                    **MAC,
+                    "device_integrator": '{"OSQUERY":{"macOSFirewall":{"value":"1"}}}',
+                }
+            },
+            "1",
+            True,
+        ),
         (
             {
                 "device": MAC,
@@ -295,6 +331,7 @@ def test_a_posture_check_result_found_on_the_event(
     assert row["pass"] is False and row["actual"] == value
     assert row["required"]["remediation"] == "Turn on the firewall in System Settings"
     assert "secret_query" not in str(row)  # the osquery isn't sent
+    assert "queryLastUpdated" not in str(row)
 
 
 def test_a_posture_check_result_not_on_the_event_is_undecided() -> None:
