@@ -14,7 +14,8 @@ Path IDs come from the seed data where the path is a seeded object's (`/users/{}
 `/groups/{}`, `/apps/{}`, `/policies/{}`, `/groups/rules/{}`), else from the first item of the
 list command one path segment up (`/authorizationServers/{}/credentials/keys/{}` takes a key
 from `…/credentials/keys`). A command whose IDs can't be found (an empty list, a list Okta
-refuses) is skipped and reported, not failed: the org has no such object.
+refuses) is skipped and reported, not failed: the org has no such object. Likewise a command
+Okta answers with `E0000015` (the org lacks the feature) is reported, not failed.
 
 The report (`OKTA_LIVE_REPORT`, a JSON file) holds command names, codes, counts and key names.
 Never values.
@@ -45,6 +46,15 @@ _SECRET_LIKE = re.compile(
 _SKIP_KEYS = ("_links", "_embedded")
 # Args the sweep always sends: Okta requires them though the spec doesn't mark them required.
 _DEFAULTS = {("policies", "list", "type"): "PASSWORD"}
+# Path values the list one segment up can't give: `list-log-stream-schemas` items name their
+# type only inside `$id`, and their `type` is the JSON Schema's (`object`). From the spec's
+# `LogStreamType` enum.
+_PATH_VALUES = {("schemas", "get-log-stream-schema"): ["aws_eventbridge"]}
+# Not called at all on the CI org (user decision, 2026-11-22): it will never have what these
+# need, so a refusal would say nothing about the server.
+_NOT_RUN = {
+    ("org-settings", "list-support-cases"): "needs an Okta support contract (plan 5.5)",
+}
 # A failure here is the harness's or the config's, not the org's: it fails check 2.
 _FATAL = ("invalid_arguments", "internal_error", "unavailable", "rate_limited", "timeout")
 _ID_KEYS = ("id", "kid", "client_id", "type", "label", "name", "contactType")
@@ -78,6 +88,9 @@ class Sweep:
     failed: dict[str, str] = field(default_factory=dict[str, str])
     """Command → why it fails check 2. Names and codes only."""
     upstream: dict[str, str] = field(default_factory=dict[str, str])
+    feature_off: list[str] = field(default_factory=list[str])
+    """Commands Okta answered with `E0000015`: the org lacks the feature (reported, like a
+    command with no object to read, not failed)."""
     """Command → an error code Okta or the executor gave that isn't a check-2 failure."""
     missing_view: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     """View fields absent from every item and unknown to the spec: a registry bug (fails)."""
@@ -228,7 +241,12 @@ async def test_every_command(call: Call, seeds: Seeds, refusals: Refusals) -> No
     for command in COMMANDS:
         name = f"{command.domain} {command.name}"
         assert command.operation is not None
-        values = await ids.path_values(command.operation.path)
+        if why := _NOT_RUN.get((command.domain, command.name)):
+            sweep.skipped[name] = why
+            continue
+        values = _PATH_VALUES.get((command.domain, command.name))
+        if values is None:
+            values = await ids.path_values(command.operation.path)
         if values is None:
             sweep.skipped[name] = ids.why
             continue
@@ -243,6 +261,9 @@ async def test_every_command(call: Call, seeds: Seeds, refusals: Refusals) -> No
         sweep.ran.append(name)
         if "E0000006" in codes:
             sweep.failed[name] = "E0000006: the service app's admin role is too narrow"
+            continue
+        if not result.ok and "E0000015" in codes:
+            sweep.feature_off.append(name)
             continue
         if not result.ok:
             if result.code in _FATAL:
@@ -277,7 +298,8 @@ async def test_every_command(call: Call, seeds: Seeds, refusals: Refusals) -> No
     _report(sweep)
     print(
         f"ran {len(sweep.ran)}, answered {len(sweep.ok)}, skipped {len(sweep.skipped)}, "
-        f"upstream errors {len(sweep.upstream)}, new keys in {len(sweep.new_keys)} commands"
+        f"upstream errors {len(sweep.upstream)}, feature off {len(sweep.feature_off)}, "
+        f"new keys in {len(sweep.new_keys)} commands"
     )
     assert sweep.ok, "no command was answered"
     assert not sweep.failed, f"check 2 failures: {sweep.failed}"
