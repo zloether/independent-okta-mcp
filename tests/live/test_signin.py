@@ -19,7 +19,8 @@ case's events can't satisfy another. The System Log lags, so each check polls un
 shows up or `POLL_FOR` runs out. Asserts are on cause names, and for the lockout case on the
 count of wrong passwords (at most the number sent: 9.1 pairs Okta's two events per attempt).
 
-Seeds (infra repo Terraform, plus one manual step), by name from `OKTA_LIVE_SEED_PREFIX`:
+Seeds (the infra repo's `okta-signin/` module, plus one manual step), by name from
+`OKTA_LIVE_SEED_PREFIX`:
 user `<prefix>-signin@<domain>`, enrolled in Google Authenticator (by hand, once); OIDC apps
 (Interaction Code grant, redirect URI `_signin.REDIRECT_URI`) `<prefix>-signin-mfa` (assigned;
 password + TOTP), `<prefix>-signin-unassigned` (not assigned), `<prefix>-signin-deny`
