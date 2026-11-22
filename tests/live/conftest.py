@@ -14,7 +14,9 @@ whose captured output holds the service token or a line of the private key.
 
 Seed objects come from `okta-ci-org-terraform` in the infra repo, found by name from
 `OKTA_LIVE_SEED_PREFIX` (default `okta-mcp-ci`) and `OKTA_LIVE_SEED_DOMAIN` (`example.com`).
-Nothing here creates or changes anything in Okta: the client has only `get`.
+Nothing here creates or changes anything in Okta (the client has only `get`), except
+`test_signin.py`: its sign-ins fail on purpose, as the seeded test user, and lock that user
+until the seeded policy unlocks it. It runs only with `OKTA_LIVE_SIGNIN_PASSWORD` set.
 """
 
 import json
