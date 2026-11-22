@@ -228,6 +228,29 @@ def no_secrets(
     sys.stderr.write(err)
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Iterator[None]:
+    """`no_secrets` sees only a test's own capture; output from module and session fixtures
+    (the service token's, the sign-in fixture's) lands in the report's "Captured … setup"
+    sections, which `-rA` prints. Blank any section holding a secret, and fail the test."""
+    outcome = yield
+    report: pytest.TestReport = outcome.get_result()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+    found = _secrets()
+    if not found:
+        return
+    leaked = False
+    sections: list[tuple[str, str]] = []
+    for title, text in report.sections:
+        if any(secret in text for secret in found):
+            leaked = True
+            text = "[removed: held a secret value]"
+        sections.append((title, text))
+    if leaked:
+        report.sections = sections
+        report.outcome = "failed"
+        report.longrepr = "a secret value appeared in captured output"
+
+
 def _secrets() -> list[str]:
     found: list[str] = []
     path = os.environ.get("OKTA_PRIVATE_KEY_FILE")

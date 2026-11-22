@@ -283,3 +283,19 @@ async def test_interact_200_without_json() -> None:
 
 def test_wrong_code_is_six_digits() -> None:
     assert all(len(c) == 6 and c.isdigit() for c in (wrong_code() for _ in range(50)))
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "https://example.okta.com.evil.example.com/idp/idx/identify",
+        "https://example.okta.com@evil.example.com/idp/idx/identify",
+        "http://example.okta.com/idp/idx/identify",
+        "https://example.okta.com:8443/idp/idx/identify",
+    ],
+)
+async def test_lookalike_hrefs_are_refused(href: str) -> None:
+    okta = Okta({"/idp/idx/introspect": [_reply("s1", _form("identify", "identifier", href=href))]})
+    with pytest.raises(SigninError, match="off the org"):
+        await _run(okta, "attempt", "0oaclient")
+    assert all(r.url.host == "example.okta.com" for r in okta.requests)
