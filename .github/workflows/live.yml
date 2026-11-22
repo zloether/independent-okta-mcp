@@ -6,10 +6,11 @@
 # A failure opens (or comments on) one issue; it does not gate merges, since Okta releases and
 # org drift fail this as often as code does.
 #
-# Setup (by hand, once): the `okta-dev` environment with deployment branches `main` only;
-# variables OKTA_ORG_URL, OKTA_CLIENT_ID, OKTA_KEY_ID, OKTA_SCOPES from
-# `terraform output github_environment_variables` (infra repo, okta-ci-org-terraform); secret
-# OKTA_CI_PRIVATE_KEY, the CI service app's private key (PEM).
+# Setup (by hand, once): the `okta-dev` environment with deployment branches `main` only, and
+# five Environment *secrets* (not variables: GitHub prints variables in every log, and the org
+# URL and client ID must not be public): OKTA_ORG_URL, OKTA_CLIENT_ID, OKTA_KEY_ID, OKTA_SCOPES
+# from `terraform output github_environment_variables` (infra repo, okta-ci-org-terraform), and
+# OKTA_PRIVATE_KEY, the CI service app's private key (PEM). Only the steps that use them get them.
 name: live
 
 on:
@@ -18,6 +19,15 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    # Only what the live run executes or reads: docs-only merges would spend the CI org's
+    # rate limit and add noise to the failure issue. The nightly run still catches Okta drift.
+    paths:
+      - "src/**"
+      - "tests/live/**"
+      - "docker/policy.example.yaml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/live.yml"
 
 permissions:
   contents: read
@@ -33,10 +43,6 @@ jobs:
     environment: okta-dev
     env:
       OKTA_LIVE: "1"
-      OKTA_ORG_URL: ${{ vars.OKTA_ORG_URL }}
-      OKTA_CLIENT_ID: ${{ vars.OKTA_CLIENT_ID }}
-      OKTA_KEY_ID: ${{ vars.OKTA_KEY_ID }}
-      OKTA_SCOPES: ${{ vars.OKTA_SCOPES }}
       # Low, so a looping test can't take much of the CI org's shared rate limit.
       MCP_REQUESTS_PER_MINUTE: "60"
     steps:
@@ -50,18 +56,41 @@ jobs:
       - run: uv sync --frozen
       - name: Write the service key
         env:
-          KEY: ${{ secrets.OKTA_CI_PRIVATE_KEY }}
+          KEY: ${{ secrets.OKTA_PRIVATE_KEY }}
+        # Fail here, by name, rather than as one key-load error per test. Checks only that the
+        # value is set and has a PEM private-key header; never prints any of it.
         run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::Secret OKTA_PRIVATE_KEY is empty or not set on the okta-dev environment (Settings > Environments > okta-dev > Environment secrets)"
+            exit 1
+          fi
+          case "$KEY" in
+            *"-----BEGIN "*"PRIVATE KEY-----"*) ;;
+            *)
+              echo "::error::Secret OKTA_PRIVATE_KEY has no PEM private-key header: paste the whole PEM file, BEGIN and END lines included (not a JWK or a public key)"
+              exit 1
+              ;;
+          esac
           umask 077
           printf '%s\n' "$KEY" > "$RUNNER_TEMP/ci-service.pem"
           echo "OKTA_PRIVATE_KEY_FILE=$RUNNER_TEMP/ci-service.pem" >> "$GITHUB_ENV"
       - name: Live tests
         env:
+          OKTA_ORG_URL: ${{ secrets.OKTA_ORG_URL }}
+          OKTA_CLIENT_ID: ${{ secrets.OKTA_CLIENT_ID }}
+          OKTA_KEY_ID: ${{ secrets.OKTA_KEY_ID }}
+          OKTA_SCOPES: ${{ secrets.OKTA_SCOPES }}
           OKTA_LIVE_REPORT: ${{ runner.temp }}/commands.json
           OKTA_LIVE_REPORT_ROUTING: ${{ runner.temp }}/routing.json
         # --tb=line: pytest prints both sides of a failed assert; the tests assert only on
         # derived values, and this keeps a traceback's locals out of the log as well.
-        run: uv run pytest tests/live --tb=line -p no:cacheprovider -rA
+        # The org URL secret is masked only as written (with https://); mask the bare host too,
+        # since connection errors name it without the scheme.
+        run: |
+          host="${OKTA_ORG_URL#*://}"
+          host="${host%%/*}"
+          if [ -n "$host" ]; then echo "::add-mask::$host"; fi
+          uv run pytest tests/live --tb=line -p no:cacheprovider -rA
       - name: Summary
         if: always()
         # Command names, codes, counts and key names only (tests/live/test_commands.py).
