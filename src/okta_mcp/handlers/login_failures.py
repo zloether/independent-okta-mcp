@@ -81,6 +81,7 @@ _NOT_READ = "the user's authenticator enrollments weren't read"
 _BUDGET_SHARE = 0.85
 """Of `max_bytes`, what the result may fill before trimming, leaving room for the envelope and
 for escaping the executor's JSON may add."""
+_VIA_MFA = "user.authentication.auth_via_mfa"
 _LOCK = "user.account.lock"
 _UNLOCK = "user.account.unlock"
 
@@ -142,8 +143,10 @@ _DEVICE_FIELDS = (
     "secure_hardware_present",
     "jailbreak",
 )
-_BEHAVIOR = re.compile(r"([A-Za-z][A-Za-z0-9 _-]{0,60})=POSITIVE")
-_RISK_LEVEL = re.compile(r"level=([A-Z]+)")
+_BEHAVIOR_NAME = re.compile(r"[A-Za-z][A-Za-z0-9 _-]{0,60}")
+_BEHAVIOR = re.compile(rf"({_BEHAVIOR_NAME.pattern})=POSITIVE")
+_LEVEL = re.compile(r"[A-Z]+")
+_RISK_LEVEL = re.compile(rf"level=({_LEVEL.pattern})")
 
 
 def _now() -> datetime:
@@ -177,7 +180,7 @@ async def run(ctx: Context, args: Mapping[str, Any]) -> dict[str, Any]:
     }
     checks: list[dict[str, Any]] = [_status_check(user)]
     skipped: list[dict[str, str]] = []
-    shared: dict[str, Any] = {}
+    shared: dict[str, Any] = {"app_labels": {}}
     # Slice 2: the policies behind the denials, and the password policy behind password causes.
     # Its first wave runs alongside the follow-ups; only its second waits for their enrollments.
     denials = [
@@ -218,6 +221,11 @@ async def run(ctx: Context, args: Mapping[str, Any]) -> dict[str, Any]:
         tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, str]], found["value"]
     )
     result["causes"] = [g.render() for g in sorted(groups.values(), key=_order)]
+    # The label the assignment check read, over the type name an event gives the app.
+    for c in result["causes"]:
+        for app in c.get("apps", ()):
+            if label := shared["app_labels"].get(app["id"]):
+                app["name"] = label
     result["checks"] = checks
     if evaluations:
         result["policy_evaluation"] = evaluations
@@ -363,13 +371,45 @@ def _cause(e: _Event) -> str | None:
     if "abandoned" in low or "unanswered" in low:
         return "mfa_abandoned"
     credential = _str(_at(e.raw, "authenticationContext.credentialType")).upper()
-    if t == "user.authentication.auth_via_mfa" or (
-        t == "user.authentication.verify" and credential not in ("", "PASSWORD")
-    ):
+    if _password_factor(e):
+        return "invalid_credentials"
+    if t == _VIA_MFA or (t == "user.authentication.verify" and credential not in ("", "PASSWORD")):
         return "mfa_failed"
     if "INVALID_CREDENTIALS" in reason or "VERIFICATION_ERROR" in reason:
         return "mfa_failed" if credential not in ("", "PASSWORD") else "invalid_credentials"
     return "other"
+
+
+def _password_factor(e: _Event) -> bool:
+    """Identity Engine logs a password check as an `auth_via_mfa` for the password factor."""
+    return e.event_type == _VIA_MFA and (
+        _at(e.raw, "debugContext.debugData.factor") == "PASSWORD_AS_FACTOR"
+        or _str(_at(e.raw, "authenticationContext.credentialType")).upper() == "PASSWORD"
+    )
+
+
+def _request_id(e: _Event) -> str:
+    return _str(_at(e.raw, "debugContext.debugData.authnRequestId"))
+
+
+def _counted_twice(events: list[_Event]) -> set[int]:
+    """Password-factor events whose attempt a `user.session.start` already counts: Okta logs
+    both for one wrong password. Every retry in a sign-in shares its request ID, so they are
+    paired by count per request ID, not one to one, and only with session events that are a
+    password outcome themselves (a block or another failure in the same sign-in isn't)."""
+    sessions = Counter(
+        rid
+        for e in events
+        if e.event_type == "user.session.start"
+        and (rid := _request_id(e))
+        and _cause(e) in ("invalid_credentials", "locked_out")
+    )
+    twice: set[int] = set()
+    for i, e in enumerate(events):
+        if _password_factor(e) and sessions[rid := _request_id(e)] > 0:
+            sessions[rid] -= 1
+            twice.add(i)
+    return twice
 
 
 @dataclass
@@ -405,7 +445,10 @@ def _group(events: list[_Event]) -> dict[str, _Group]:
     groups: dict[str, _Group] = {}
     locks = [e.published for e in events if e.event_type.startswith(_LOCK) and e.published]
     unlocks = [e.published for e in events if e.event_type.startswith(_UNLOCK) and e.published]
-    for e in events:
+    twice = _counted_twice(events)
+    for i, e in enumerate(events):
+        if i in twice:
+            continue
         cause = _cause(e)
         if cause is None:
             continue
@@ -564,18 +607,39 @@ def _risk(events: list[_Event]) -> dict[str, int]:
         if not level:
             match = _RISK_LEVEL.search(_str(_at(e.raw, "debugContext.debugData.risk")))
             level = match[1] if match else ""
+        if not level:
+            logged = _str(_at(_log_only(e), "risk.level"))
+            level = logged if _LEVEL.fullmatch(logged) else ""
         if level:
             levels.append(_cap(level))
     return _top(levels)
 
 
 def _behaviors(events: list[_Event]) -> dict[str, int]:
-    """Behavior detections that were positive (`New Device`, `New Geo-Location`, …)."""
+    """Behavior detections that were positive (`New Device`, `New Geo-Location`, …): a
+    `{name=VALUE, …}` string on most events, JSON in `logOnlySecurityData` on a policy one."""
     found: list[str] = []
     for e in events:
         text = _str(_at(e.raw, "debugContext.debugData.behaviors"))
         found.extend(m.strip() for m in _BEHAVIOR.findall(text))
+        logged = None if text else _log_only(e).get("behaviors")
+        if isinstance(logged, dict):
+            found.extend(
+                name
+                for name, value in cast(dict[str, Any], logged).items()
+                if value == "POSITIVE" and _BEHAVIOR_NAME.fullmatch(name)
+            )
     return _top(_cap(f) for f in found)
+
+
+def _log_only(e: _Event) -> dict[str, Any]:
+    """`debugData.logOnlySecurityData`: a JSON object as a string, or {} when it isn't one."""
+    text = _at(e.raw, "debugContext.debugData.logOnlySecurityData")
+    try:
+        value = json.loads(text) if isinstance(text, str) else None
+    except (ValueError, RecursionError):
+        return {}
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
 
 def _clients(events: list[_Event]) -> list[dict[str, Any]]:
@@ -681,7 +745,7 @@ async def _follow_ups(
     if "not_assigned" in groups:
         apps = [a for a in _apps(groups["not_assigned"].events) if APP_ID.fullmatch(a["id"])]
         for app in apps[:_APPS_CHECKED]:
-            jobs.append(("app_assignment", _assignment(ctx, uid, app)))
+            jobs.append(("app_assignment", _assignment(ctx, uid, app, shared["app_labels"])))
     if groups.keys() & {"mfa_failed", "mfa_abandoned", "sign_on_policy_deny", "other_policy_deny"}:
         jobs.append(("authenticator_enrollment", _enrollments(ctx, uid, groups, shared)))
     if "locked_out" in groups or user.get("status") == "LOCKED_OUT":
@@ -713,20 +777,36 @@ async def _follow_ups(
 
 
 def _assignment(
-    ctx: Context, uid: str, app: Mapping[str, Any]
+    ctx: Context, uid: str, app: Mapping[str, Any], labels: dict[str, str]
 ) -> Callable[[], Awaitable[dict[str, Any]]]:
     async def job() -> dict[str, Any]:
         row: dict[str, Any] = {"check": "app_assignment", "app_id": app["id"]}
         if "name" in app:
             row["app_name"] = app["name"]
+        # The app first: its label (the event names only its type, e.g. "OpenID Connect
+        # Client"), its status, and whether it still exists, which the assignment's 404
+        # doesn't tell. Best effort: another error leaves the assignment check to run.
+        found: Any = None
+        try:
+            found = await ctx.get("getApplication", {"appId": app["id"]})
+        except UpstreamError as e:
+            if e.status == 404:
+                return row | {"pass": False, "actual": "the app no longer exists"}
+        label, status = _at(found, "label"), _at(found, "status")
+        if isinstance(label, str) and label:
+            row["app_name"] = labels[app["id"]] = _cap(label)
+        inactive = isinstance(status, str) and status != "ACTIVE"
+        if inactive:
+            row["app_status"] = _cap(status)
         try:
             await ctx.get("getApplicationUser", {"appId": app["id"], "userId": uid})
         except UpstreamError as e:
             if e.status != 404:
                 raise
-            # Okta's 404 doesn't say which: no assignment, or no such app any more.
-            row |= {"pass": False, "actual": "not assigned now, or the app no longer exists"}
+            row |= {"pass": False, "actual": "not assigned now"}
         else:
+            if inactive:
+                return row | {"pass": False, "actual": "assigned now, but the app isn't active"}
             row |= {
                 "pass": True,
                 "actual": "assigned now",

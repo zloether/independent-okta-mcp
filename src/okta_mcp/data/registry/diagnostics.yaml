@@ -30,7 +30,7 @@ commands:
     uses:
       required: [getUser, listLogEvents]
       optional:
-        [getApplicationUser, listAuthenticatorEnrollments, listUserBlocks,
+        [getApplication, getApplicationUser, listAuthenticatorEnrollments, listUserBlocks,
          getPolicy, listPolicies, listPolicyRules, listNetworkZones, listUserGroups,
          listAuthenticators, listAuthenticatorMethods,
          getDeviceAssurancePolicy, listDevicePostureChecks, listDefaultDevicePostureChecks]

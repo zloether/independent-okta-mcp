@@ -95,6 +95,7 @@ class Org:
         }
         self.events: list[dict[str, Any]] = []
         self.assigned: set[str] = set()
+        self.apps: dict[str, dict[str, Any]] = {}
         self.enrollments: list[dict[str, Any]] = [
             {"id": "e1", "key": "okta_verify", "type": "app", "status": "ACTIVE", "name": "OV"}
         ]
@@ -177,6 +178,9 @@ class Org:
                 return httpx2.Response(200, json=self.authenticators)
             case ["authenticators", aid, "methods"]:
                 return httpx2.Response(200, json=self.methods.get(aid, []))
+            case ["apps", app]:
+                found = self.apps.get(app)
+                return httpx2.Response(200, json=found) if found else _missing()
             case ["apps", app, "users", uid]:
                 assert uid == UID
                 return (
@@ -568,9 +572,31 @@ async def test_a_sign_on_policy_deny(ex: Executor, org: Org) -> None:
 
 
 @pytest.mark.anyio
+async def test_risk_and_behaviors_on_log_only_security_data(ex: Executor, org: Org) -> None:
+    # A live DENY carries behaviors only here, as JSON (plan 9.1 live check).
+    deny = event("policy.evaluate_sign_on", "DENY", "Sign-on policy evaluation resulted in DENIED")
+    deny["debugContext"]["debugData"]["logOnlySecurityData"] = json.dumps(
+        {
+            "risk": {"level": "MEDIUM"},
+            "behaviors": {"New Device": "POSITIVE", "New IP": "NEGATIVE", "x" * 300: "POSITIVE"},
+        }
+    )
+    broken = event("policy.evaluate_sign_on", "DENY", "x", at="2026-11-14T09:00:00.000Z")
+    broken["debugContext"]["debugData"]["logOnlySecurityData"] = '["not", "an object"'
+    org.events = [deny, broken]
+    out = await diagnose(ex)
+    denied = cause(out, "sign_on_policy_deny")
+    assert denied["risk"] == {"MEDIUM": 1}
+    # Only names shaped like a behavior's pass (as in the `{key=VALUE}` form).
+    assert denied["behaviors"] == {"New Device": 1}
+
+
+@pytest.mark.anyio
 async def test_not_assigned_checks_the_assignment_now(ex: Executor, org: Org) -> None:
-    app = {"id": APP, "type": "AppInstance", "displayName": "Salesforce"}
+    # Okta names the app on this event by its type ("OpenID Connect Client"), not its label.
+    app = {"id": APP, "type": "AppInstance", "displayName": "OpenID Connect Client"}
     junk = {"id": "../users", "type": "AppInstance", "displayName": "Bad"}
+    org.apps[APP] = {"id": APP, "label": "Salesforce", "status": "ACTIVE", "settings": {"x": 1}}
     org.events = [
         event(
             "app.generic.unauth_app_access_attempt",
@@ -586,17 +612,81 @@ async def test_not_assigned_checks_the_assignment_now(ex: Executor, org: Org) ->
             "app_id": APP,
             "app_name": "Salesforce",
             "pass": False,
-            "actual": "not assigned now, or the app no longer exists",
+            "actual": "not assigned now",
         }
     ]
+    # The cause names the app by the label too.
+    assert {"id": APP, "name": "Salesforce", "count": 1} in cause(out, "not_assigned")["apps"]
     # An app ID that isn't one never reaches a path.
     assert [p for p in org.paths if p.startswith("/api/v1/apps")] == [
-        f"/api/v1/apps/{APP}/users/{UID}"
+        f"/api/v1/apps/{APP}",
+        f"/api/v1/apps/{APP}/users/{UID}",
     ]
     org.assigned.add(APP)
     out = await diagnose(ex)
     (check,) = [c for c in out["checks"] if c["check"] == "app_assignment"]
     assert check["pass"] is True
+
+
+@pytest.mark.anyio
+async def test_an_assigned_app_that_isn_t_active_fails_the_check(ex: Executor, org: Org) -> None:
+    org.apps[APP] = {"id": APP, "label": "Salesforce", "status": "INACTIVE"}
+    org.assigned.add(APP)
+    org.events = [
+        event("app.generic.unauth_app_access_attempt", targets=[{"id": APP, "type": "AppInstance"}])
+    ]
+    out = await diagnose(ex)
+    (check,) = [c for c in out["checks"] if c["check"] == "app_assignment"]
+    assert check == {
+        "check": "app_assignment",
+        "app_id": APP,
+        "app_name": "Salesforce",
+        "app_status": "INACTIVE",
+        "pass": False,
+        "actual": "assigned now, but the app isn't active",
+    }
+
+
+@pytest.mark.anyio
+async def test_a_failed_app_read_still_checks_the_assignment(ex: Executor, org: Org) -> None:
+    app = {"id": APP, "type": "AppInstance", "displayName": "OpenID Connect Client"}
+    org.events = [event("app.generic.unauth_app_access_attempt", targets=[app])]
+    org.override = lambda r: (
+        httpx2.Response(403, json={}) if r.url.path == f"/api/v1/apps/{APP}" else None
+    )
+    out = await diagnose(ex)
+    (check,) = [c for c in out["checks"] if c["check"] == "app_assignment"]
+    assert check["actual"] == "not assigned now" and check["app_name"] == "OpenID Connect Client"
+    assert "skipped" not in out
+
+
+@pytest.mark.anyio
+async def test_a_password_factor_pairs_only_with_a_password_session_event(
+    ex: Executor, org: Org
+) -> None:
+    # The same sign-in's session event is a network block, not this password attempt.
+    session, factor = password_attempt("2026-11-14T10:00:01.000Z", "INVALID_CREDENTIALS", "r1")
+    session["outcome"] = {"result": "DENY", "reason": "Request blocked by network zone"}
+    org.events = [session, factor]
+    out = await diagnose(ex)
+    assert cause(out, "invalid_credentials")["count"] == 1
+    assert cause(out, "ip_or_threat_block")["count"] == 1
+
+
+@pytest.mark.anyio
+async def test_an_app_that_no_longer_exists(ex: Executor, org: Org) -> None:
+    app = {"id": APP, "type": "AppInstance", "displayName": "OpenID Connect Client"}
+    org.events = [event("app.generic.unauth_app_access_attempt", targets=[app])]
+    out = await diagnose(ex)
+    (check,) = [c for c in out["checks"] if c["check"] == "app_assignment"]
+    assert check == {
+        "check": "app_assignment",
+        "app_id": APP,
+        "app_name": "OpenID Connect Client",
+        "pass": False,
+        "actual": "the app no longer exists",
+    }
+    assert [p for p in org.paths if p.startswith("/api/v1/apps")] == [f"/api/v1/apps/{APP}"]
 
 
 @pytest.mark.anyio
@@ -636,6 +726,62 @@ async def test_a_failing_follow_up_is_skipped_not_fatal(ex: Executor, org: Org) 
     assert skip["check"] == "authenticator_enrollment"
     assert skip["reason"] == "Okta returned HTTP 500"
     assert cause(out, "mfa_failed")["credential_types"] == {"OTP": 1}
+
+
+def password_attempt(at: str, session_reason: str, request: str) -> list[dict[str, Any]]:
+    """One wrong password as Identity Engine logs it (live check, plan 9.1): an `auth_via_mfa`
+    for the password factor, then a `user.session.start`, sharing the sign-in's request ID (every
+    retry in one sign-in shares it too). The session event says LOCKED_OUT once locked; the
+    factor event still says INVALID_CREDENTIALS."""
+    no_credential = {"credentialType": None, "authenticationStep": 0}
+    factor = event(
+        "user.authentication.auth_via_mfa",
+        reason="INVALID_CREDENTIALS",
+        at=at,
+        targets=[
+            {"id": UID, "type": "User", "displayName": "Alice"},
+            {
+                "id": "pwd1emaKYZTWRYYRRTSK",
+                "type": "AuthenticatorEnrollment",
+                "displayName": "Password",
+                "detailEntry": {"methodTypeUsed": "Password"},
+            },
+        ],
+        authenticationContext=no_credential | {"authenticationProvider": "FACTOR_PROVIDER"},
+        debugContext={"debugData": {"authnRequestId": request, "factor": "PASSWORD_AS_FACTOR"}},
+    )
+    session = event(
+        "user.session.start",
+        reason=session_reason,
+        at=at.replace(".000Z", ".013Z"),
+        authenticationContext=no_credential,
+        debugContext={"debugData": {"authnRequestId": request}},
+    )
+    return [session, factor]
+
+
+@pytest.mark.anyio
+async def test_a_wrong_password_counts_once_and_not_as_mfa(ex: Executor, org: Org) -> None:
+    lock = event("user.account.lock", "SUCCESS", at="2026-11-14T10:00:03.500Z")
+    org.events = [
+        # A password-factor failure with no session event of its own still counts.
+        *password_attempt("2026-11-14T10:05:00.000Z", "INVALID_CREDENTIALS", "r2")[1:],
+        *password_attempt("2026-11-14T10:00:05.000Z", "LOCKED_OUT", "r1"),
+        *password_attempt("2026-11-14T10:00:04.000Z", "LOCKED_OUT", "r1"),
+        lock,
+        *password_attempt("2026-11-14T10:00:03.000Z", "INVALID_CREDENTIALS", "r1"),
+        *password_attempt("2026-11-14T10:00:02.000Z", "INVALID_CREDENTIALS", "r1"),
+        *password_attempt("2026-11-14T10:00:01.000Z", "INVALID_CREDENTIALS", "r1"),
+    ]
+    out = await diagnose(ex)
+    assert {c["cause"] for c in out["causes"]} == {"locked_out", "invalid_credentials"}
+    wrong = cause(out, "invalid_credentials")
+    assert wrong["count"] == 4
+    assert wrong["event_types"] == {"user.session.start": 3, "user.authentication.auth_via_mfa": 1}
+    assert wrong["followed_by_lock"] == 3
+    assert cause(out, "locked_out")["count"] == 3
+    # No MFA cause, so no enrollment check.
+    assert not any(c["check"] == "authenticator_enrollment" for c in out["checks"])
 
 
 @pytest.mark.anyio
@@ -787,6 +933,10 @@ def _e(event_type: str, result: str = "FAILURE", reason: str = "", cred: str = "
         (
             ("user.authentication.auth_via_mfa", "FAILURE", "VERIFICATION_ERROR", "OTP"),
             "mfa_failed",
+        ),
+        (
+            ("user.authentication.auth_via_mfa", "FAILURE", "INVALID_CREDENTIALS", "PASSWORD"),
+            "invalid_credentials",
         ),
         (("user.authentication.verify", "FAILURE", "INVALID_CREDENTIALS", "OTP"), "mfa_failed"),
         (
