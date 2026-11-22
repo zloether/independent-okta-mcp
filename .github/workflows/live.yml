@@ -9,7 +9,7 @@
 # Setup (by hand, once): the `okta-dev` environment with deployment branches `main` only;
 # variables OKTA_ORG_URL, OKTA_CLIENT_ID, OKTA_KEY_ID, OKTA_SCOPES from
 # `terraform output github_environment_variables` (infra repo, okta-ci-org-terraform); secret
-# OKTA_CI_PRIVATE_KEY, the CI service app's private key (PEM).
+# OKTA_PRIVATE_KEY, the CI service app's private key (PEM).
 name: live
 
 on:
@@ -50,18 +50,18 @@ jobs:
       - run: uv sync --frozen
       - name: Write the service key
         env:
-          KEY: ${{ secrets.OKTA_CI_PRIVATE_KEY }}
+          KEY: ${{ secrets.OKTA_PRIVATE_KEY }}
         # Fail here, by name, rather than as one key-load error per test. Checks only that the
         # value is set and has a PEM private-key header; never prints any of it.
         run: |
           if [ -z "$KEY" ]; then
-            echo "::error::Secret OKTA_CI_PRIVATE_KEY is empty or not set on the okta-dev environment (Settings > Environments > okta-dev > Environment secrets)"
+            echo "::error::Secret OKTA_PRIVATE_KEY is empty or not set on the okta-dev environment (Settings > Environments > okta-dev > Environment secrets)"
             exit 1
           fi
           case "$KEY" in
             *"-----BEGIN "*"PRIVATE KEY-----"*) ;;
             *)
-              echo "::error::Secret OKTA_CI_PRIVATE_KEY has no PEM private-key header: paste the whole PEM file, BEGIN and END lines included (not a JWK or a public key)"
+              echo "::error::Secret OKTA_PRIVATE_KEY has no PEM private-key header: paste the whole PEM file, BEGIN and END lines included (not a JWK or a public key)"
               exit 1
               ;;
           esac
