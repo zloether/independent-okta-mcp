@@ -54,6 +54,13 @@ _PATH_VALUES = {("schemas", "get-log-stream-schema"): ["aws_eventbridge"]}
 # need, so a refusal would say nothing about the server.
 _NOT_RUN = {
     ("org-settings", "list-support-cases"): "needs an Okta support contract (plan 5.5)",
+    # The CI org doesn't offer these scopes, so the server refuses them before calling Okta.
+    ("device-integrations", "list"): "org doesn't offer okta.deviceIntegrations.read",
+    ("realms", "list"): "org doesn't offer okta.realms.read",
+    ("realms", "list-assignments"): "org doesn't offer okta.realmAssignments.read",
+    ("realms", "list-operations"): "org doesn't offer okta.realmAssignments.read",
+    ("security", "get-bot-protection-config"): "org doesn't offer okta.botProtection.read",
+    ("users", "get-risk"): "org doesn't offer okta.userRisk.read",
 }
 # A failure here is the harness's or the config's, not the org's: it fails check 2.
 _FATAL = ("invalid_arguments", "internal_error", "unavailable", "rate_limited", "timeout")
