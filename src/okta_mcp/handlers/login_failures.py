@@ -849,6 +849,8 @@ def _assignment(
         except UpstreamError as e:
             if e.status == 404:
                 return row | {"pass": False, "actual": "the app no longer exists"}
+        except (Unavailable, RateLimited):
+            pass
         label, status = _at(found, "label"), _at(found, "status")
         if isinstance(label, str) and label:
             row["app_name"] = labels[app["id"]] = _cap(label)

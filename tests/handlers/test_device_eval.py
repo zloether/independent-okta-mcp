@@ -396,6 +396,8 @@ def test_errors_are_kept_to_their_provider() -> None:
     signals = mac(thirdPartySignalProviders={"dtc": {"osFirewall": True}})
     (row,) = de.assurance([AID], denial({**MAC, "device_integrator": UNSUPPORTED}), facts(signals))
     assert row["pass"] is None  # nor are osquery and attestation third-party signals
+    padded = ' {"CHROME_DTC":{"result":"genericError(x)"}}'
+    assert de.provider_errors(padded) == {"CHROME_DTC": {"genericError(x)"}}
 
 
 def test_a_condition_the_event_names_as_failing_settles_an_undecided_row() -> None:

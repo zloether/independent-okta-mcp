@@ -71,7 +71,7 @@ def provider_errors(*raws: object) -> dict[str, set[str]]:
         value: object = raw
         if isinstance(raw, str):
             try:
-                value = json.loads(raw) if raw[:1] == "{" else raw
+                value = json.loads(raw) if raw.lstrip()[:1] == "{" else raw
             except (ValueError, RecursionError):
                 value = raw
         if not isinstance(value, dict):

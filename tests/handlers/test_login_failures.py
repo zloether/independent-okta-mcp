@@ -648,11 +648,14 @@ async def test_an_assigned_app_that_isn_t_active_fails_the_check(ex: Executor, o
 
 
 @pytest.mark.anyio
-async def test_a_failed_app_read_still_checks_the_assignment(ex: Executor, org: Org) -> None:
+@pytest.mark.parametrize("status", [403, 429])  # a 429 without a reset time isn't retried
+async def test_a_failed_app_read_still_checks_the_assignment(
+    ex: Executor, org: Org, status: int
+) -> None:
     app = {"id": APP, "type": "AppInstance", "displayName": "OpenID Connect Client"}
     org.events = [event("app.generic.unauth_app_access_attempt", targets=[app])]
     org.override = lambda r: (
-        httpx2.Response(403, json={}) if r.url.path == f"/api/v1/apps/{APP}" else None
+        httpx2.Response(status, json={}) if r.url.path == f"/api/v1/apps/{APP}" else None
     )
     out = await diagnose(ex)
     (check,) = [c for c in out["checks"] if c["check"] == "app_assignment"]
