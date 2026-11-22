@@ -217,11 +217,12 @@ async def run(ctx: Context, args: Mapping[str, Any]) -> dict[str, Any]:
     async with anyio.create_task_group() as tg:
         tg.start_soon(follow)
         tg.start_soon(policies)
+        tg.start_soon(_deny_labels, ctx, groups, shared["app_labels"])
     evaluations, password, missing = cast(
         tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, str]], found["value"]
     )
     result["causes"] = [g.render() for g in sorted(groups.values(), key=_order)]
-    # The label the assignment check read, over the type name an event gives the app.
+    # The label read from the app, over the type name an event gives it.
     for c in result["causes"]:
         for app in c.get("apps", ()):
             if label := shared["app_labels"].get(app["id"]):
@@ -742,10 +743,8 @@ async def _follow_ups(
     skips are added in job order, whatever order the jobs finish in. A failure of one job,
     expected or not, is reported in `skipped` and doesn't cancel the others."""
     jobs: list[tuple[str, Callable[[], Awaitable[dict[str, Any]]]]] = []
-    if "not_assigned" in groups:
-        apps = [a for a in _apps(groups["not_assigned"].events) if APP_ID.fullmatch(a["id"])]
-        for app in apps[:_APPS_CHECKED]:
-            jobs.append(("app_assignment", _assignment(ctx, uid, app, shared["app_labels"])))
+    for app in _assignment_apps(groups):
+        jobs.append(("app_assignment", _assignment(ctx, uid, app, shared["app_labels"])))
     if groups.keys() & {"mfa_failed", "mfa_abandoned", "sign_on_policy_deny", "other_policy_deny"}:
         jobs.append(("authenticator_enrollment", _enrollments(ctx, uid, groups, shared)))
     if "locked_out" in groups or user.get("status") == "LOCKED_OUT":
@@ -774,6 +773,43 @@ async def _follow_ups(
             skipped.append({"check": row["check"], "reason": row["skipped"]})
         else:
             checks.append(row)
+
+
+def _assignment_apps(groups: Mapping[str, _Group]) -> list[dict[str, Any]]:
+    """The not-assigned apps whose assignment is checked."""
+    if "not_assigned" not in groups:
+        return []
+    apps = [a for a in _apps(groups["not_assigned"].events) if APP_ID.fullmatch(a["id"])]
+    return apps[:_APPS_CHECKED]
+
+
+async def _deny_labels(ctx: Context, groups: Mapping[str, _Group], labels: dict[str, str]) -> None:
+    """Labels of the apps behind denials, whose events name only the app's type. Best effort:
+    an app that can't be read keeps the event's name. Not-assigned apps are read by their check."""
+    events = [
+        e
+        for c in ("sign_on_policy_deny", "other_policy_deny")
+        if c in groups
+        for e in groups[c].events
+    ]
+    checked = {a["id"] for a in _assignment_apps(groups)}
+    ids = [a["id"] for a in _apps(events) if APP_ID.fullmatch(a["id"]) and a["id"] not in checked]
+
+    async def one(app_id: str) -> None:
+        try:
+            found = await ctx.get("getApplication", {"appId": app_id})
+        except (Unavailable, UpstreamError, RateLimited):
+            return
+        except Exception as e:
+            log_internal(_log, "diagnostics login-failures app label", e)
+            return
+        label = _at(found, "label")
+        if isinstance(label, str) and label:
+            labels[app_id] = _cap(label)
+
+    async with anyio.create_task_group() as tg:
+        for app_id in ids[:_APPS_CHECKED]:
+            tg.start_soon(one, app_id)
 
 
 def _assignment(

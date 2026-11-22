@@ -674,6 +674,66 @@ async def test_a_password_factor_pairs_only_with_a_password_session_event(
 
 
 @pytest.mark.anyio
+async def test_a_denied_app_is_named_by_its_label(ex: Executor, org: Org) -> None:
+    other = "0oa1a5xp2jxQjDQWe698"
+    org.apps[APP] = {"id": APP, "label": "Salesforce", "status": "ACTIVE"}
+    org.events = [
+        event(
+            "policy.evaluate_sign_on",
+            "DENY",
+            "x",
+            targets=[
+                {"id": APP, "type": "AppInstance", "displayName": "OpenID Connect Client"},
+                {"id": other, "type": "AppInstance", "displayName": "OpenID Connect Client"},
+                {"id": "../users", "type": "AppInstance", "displayName": "Bad"},
+            ],
+        )
+    ]
+    # The other app can't be read: it keeps the event's name, and that isn't a skipped check.
+    org.override = lambda r: (
+        httpx2.Response(403, json={}) if r.url.path == f"/api/v1/apps/{other}" else None
+    )
+    out = await diagnose(ex)
+    names = {a["id"]: a["name"] for a in cause(out, "sign_on_policy_deny")["apps"]}
+    assert names == {APP: "Salesforce", other: "OpenID Connect Client", "../users": "Bad"}
+    assert not any("app" in s["check"] for s in out.get("skipped", []))
+    assert not any(c["check"] == "app_assignment" for c in out["checks"])
+    assert sorted(p for p in org.paths if p.startswith("/api/v1/apps")) == [
+        f"/api/v1/apps/{other}",
+        f"/api/v1/apps/{APP}",
+    ]
+
+
+@pytest.mark.anyio
+async def test_an_app_denied_and_not_assigned_is_read_once(ex: Executor, org: Org) -> None:
+    org.apps[APP] = {"id": APP, "label": "Salesforce", "status": "ACTIVE"}
+    target = {"id": APP, "type": "AppInstance", "displayName": "OpenID Connect Client"}
+    org.events = [
+        event("app.generic.unauth_app_access_attempt", targets=[target]),
+        event("policy.evaluate_sign_on", "DENY", "x", targets=[target]),
+    ]
+    out = await diagnose(ex)
+    assert cause(out, "not_assigned")["apps"][0]["name"] == "Salesforce"
+    assert cause(out, "sign_on_policy_deny")["apps"][0]["name"] == "Salesforce"
+    assert org.paths.count(f"/api/v1/apps/{APP}") == 1
+
+
+@pytest.mark.anyio
+async def test_denied_app_labels_are_capped(ex: Executor, org: Org) -> None:
+    ids = [f"0oa{i:017d}" for i in range(5)]
+    for i in ids:
+        org.apps[i] = {"id": i, "label": f"App {i}", "status": "ACTIVE"}
+    targets = [
+        {"id": i, "type": "AppInstance", "displayName": "OpenID Connect Client"} for i in ids
+    ]
+    org.events = [event("policy.evaluate_sign_on", "DENY", "x", targets=targets)]
+    out = await diagnose(ex)
+    assert len([p for p in org.paths if p.startswith("/api/v1/apps/")]) == 3
+    named = [a for a in cause(out, "sign_on_policy_deny")["apps"] if a["name"].startswith("App ")]
+    assert len(named) == 3
+
+
+@pytest.mark.anyio
 async def test_an_app_that_no_longer_exists(ex: Executor, org: Org) -> None:
     app = {"id": APP, "type": "AppInstance", "displayName": "OpenID Connect Client"}
     org.events = [event("app.generic.unauth_app_access_attempt", targets=[app])]
