@@ -306,7 +306,9 @@ class ClientCredentialsProvider:
 
     def _describe(self, status: int, body: object, content_type: str = "") -> str:
         match body:
-            case {"error": str(code)} if _ERROR_CODE.fullmatch(code):
+            # Okta sometimes puts the OAuth code in an API-style body's `errorCode` (seen live:
+            # `invalid_client`, 8.2.1 run 17), so both get the same hints.
+            case {"error": str(code)} | {"errorCode": str(code)} if _ERROR_CODE.fullmatch(code):
                 pass
             case _:
                 return f"token request failed: HTTP {status}" + _shape(body, content_type)
