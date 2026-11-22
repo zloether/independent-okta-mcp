@@ -24,7 +24,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 import anyio
 import httpx2
@@ -47,6 +47,11 @@ FAILURE_BACKOFF = 5.0
 `keep_fresh` asks again this long after a first failure, then doubles up to
 `KEEP_FRESH_EVERY`."""
 _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
+# For an error without an OAuth `error` code: Okta's API error code, else the shape of the
+# reply (key names, media type), so a failure says where to look without showing the body.
+_OKTA_ERROR_CODE = re.compile(r"E\d{7}")
+_KEY_NAME = re.compile(r"[A-Za-z_]{1,32}")
+_MEDIA_TYPE = re.compile(r"[a-z0-9.+-]{1,32}/[a-z0-9.+-]{1,64}")
 _HINTS = {
     "invalid_client": "check OKTA_CLIENT_ID, OKTA_PRIVATE_KEY_FILE and OKTA_KEY_ID against the "
     "service app's public keys",
@@ -274,7 +279,9 @@ class ClientCredentialsProvider:
         except (ValueError, UnicodeDecodeError):
             body = None
         if response.status_code != 200:
-            raise TokenError(self._describe(response.status_code, body))
+            raise TokenError(
+                self._describe(response.status_code, body, response.headers.get("content-type", ""))
+            )
         # A lifetime within the refresh margin could never be served from the cache.
         match body:
             case {
@@ -295,13 +302,29 @@ class ClientCredentialsProvider:
             raise TokenError(f"Okta's token_type is not {expected}{hint}")
         return ServiceToken(value, expected), ttl
 
-    def _describe(self, status: int, body: object) -> str:
+    def _describe(self, status: int, body: object, content_type: str = "") -> str:
         match body:
             case {"error": str(code)} if _ERROR_CODE.fullmatch(code):
                 pass
             case _:
-                return f"token request failed: HTTP {status}"
+                return f"token request failed: HTTP {status}" + _shape(body, content_type)
         hint = _HINTS.get(code)
         if code == "invalid_dpop_proof" and self._dpop is None:
             hint = "the service app requires DPoP: unset OKTA_DPOP or set it to true"
         return f"token request failed: HTTP {status} {code}" + (f" ({hint})" if hint else "")
+
+
+def _shape(body: object, content_type: str) -> str:
+    """What an error reply without an OAuth `error` code looked like: Okta's `E…` code, or its
+    JSON key names, or its media type. Only values matching a fixed pattern, never body text."""
+    if isinstance(body, dict):
+        fields = cast(dict[object, object], body)
+        code = fields.get("errorCode")
+        if isinstance(code, str) and _OKTA_ERROR_CODE.fullmatch(code):
+            return f" {code}"
+        keys = sorted(k for k in fields if isinstance(k, str) and _KEY_NAME.fullmatch(k))[:8]
+        return f" (JSON keys: {', '.join(keys)})" if keys else " (JSON, no usable keys)"
+    if body is not None:
+        return " (JSON, not an object)"
+    media = content_type.split(";", 1)[0].strip().lower()
+    return f" ({media}, not JSON)" if _MEDIA_TYPE.fullmatch(media) else " (not JSON)"

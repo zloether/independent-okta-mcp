@@ -454,7 +454,7 @@ async def test_queued_callers_share_a_failure(key: rsa.RSAPrivateKey) -> None:
         for _ in range(20):
             tg.start_soon(call)
     assert len(okta.requests) == 1
-    assert errors == ["token request failed: HTTP 503"] * 20
+    assert errors == ["token request failed: HTTP 503 (not JSON)"] * 20
     clock.now += FAILURE_BACKOFF
     assert (await p.token()).value == ACCESS_TOKEN
     assert len(okta.requests) == 2
@@ -473,7 +473,7 @@ async def test_valid_token_served_when_refresh_fails(
     assert len(okta.requests) == 2
     assert "service token request failed: token request failed: HTTP 503" in caplog.text
     clock.now += 50
-    with pytest.raises(TokenError, match=r"HTTP 503$"):
+    with pytest.raises(TokenError, match=r"HTTP 503 \(not JSON\)$"):
         await p.token()
 
 
@@ -482,7 +482,7 @@ async def test_failure_is_not_cached(key: rsa.RSAPrivateKey) -> None:
     clock = Clock()
     okta = Okta(httpx2.Response(503), ok())
     p = provider(okta, key, monotonic=clock)
-    with pytest.raises(TokenError, match=r"HTTP 503$"):
+    with pytest.raises(TokenError, match=r"HTTP 503 \(not JSON\)$"):
         await p.token()
     clock.now += FAILURE_BACKOFF
     assert (await p.token()).value == ACCESS_TOKEN
@@ -511,13 +511,13 @@ async def test_backoff_restarts_after_each_failure(key: rsa.RSAPrivateKey) -> No
     clock = Clock()
     okta = Okta(httpx2.Response(503), httpx2.Response(502), ok())
     p = provider(okta, key, monotonic=clock)
-    with pytest.raises(TokenError, match=r"HTTP 503$"):
+    with pytest.raises(TokenError, match=r"HTTP 503 \(not JSON\)$"):
         await p.token()
     clock.now += FAILURE_BACKOFF
-    with pytest.raises(TokenError, match=r"HTTP 502$"):
+    with pytest.raises(TokenError, match=r"HTTP 502 \(not JSON\)$"):
         await p.token()
     clock.now += FAILURE_BACKOFF - 0.1
-    with pytest.raises(TokenError, match=r"HTTP 502$"):
+    with pytest.raises(TokenError, match=r"HTTP 502 \(not JSON\)$"):
         await p.token()
     assert len(okta.requests) == 2
     clock.now += 0.1
@@ -562,8 +562,34 @@ def test_backoff_is_shorter_than_the_background_refresh() -> None:
             r"HTTP 400 invalid_dpop_proof \(the service app requires DPoP: unset OKTA_DPOP",
         ),
         (httpx2.Response(400, json={"error": "invalid_dpop_proof"}), True, r"proof$"),
-        (httpx2.Response(400, json={"error": "Bad <script>"}), True, r"^[^<]*HTTP 400$"),
-        (httpx2.Response(500, content=b"<html>"), True, r"HTTP 500$"),
+        (
+            httpx2.Response(400, json={"error": "Bad <script>"}),
+            True,
+            r"^[^<]*HTTP 400 \(JSON keys: error\)$",
+        ),
+        (httpx2.Response(500, content=b"<html>"), True, r"HTTP 500 \(not JSON\)$"),
+        (
+            httpx2.Response(400, content=b"<h1>x</h1>", headers={"Content-Type": "text/html; x"}),
+            True,
+            r"^token request failed: HTTP 400 \(text/html, not JSON\)$",
+        ),
+        (
+            httpx2.Response(400, content=b"x", headers={"Content-Type": "text/<b>"}),
+            True,
+            r"^token request failed: HTTP 400 \(not JSON\)$",
+        ),
+        (
+            httpx2.Response(400, json={"errorCode": "E0000021", "errorSummary": "secret-ish"}),
+            True,
+            r"^token request failed: HTTP 400 E0000021$",
+        ),
+        (
+            httpx2.Response(400, json={"errorCode": "<b>", "errorSummary": "s", "a-b": 1}),
+            True,
+            r"^token request failed: HTTP 400 \(JSON keys: errorCode, errorSummary\)$",
+        ),
+        (httpx2.Response(400, json={"<b>": 1}), True, r"HTTP 400 \(JSON, no usable keys\)$"),
+        (httpx2.Response(400, json=["x"]), True, r"HTTP 400 \(JSON, not an object\)$"),
         (httpx2.Response(200, content=b"not json"), True, "malformed"),
         (httpx2.Response(200, json={"access_token": "t", "token_type": "DPoP"}), True, "malformed"),
         (ok(expires_in=0), True, "malformed"),
