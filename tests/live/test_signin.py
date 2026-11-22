@@ -14,9 +14,10 @@ Cases, in this order (the lockout last, since it blocks sign-in until the policy
 3. Right password, wrong TOTP code → `mfa_failed`
 4. Wrong passwords up to the policy's lockout threshold → `invalid_credentials` and `locked_out`
 
-Each case gets its own `since`/`until` window, so one case's events can't satisfy another. The
-System Log lags, so each check polls until its cause shows up or `POLL_FOR` runs out. Asserts
-are on cause names and counts only.
+Each case gets its own `since`/`until` window, in whole seconds that don't overlap, so one
+case's events can't satisfy another. The System Log lags, so each check polls until its cause
+shows up or `POLL_FOR` runs out. Asserts are on cause names, and for the lockout case on the
+count of wrong passwords (at most the number sent: 9.1 pairs Okta's two events per attempt).
 
 Seeds (infra repo Terraform, plus one manual step), by name from `OKTA_LIVE_SEED_PREFIX`:
 user `<prefix>-signin@<domain>`, enrolled in Google Authenticator (by hand, once); OIDC apps
@@ -58,10 +59,21 @@ class Case:
     since: str
     until: str
     outcomes: list[Outcome]
+    sent: int
+    """Wrong credentials this case sent: the most a cause it causes may count."""
 
 
 def _iso(t: datetime) -> str:
     return t.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+async def _next_second() -> datetime:
+    """Wait for the next whole second and return it: a `since` no request of this case is
+    before, and (after the previous case's `until`, truncated down) after all of that case's."""
+    now = datetime.now(UTC)
+    at = now.replace(microsecond=0) + timedelta(seconds=1)
+    await anyio.sleep((at - now).total_seconds())
+    return at
 
 
 async def _client_id(call: Call, label: str) -> str:
@@ -103,6 +115,7 @@ async def cases(call: Call) -> dict[str, Case]:
     user = await call("users", "get", {"user": LOGIN}, select="status")
     status = user.body.get("item", {}).get("status") if user.ok else None
     if status != "ACTIVE":
+        # LOCKED_OUT: an earlier run's lockout case, still inside the policy's auto-unlock time.
         pytest.exit(f"sign-in test user is {status or user.code}, not ACTIVE", returncode=2)
     mfa = await _client_id(call, f"{PREFIX}-signin-mfa")
     unassigned = await _client_id(call, f"{PREFIX}-signin-unassigned")
@@ -113,18 +126,20 @@ async def cases(call: Call) -> dict[str, Case]:
     async with httpx2.AsyncClient(timeout=30) as http:
         signin = Signin(http, os.environ["OKTA_ORG_URL"], LOGIN, PASSWORD)
 
-        async def case(name: str, step: Callable[[], Awaitable[Outcome | list[Outcome]]]) -> None:
-            since = datetime.now(UTC) - timedelta(seconds=2)
+        async def case(
+            name: str, sent: int, step: Callable[[], Awaitable[Outcome | list[Outcome]]]
+        ) -> None:
+            since = await _next_second()
             result = await step()
             outcomes = result if isinstance(result, list) else [result]
-            # Whole seconds and a margin: `until` must not be in the future when it's read.
+            # Then `until`, truncated down: past every request above, and not in the future.
             await anyio.sleep(2)
-            out[name] = Case(_iso(since), _iso(datetime.now(UTC)), outcomes)
+            out[name] = Case(_iso(since), _iso(datetime.now(UTC)), outcomes, sent)
 
-        await case("not_assigned", lambda: signin.attempt(unassigned))
-        await case("sign_on_policy_deny", lambda: signin.attempt(deny))
-        await case("mfa_failed", lambda: signin.wrong_totp(mfa))
-        await case("locked_out", lambda: signin.wrong_passwords(mfa, attempts))
+        await case("not_assigned", 0, lambda: signin.attempt(unassigned))
+        await case("sign_on_policy_deny", 0, lambda: signin.attempt(deny))
+        await case("mfa_failed", 1, lambda: signin.wrong_totp(mfa))
+        await case("locked_out", attempts, lambda: signin.wrong_passwords(mfa, attempts))
     return out
 
 
@@ -167,3 +182,8 @@ async def test_cause_named(call: Call, cases: dict[str, Case], name: str, want: 
     assert want <= counts.keys(), (
         f"{name}: causes {sorted(counts.items())}, IDX messages {message_keys(case.outcomes)}"
     )
+    # One wrong password is one count, however many events Okta logs for it (9.1's pairing).
+    if name == "locked_out":
+        assert counts["invalid_credentials"] <= case.sent, (
+            f"invalid_credentials {counts['invalid_credentials']} > {case.sent} sent"
+        )

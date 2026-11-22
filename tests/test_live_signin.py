@@ -7,7 +7,16 @@ from typing import Any
 
 import httpx2
 import pytest
-from live._signin import REDIRECT_URI, Signin, SigninError, outcome, totp_choice, wrong_code
+from live._signin import (
+    PASSWORD_KEY,
+    REDIRECT_URI,
+    TOTP_KEY,
+    Signin,
+    SigninError,
+    choice,
+    outcome,
+    wrong_code,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -24,8 +33,19 @@ def _form(name: str, *fields: str, href: str | None = None) -> dict[str, Any]:
     }
 
 
+_ENROLLMENTS = {
+    "authenticatorEnrollments": {
+        "value": [{"key": PASSWORD_KEY, "id": "aut-pw"}, {"key": TOTP_KEY, "id": "aut-totp"}]
+    }
+}
+
+
 def _reply(state: str, *forms: dict[str, Any], keys: tuple[str, ...] = ()) -> dict[str, Any]:
-    out: dict[str, Any] = {"stateHandle": state, "remediation": {"value": list(forms)}}
+    out: dict[str, Any] = {
+        "stateHandle": state,
+        "remediation": {"value": list(forms)},
+        **_ENROLLMENTS,
+    }
     if keys:
         out["messages"] = {"value": [{"i18n": {"key": k}, "message": "x"} for k in keys]}
     return out
@@ -39,12 +59,20 @@ _TOTP_SELECT = {
             "name": "authenticator",
             "options": [
                 {
-                    "label": "Email",
-                    "relatesTo": "$.authenticators.value[0]",
-                    "value": {"form": {"value": [{"name": "id", "value": "aut-email"}]}},
+                    "label": "Password",
+                    "relatesTo": "$.authenticatorEnrollments.value[0]",
+                    "value": {
+                        "form": {
+                            "value": [
+                                {"name": "id", "value": "aut-pw"},
+                                {"name": "methodType", "value": "password"},
+                            ]
+                        }
+                    },
                 },
                 {
-                    "label": "Google Authenticator",
+                    # A label that isn't "Google Authenticator": matched by key, not label.
+                    "label": "Authenticator app (TOTP)",
                     "relatesTo": "$.authenticatorEnrollments.value[1]",
                     "value": {
                         "form": {
@@ -204,11 +232,53 @@ def test_outcome_keeps_names_and_keys_only() -> None:
     assert "secret-state" not in repr(result)
 
 
-def test_totp_choice_none_without_totp() -> None:
-    only_email = {
-        "value": [{"name": "authenticator", "options": [_TOTP_SELECT["value"][0]["options"][0]]}]
+def test_choice_by_key() -> None:
+    reply = _reply("s", _TOTP_SELECT)
+    assert choice(reply, _TOTP_SELECT, TOTP_KEY) == {"id": "aut-totp", "methodType": "otp"}
+    assert choice(reply, _TOTP_SELECT, PASSWORD_KEY) == {"id": "aut-pw", "methodType": "password"}
+    assert choice(reply, _TOTP_SELECT, "okta_email") is None
+
+
+def test_choice_ignores_a_relates_to_that_isnt_a_path() -> None:
+    select = {
+        "value": [
+            {
+                "name": "authenticator",
+                "options": [
+                    {
+                        "relatesTo": TOTP_KEY,
+                        "value": {"form": {"value": [{"name": "id", "value": "aut-x"}]}},
+                    }
+                ],
+            }
+        ]
     }
-    assert totp_choice(only_email) is None
+    assert choice(_reply("s"), select, TOTP_KEY) is None
+
+
+async def test_password_picked_from_an_authenticator_list() -> None:
+    okta = Okta(
+        {
+            "/idp/idx/introspect": [_reply("s1", _form("identify", "identifier"))],
+            "/idp/idx/identify": [_reply("s2", _TOTP_SELECT)],
+            "/idp/idx/challenge": [_reply("s3", _form("challenge-authenticator", "credentials"))],
+            "/idp/idx/challenge-authenticator": [_reply("s4", keys=("errors.E0000004",))],
+        }
+    )
+    result = await _run(okta, "attempt", "0oaclient")
+    assert result.messages == ["errors.E0000004"]
+    _, _, select, answer = okta.bodies()
+    assert select["authenticator"] == {"id": "aut-pw", "methodType": "password"}
+    assert answer == {"credentials": {"passcode": PASSWORD}, "stateHandle": "s3"}
+
+
+async def test_interact_200_without_json() -> None:
+    def page(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b"<html>proxy</html>")
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(page)) as http:
+        with pytest.raises(SigninError, match="interact: HTTP 200, no interaction handle"):
+            await Signin(http, ORG, "u@example.com", PASSWORD).attempt("0oaclient")
 
 
 def test_wrong_code_is_six_digits() -> None:

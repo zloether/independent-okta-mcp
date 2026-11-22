@@ -108,9 +108,11 @@ jobs:
     # Login-failure checks (tests/live/test_signin.py): signs the seeded test user in to fail
     # on purpose, then checks `diagnostics login-failures` names each cause. The only job that
     # changes anything in Okta (System Log events, a lockout the seeded policy undoes). After
-    # `live`, so the two don't share the CI org's rate limit at once; whatever `live` ended with.
+    # `live`, so the two don't share the CI org's rate limit at once; whatever `live` ended with,
+    # but not on a cancelled run (it would still lock the user). Nightly and on demand only, not
+    # on push: two runs inside the policy's auto-unlock time would find the user still locked.
     needs: live
-    if: always()
+    if: ${{ !cancelled() && github.event_name != 'push' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: okta-dev
@@ -177,7 +179,10 @@ jobs:
     needs: [live, signin]
     # Not only failure(): a run stopped by its timeout ends cancelled, and should open the
     # issue too.
-    if: always() && (needs.live.result != 'success' || needs.signin.result != 'success')
+    # `signin` is skipped on push, and that isn't a failure.
+    if: >-
+      always() && (needs.live.result != 'success' ||
+      (needs.signin.result != 'success' && needs.signin.result != 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

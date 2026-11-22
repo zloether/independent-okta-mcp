@@ -12,6 +12,7 @@ gets back is `Outcome`: remediation names and Okta's message keys, both fixed st
 
 import base64
 import hashlib
+import re
 import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -22,7 +23,8 @@ import httpx2
 ION = "application/ion+json; okta-version=1.0.0"
 REDIRECT_URI = "http://localhost:8080/login/callback"
 """Registered on each seeded app and never followed: no sign-in here completes."""
-_TOTP_KEYS = ("google_otp",)
+TOTP_KEY = "google_otp"
+PASSWORD_KEY = "okta_password"  # noqa: S105 - an authenticator key, not a password
 
 
 class SigninError(Exception):
@@ -65,24 +67,39 @@ def fields(f: Mapping[str, Any]) -> set[str]:
     return {v["name"] for v in f.get("value", []) if isinstance(v, dict) and "name" in v}
 
 
-def totp_choice(f: Mapping[str, Any]) -> dict[str, str] | None:
-    """The `authenticator` value that picks a TOTP app from a `select-authenticator-authenticate`
-    form, read from the option's own form (`id`, `methodType`), or None if none is offered."""
+_RELATES = re.compile(r"^\$\.(authenticatorEnrollments|authenticators)\.value\[(\d+)\]$")
+
+
+def _related_key(reply: Mapping[str, Any], relates_to: object) -> str | None:
+    """The authenticator `key` (`google_otp`, `okta_password`) an option's `relatesTo` points
+    at: a JSONPath like `$.authenticatorEnrollments.value[1]` into the same reply."""
+    m = _RELATES.match(relates_to) if isinstance(relates_to, str) else None
+    if m is None:
+        return None
+    items = reply.get(m.group(1), {}).get("value", [])
+    i = int(m.group(2))
+    item = items[i] if isinstance(items, list) and i < len(items) else None
+    key = item.get("key") if isinstance(item, dict) else None
+    return key if isinstance(key, str) else None
+
+
+def choice(reply: Mapping[str, Any], f: Mapping[str, Any], key: str) -> dict[str, str] | None:
+    """The `authenticator` value that picks the authenticator `key` from a
+    `select-authenticator-authenticate` form, read from the option's own form (`id`,
+    `methodType`), or None if it isn't offered. Matched by key, never by label."""
     for v in f.get("value", []):
         if not isinstance(v, dict) or v.get("name") != "authenticator":
             continue
         for option in v.get("options", []):
+            if not isinstance(option, dict) or _related_key(reply, option.get("relatesTo")) != key:
+                continue
             inner = option.get("value", {}).get("form", {}).get("value", [])
             values = {
                 i["name"]: i["value"]
                 for i in inner
                 if isinstance(i, dict) and isinstance(i.get("value"), str) and "name" in i
             }
-            key = option.get("relatesTo", "")
-            label = str(option.get("label", "")).lower()
-            if "id" in values and (
-                any(k in str(key) for k in _TOTP_KEYS) or "google authenticator" in label
-            ):
+            if "id" in values:
                 return {k: values[k] for k in ("id", "methodType") if k in values}
     return None
 
@@ -139,7 +156,11 @@ class Signin:
             },
             headers={"Accept": "application/json"},
         )
-        handle = response.json().get("interaction_handle") if response.status_code == 200 else None
+        try:
+            body = response.json() if response.status_code == 200 else None
+        except ValueError:
+            body = None
+        handle = body.get("interaction_handle") if isinstance(body, dict) else None
         if not isinstance(handle, str):
             raise SigninError(f"interact: HTTP {response.status_code}, no interaction handle")
         return await self._post(f"{self._org}/idp/idx/introspect", {"interactionHandle": handle})
@@ -157,6 +178,15 @@ class Signin:
                 {"identifier": self._login, "credentials": {"passcode": passcode}},
             )
         reply = await self._remediate(reply, "identify", {"identifier": self._login})
+        select = form(reply, "select-authenticator-authenticate")
+        if select is not None and form(reply, "challenge-authenticator") is None:
+            # Several authenticators offered first: pick the password one.
+            picked = choice(reply, select, PASSWORD_KEY)
+            if picked is None:
+                raise SigninError("no password authenticator offered at sign-in")
+            reply = await self._remediate(
+                reply, "select-authenticator-authenticate", {"authenticator": picked}
+            )
         if form(reply, "challenge-authenticator") is None:
             return reply  # refused at identify (not assigned, denied): nothing more to send
         return await self._remediate(
@@ -171,11 +201,11 @@ class Signin:
         reply = await self.password(client_id)
         select = form(reply, "select-authenticator-authenticate")
         if select is not None:
-            choice = totp_choice(select)
-            if choice is None:
+            picked = choice(reply, select, TOTP_KEY)
+            if picked is None:
                 raise SigninError("no TOTP authenticator offered after the password")
             reply = await self._remediate(
-                reply, "select-authenticator-authenticate", {"authenticator": choice}
+                reply, "select-authenticator-authenticate", {"authenticator": picked}
             )
         reply = await self._remediate(
             reply, "challenge-authenticator", {"credentials": {"passcode": wrong_code()}}
