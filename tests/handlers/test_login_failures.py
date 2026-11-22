@@ -555,7 +555,7 @@ async def test_a_sign_on_policy_deny(ex: Executor, org: Org) -> None:
             "os_version": "15.1",
             "managed": False,
             "registered": True,
-            "integrator_error": True,
+            "integrator_errors": ["OSQUERY"],
             "count": 2,
         }
     ]
@@ -859,6 +859,95 @@ async def test_mfa_failure_names_the_failing_authenticator(ex: Executor, org: Or
     assert check["pass"] is False
     assert check["failing_credential_types"] == {"SMS": 1}
     assert "enroll" in check["note"]
+
+
+@pytest.mark.anyio
+async def test_mfa_failures_are_counted_by_authenticator_and_method(ex: Executor, org: Org) -> None:
+    # Live 9.1: a FastPass failure has no credentialType, only its enrollment target.
+    def verify(method: str, credential: str | None, at: str) -> dict[str, Any]:
+        return event(
+            "user.authentication.auth_via_mfa",
+            reason="INVALID_CREDENTIALS",
+            at=at,
+            authenticationContext={"credentialType": credential},
+            targets=[
+                {"id": UID, "type": "User"},
+                {
+                    "id": "pfd1emaKYZTWRYYRRTSK",
+                    "type": "AuthenticatorEnrollment",
+                    "alternateId": "unknown",
+                    "displayName": "Okta Verify",
+                    "detailEntry": {"methodTypeUsed": method},
+                },
+            ],
+        )
+
+    org.events = [
+        verify("TOTP", "OTP", "2026-11-14T10:00:03.000Z"),
+        verify("FastPass", None, "2026-11-14T10:00:02.000Z"),
+        verify("FastPass", None, "2026-11-14T10:00:01.000Z"),
+    ]
+    two = {"key": "okta_verify", "type": "app", "status": "ACTIVE", "name": "Okta Verify"}
+    org.enrollments = [{"id": "e1", **two}, {"id": "e2", **two}]
+    out = await diagnose(ex)
+    failed_ = cause(out, "mfa_failed")
+    assert failed_["authenticators"] == {"Okta Verify FastPass": 2, "Okta Verify TOTP": 1}
+    assert failed_["credential_types"] == {"OTP": 1}
+    (check,) = [c for c in out["checks"] if c["check"] == "authenticator_enrollment"]
+    assert check["enrolled"] == [{**two, "count": 2}]
+    assert check["failing_authenticators"] == {"Okta Verify FastPass": 2, "Okta Verify TOTP": 1}
+
+
+@pytest.mark.anyio
+async def test_a_rule_without_a_policy_id_is_named_by_its_policy_kind(
+    ex: Executor, org: Org
+) -> None:
+    rule = {
+        "id": "rul1emaKYZTWRYYRRTSK",
+        "type": "Rule",
+        "alternateId": "User identification policy",
+        "displayName": "Catch-all Rule",
+        "detailEntry": {"showSignInWithOv": "NEVER"},
+    }
+    org.events = [
+        event(
+            "policy.evaluate_sign_on",
+            "DENY",
+            "Sign-on policy evaluation resulted in DENIED",
+            targets=[rule],
+        )
+    ]
+    out = await diagnose(ex)
+    (policy,) = cause(out, "sign_on_policy_deny")["policies"]
+    assert policy["policy_kind"] == "User identification policy"
+    (evaluation,) = out["policy_evaluation"]
+    (unresolved,) = evaluation["unresolved"]
+    assert "'User identification policy'" in unresolved["reason"]
+
+
+@pytest.mark.anyio
+async def test_a_management_attestation_error_isn_t_an_integrator_error(
+    ex: Executor, org: Org
+) -> None:
+    deny = event(
+        "policy.evaluate_sign_on",
+        "DENY",
+        "Sign-on policy evaluation resulted in DENIED",
+        device={
+            "os_platform": "OSX",
+            "device_integrator": json.dumps(
+                {"MANAGEMENT_ATTESTATION": {"errorCode": 100, "error": "Signer Was Not Found"}}
+            ),
+        },
+    )
+    org.events = [deny]
+    (device,) = cause(await diagnose(ex), "sign_on_policy_deny")["devices"]
+    assert "integrator_errors" not in device
+    deny["device"]["device_integrator"] = json.dumps(
+        {"OSQUERY": {"result": "OSQuery Signal Provider is not supported", "errorCode": -1}}
+    )
+    (device,) = cause(await diagnose(ex), "sign_on_policy_deny")["devices"]
+    assert device["integrator_errors"] == ["OSQUERY"]
 
 
 @pytest.mark.anyio

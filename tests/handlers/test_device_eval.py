@@ -1,5 +1,6 @@
 """Device assurance and advanced posture checks (plan 9.1 slice 3), pure."""
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -324,6 +325,65 @@ def test_an_object_under_the_check_s_name_is_not_a_result() -> None:
     d = denial(MAC, debugContext={"debugData": {"requestUri": {"big": "x" * 500}}})
     (row,) = de.assurance([AID], d, facts(policy, posture={}))
     assert row["pass"] is None and "big" not in str(row)
+
+
+# Live 9.1 shapes: an error code per provider, not a genericError text.
+UNSUPPORTED = json.dumps(
+    {
+        "MANAGEMENT_ATTESTATION": {"errorCode": 100, "error": "Signer Was Not Found"},
+        "OSQUERY": {"result": "OSQuery Signal Provider is not supported", "errorCode": -1},
+    }
+)
+
+
+def test_an_osquery_error_code_fails_posture_checks() -> None:
+    policy = mac(devicePostureChecks={"include": [FIREWALL]})
+    d = denial(
+        MAC,
+        target=[{"type": "UDDevice", "detailEntry": {"deviceIntegrator": UNSUPPORTED}}],
+    )
+    (row,) = de.assurance([AID], d, facts(policy, posture={}))
+    assert row["pass"] is False
+    assert row["actual"] == {
+        "errors": ["OSQUERY: OSQuery Signal Provider is not supported (errorCode -1)"]
+    }
+
+
+def test_errors_are_kept_to_their_provider() -> None:
+    attestation = '{"MANAGEMENT_ATTESTATION":{"errorCode":100,"error":"Signer Was Not Found"}}'
+    posture = mac(devicePostureChecks={"include": [FIREWALL]})
+    (row,) = de.assurance(
+        [AID], denial({**MAC, "device_integrator": attestation}), facts(posture, posture={})
+    )
+    assert row["pass"] is None  # attestation isn't what runs posture checks
+    signals = mac(thirdPartySignalProviders={"dtc": {"osFirewall": True}})
+    (row,) = de.assurance([AID], denial({**MAC, "device_integrator": UNSUPPORTED}), facts(signals))
+    assert row["pass"] is None  # nor are osquery and attestation third-party signals
+
+
+def test_a_condition_the_event_names_as_failing_settles_an_undecided_row() -> None:
+    policy = mac(
+        osVersion={"dynamicVersionRequirement": {"type": "MINIMUM", "distanceFromLatestMajor": 0}}
+    )
+    rule = {
+        "type": "Rule",
+        "detailEntry": {
+            "deviceAssuranceDenied": "true",
+            "deviceAssurancePolicyId": AID,
+            "deviceAssuranceFailingConditions": "[Okta:DeviceAssurance.OsVersion]",
+        },
+    }
+    (row,) = de.assurance([AID], denial(MAC, target=[rule]), facts(policy))
+    assert row["pass"] is False and "names this condition as failing" in row["note"]
+    other = {**rule, "detailEntry": {**rule["detailEntry"], "deviceAssurancePolicyId": "dae2"}}
+    (row,) = de.assurance([AID], denial(MAC, target=[other]), facts(policy))
+    assert row["pass"] is None  # named for another policy
+    both = {
+        **rule,
+        "detailEntry": {**rule["detailEntry"], "deviceAssurancePolicyId": f"dae2, {AID}"},
+    }
+    (row,) = de.assurance([AID], denial(MAC, target=[both]), facts(policy))
+    assert row["pass"] is False  # one of several named
 
 
 def test_a_deeply_nested_json_string_doesn_t_fail_the_diagnosis() -> None:

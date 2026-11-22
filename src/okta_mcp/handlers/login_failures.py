@@ -34,8 +34,8 @@ import anyio
 
 from okta_mcp.exec.composite import Context, Unavailable
 from okta_mcp.exec.resolve import USER_ID
+from okta_mcp.handlers import device_eval, policy_fetch
 from okta_mcp.handlers import policy_eval as pe
-from okta_mcp.handlers import policy_fetch
 from okta_mcp.logs import log_internal
 from okta_mcp.okta.client import UpstreamError
 from okta_mcp.okta.paginate import PaginationError
@@ -113,8 +113,8 @@ _ATTRS: Mapping[str, frozenset[str]] = {
     "other_policy_deny": frozenset({"policies", "apps", "ips", "devices", "risk"}),
     "ip_or_threat_block": frozenset({"ips"}),
     "idp_failure": frozenset({"idps", "apps"}),
-    "mfa_failed": frozenset({"credential_types", "ips", "user_agents"}),
-    "mfa_abandoned": frozenset({"credential_types", "user_agents"}),
+    "mfa_failed": frozenset({"credential_types", "authenticators", "ips", "user_agents"}),
+    "mfa_abandoned": frozenset({"credential_types", "authenticators", "user_agents"}),
     "invalid_credentials": frozenset({"credential_types", "ips"}),
     "oauth_token_error": frozenset({"clients", "apps"}),
     "other": frozenset({"apps", "ips"}),
@@ -525,6 +525,9 @@ def _policies(events: list[_Event]) -> list[dict[str, Any]]:
             if kind == "Rule":
                 policy_id = _str(detail.get("policyId")) or None
                 key = (policy_id, _str(t.get("id")) or None)
+                # The rule's alternateId names its policy's kind ("Authenticator Enrollment
+                # Policy", "User identification policy"); live 9.1.
+                named = _cap(_str(t.get("alternateId")))
                 row = {
                     "rule_id": key[1],
                     "rule_name": _cap(_str(t.get("displayName"))) or None,
@@ -533,6 +536,8 @@ def _policies(events: list[_Event]) -> list[dict[str, Any]]:
                     "policy_kind": (
                         "authentication policy (ACCESS_POLICY)"
                         if policy_id
+                        else named
+                        if named and named != "unknown"
                         else "global session or authenticator enrollment policy "
                         "(OKTA_SIGN_ON or MFA_ENROLL)"
                     ),
@@ -568,11 +573,11 @@ def _devices(events: list[_Event]) -> list[dict[str, Any]]:
                 value = _scalar(d.get(name))
                 if value is not None:
                     row[name] = value
-            integrator = d.get("device_integrator")
-            if "genericError" in (integrator if isinstance(integrator, str) else repr(integrator)):
-                # A device integrator (osquery, EDR) returned an error instead of a signal: it
-                # fails any assurance check that reads it.
-                row["integrator_error"] = True
+            # Integrators (osquery, EDR) that returned an error instead of a signal: it fails
+            # the assurance checks that read that provider, so the provider is named.
+            errors = device_eval.provider_errors(d.get("device_integrator"))
+            if providers := sorted(errors.keys() - {device_eval.ATTESTATION}):
+                row["integrator_errors"] = [_cap(p) or "unknown" for p in providers][:_TOP]
         row = {k: v for k, v in row.items() if v is not None}
         if not row:
             continue
@@ -599,6 +604,21 @@ def _credential_types(events: list[_Event]) -> dict[str, int]:
     return _top(
         _cap(c) for e in events if (c := _str(_at(e.raw, "authenticationContext.credentialType")))
     )
+
+
+def _authenticators(events: list[_Event]) -> dict[str, int]:
+    """The authenticator and method each verification used ("Okta Verify FastPass"): a
+    FastPass failure has no credentialType (live 9.1)."""
+    names: list[str] = []
+    for e in events:
+        for t in _targets(e.raw):
+            if t.get("type") == "AuthenticatorEnrollment":
+                name = _str(t.get("displayName"))
+                method = _str(_at(t, "detailEntry.methodTypeUsed"))
+                if label := " ".join(x for x in (name, method) if x):
+                    names.append(_cap(label))
+                break
+    return _top(names)
 
 
 def _risk(events: list[_Event]) -> dict[str, int]:
@@ -664,6 +684,7 @@ _EXTRACT: Mapping[str, Callable[[list[_Event]], Any]] = {
     "devices": _devices,
     "user_agents": _user_agents,
     "credential_types": _credential_types,
+    "authenticators": _authenticators,
     "risk": _risk,
     "behaviors": _behaviors,
     "clients": _clients,
@@ -861,18 +882,24 @@ def _enrollments(
         items = cast(list[Any], body) if isinstance(body, list) else []
         # The policy evaluation reads them too (the verification gate): one request.
         shared["enrollments"] = [cast(dict[str, Any], x) for x in items if isinstance(x, dict)]
-        enrolled = [
-            {
-                k: _cap(v)
+        # Identical rows (Okta Verify on two devices) are one row with a count.
+        counts = Counter(
+            tuple(
+                (k, _cap(v))
                 for k in ("key", "type", "name", "status")
                 if isinstance(v := i.get(k), str)
-            }
+            )
             for i in cast(list[dict[str, Any]], [x for x in items if isinstance(x, dict)])
-        ][:_ENROLLMENTS_SHOWN]
+        )
+        enrolled = [dict(r) | ({"count": n} if n > 1 else {}) for r, n in counts.items()][
+            :_ENROLLMENTS_SHOWN
+        ]
         failing = Counter[str]()
+        methods = Counter[str]()
         for cause in ("mfa_failed", "mfa_abandoned"):
             if cause in groups:
                 failing.update(_credential_types(groups[cause].events))
+                methods.update(_authenticators(groups[cause].events))
         row: dict[str, Any] = {"check": "authenticator_enrollment", "enrolled": enrolled}
         active = [e for e in enrolled if e.get("status") == "ACTIVE"]
         row["pass"] = bool(active)
@@ -880,6 +907,8 @@ def _enrollments(
             row["note"] = "no active authenticator enrollment: the user may need to enroll one"
         if failing:
             row["failing_credential_types"] = dict(failing.most_common(_TOP))
+        if methods:
+            row["failing_authenticators"] = dict(methods.most_common(_TOP))
         return row
 
     return job

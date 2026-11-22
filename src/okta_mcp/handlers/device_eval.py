@@ -27,6 +27,12 @@ from okta_mcp.handlers import eval_model as pe
 # Events say OSX where assurance policies say MACOS (the other names match).
 _PLATFORM = {"OSX": "MACOS", "MAC": "MACOS", "CHROME_OS": "CHROMEOS"}
 _GENERIC_ERROR = re.compile(r"genericError\([^)]*\)")
+_FAILING_CONDITION = re.compile(r"DeviceAssurance\.(\w+)")
+# Integrator entries that aren't third-party signals: posture checks read OSQUERY alone.
+_POSTURE_PROVIDER = "OSQUERY"
+# Errors on every unmanaged device (live 9.1); `device.managed` decides what it would.
+ATTESTATION = "MANAGEMENT_ATTESTATION"
+_NOT_SIGNALS = frozenset({ATTESTATION, _POSTURE_PROVIDER})
 _SEARCH_DEPTH = 6
 # Known orderings, weakest first: a value below every listed one fails; above, undecided.
 _STRENGTH: dict[str, dict[str, int]] = {
@@ -54,11 +60,64 @@ def _device_detail(d: pe.Denial) -> dict[str, Any]:
     return {}
 
 
-def integrator_errors(d: pe.Denial) -> list[str]:
-    """`genericError(…)` texts in the device's integrator signals (osquery, EDR, Chrome DTC)."""
-    text = str(d.device.get("device_integrator") or "")
-    text += str(_device_detail(d).get("deviceIntegrator") or "")
-    return sorted(set(_GENERIC_ERROR.findall(text)))[:5]
+def provider_errors(*raws: object) -> dict[str, set[str]]:
+    """Errors in device integrator signals, by provider (`OSQUERY`, `CHROME_DTC`, …): a
+    `genericError(…)` text, or an entry with a non-zero `errorCode` (live 9.1:
+    `{"OSQUERY":{"result":"OSQuery Signal Provider is not supported","errorCode":-1}}`).
+    Errors in text that isn't a JSON object are under the provider `""`."""
+    found: dict[str, set[str]] = {}
+    for raw in raws:
+        value: object = raw
+        if isinstance(raw, str):
+            try:
+                value = json.loads(raw) if raw[:1] == "{" else raw
+            except (ValueError, RecursionError):
+                value = raw
+        if not isinstance(value, dict):
+            if errors := set(_GENERIC_ERROR.findall(str(value or ""))):
+                found.setdefault("", set()).update(errors)
+            continue
+        for provider, entry in cast(dict[str, Any], value).items():
+            try:
+                errors: set[str] = set(_GENERIC_ERROR.findall(str(entry)))
+            except RecursionError:
+                errors = set()
+            fields = pe.as_dict(entry)
+            code = fields.get("errorCode")
+            if code not in (None, 0, "0"):
+                message = pe.str_of(fields.get("error")) or pe.str_of(fields.get("result"))
+                errors.add(pe.clip(f"{provider}: {message or 'error'} (errorCode {code})"))
+            if errors:
+                found.setdefault(str(provider), set()).update(errors)
+    return found
+
+
+def integrator_errors(d: pe.Denial, only: str | None = None) -> list[str]:
+    """Error texts in the device's integrator signals: all providers but management
+    attestation (an unmanaged device reports one; `device.managed` decides that), or `only`'s
+    (plus any not attributable to a provider)."""
+    by_provider = provider_errors(
+        d.device.get("device_integrator"), _device_detail(d).get("deviceIntegrator")
+    )
+    errors = {
+        e
+        for provider, texts in by_provider.items()
+        if (provider in ("", only) if only else provider not in _NOT_SIGNALS)
+        for e in texts
+    }
+    return sorted(errors)[:5]
+
+
+def _okta_failing(d: pe.Denial, policy_id: object) -> set[str]:
+    """Conditions the DENY event's rule names as failing for this assurance policy
+    (`deviceAssuranceFailingConditions: "[Okta:DeviceAssurance.OsVersion]"` → {"osversion"})."""
+    for t in pe.targets(d.event):
+        detail = pe.as_dict(t.get("detailEntry"))
+        named = re.findall(r"\w+", pe.str_of(detail.get("deviceAssurancePolicyId")))
+        if t.get("type") == "Rule" and policy_id in named:
+            text = pe.str_of(detail.get("deviceAssuranceFailingConditions"))
+            return {m.lower() for m in _FAILING_CONDITION.findall(text)}
+    return set()
 
 
 def _grace(policy: Mapping[str, Any], d: pe.Denial) -> str | None:
@@ -237,7 +296,7 @@ def _posture(
         "device_detail": _device_detail(d),
         "debug": pe.at(d.event, "debugContext.debugData"),
     }
-    errors = integrator_errors(d)
+    errors = integrator_errors(d, only=_POSTURE_PROVIDER)
     rows: list[pe.Row] = []
     for entry in entries:
         name = entry.get("variableName")
@@ -307,9 +366,21 @@ def _policy_rows(policy: Mapping[str, Any], d: pe.Denial, facts: pe.Facts) -> li
         for e in pe.as_list(pe.as_dict(policy.get("devicePostureChecks")).get("include"))
     ]
     rows += _posture(label, posture, d, facts)
+    if failing := _okta_failing(d, policy.get("id")):
+        rows = [_settled(r, label, failing) for r in rows]
     if (grace := _grace(policy, d)) and any(r["pass"] is not True for r in rows):
         rows = [{**r, "note": f"{r['note']}; {grace}" if r.get("note") else grace} for r in rows]
     return rows
+
+
+def _settled(r: pe.Row, label: str, failing: set[str]) -> pe.Row:
+    """An undecided row Okta's event names as failing fails (`osVersion.minimum`,
+    `osVersionConstraints[…]` for `OsVersion`)."""
+    key = r["check"].removeprefix(f"{label}: ").lower()
+    if r["pass"] is not None or not any(key.startswith(c) for c in failing):
+        return r
+    note = "the DENY event names this condition as failing"
+    return {**r, "pass": False, "note": f"{r['note']}; {note}" if r.get("note") else note}
 
 
 def assurance(ids: list[str], d: pe.Denial, facts: pe.Facts) -> list[pe.Row]:
