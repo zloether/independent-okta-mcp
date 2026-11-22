@@ -34,8 +34,8 @@ import anyio
 
 from okta_mcp.exec.composite import Context, Unavailable
 from okta_mcp.exec.resolve import USER_ID
+from okta_mcp.handlers import device_eval, policy_fetch
 from okta_mcp.handlers import policy_eval as pe
-from okta_mcp.handlers import policy_fetch
 from okta_mcp.logs import log_internal
 from okta_mcp.okta.client import UpstreamError
 from okta_mcp.okta.paginate import PaginationError
@@ -81,6 +81,7 @@ _NOT_READ = "the user's authenticator enrollments weren't read"
 _BUDGET_SHARE = 0.85
 """Of `max_bytes`, what the result may fill before trimming, leaving room for the envelope and
 for escaping the executor's JSON may add."""
+_VIA_MFA = "user.authentication.auth_via_mfa"
 _LOCK = "user.account.lock"
 _UNLOCK = "user.account.unlock"
 
@@ -112,8 +113,8 @@ _ATTRS: Mapping[str, frozenset[str]] = {
     "other_policy_deny": frozenset({"policies", "apps", "ips", "devices", "risk"}),
     "ip_or_threat_block": frozenset({"ips"}),
     "idp_failure": frozenset({"idps", "apps"}),
-    "mfa_failed": frozenset({"credential_types", "ips", "user_agents"}),
-    "mfa_abandoned": frozenset({"credential_types", "user_agents"}),
+    "mfa_failed": frozenset({"credential_types", "authenticators", "ips", "user_agents"}),
+    "mfa_abandoned": frozenset({"credential_types", "authenticators", "user_agents"}),
     "invalid_credentials": frozenset({"credential_types", "ips"}),
     "oauth_token_error": frozenset({"clients", "apps"}),
     "other": frozenset({"apps", "ips"}),
@@ -142,8 +143,10 @@ _DEVICE_FIELDS = (
     "secure_hardware_present",
     "jailbreak",
 )
-_BEHAVIOR = re.compile(r"([A-Za-z][A-Za-z0-9 _-]{0,60})=POSITIVE")
-_RISK_LEVEL = re.compile(r"level=([A-Z]+)")
+_BEHAVIOR_NAME = re.compile(r"[A-Za-z][A-Za-z0-9 _-]{0,60}")
+_BEHAVIOR = re.compile(rf"({_BEHAVIOR_NAME.pattern})=POSITIVE")
+_LEVEL = re.compile(r"[A-Z]+")
+_RISK_LEVEL = re.compile(rf"level=({_LEVEL.pattern})")
 
 
 def _now() -> datetime:
@@ -177,7 +180,7 @@ async def run(ctx: Context, args: Mapping[str, Any]) -> dict[str, Any]:
     }
     checks: list[dict[str, Any]] = [_status_check(user)]
     skipped: list[dict[str, str]] = []
-    shared: dict[str, Any] = {}
+    shared: dict[str, Any] = {"app_labels": {}}
     # Slice 2: the policies behind the denials, and the password policy behind password causes.
     # Its first wave runs alongside the follow-ups; only its second waits for their enrollments.
     denials = [
@@ -214,10 +217,16 @@ async def run(ctx: Context, args: Mapping[str, Any]) -> dict[str, Any]:
     async with anyio.create_task_group() as tg:
         tg.start_soon(follow)
         tg.start_soon(policies)
+        tg.start_soon(_deny_labels, ctx, groups, shared["app_labels"])
     evaluations, password, missing = cast(
         tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, str]], found["value"]
     )
     result["causes"] = [g.render() for g in sorted(groups.values(), key=_order)]
+    # The label read from the app, over the type name an event gives it.
+    for c in result["causes"]:
+        for app in c.get("apps", ()):
+            if label := shared["app_labels"].get(app["id"]):
+                app["name"] = label
     result["checks"] = checks
     if evaluations:
         result["policy_evaluation"] = evaluations
@@ -363,13 +372,45 @@ def _cause(e: _Event) -> str | None:
     if "abandoned" in low or "unanswered" in low:
         return "mfa_abandoned"
     credential = _str(_at(e.raw, "authenticationContext.credentialType")).upper()
-    if t == "user.authentication.auth_via_mfa" or (
-        t == "user.authentication.verify" and credential not in ("", "PASSWORD")
-    ):
+    if _password_factor(e):
+        return "invalid_credentials"
+    if t == _VIA_MFA or (t == "user.authentication.verify" and credential not in ("", "PASSWORD")):
         return "mfa_failed"
     if "INVALID_CREDENTIALS" in reason or "VERIFICATION_ERROR" in reason:
         return "mfa_failed" if credential not in ("", "PASSWORD") else "invalid_credentials"
     return "other"
+
+
+def _password_factor(e: _Event) -> bool:
+    """Identity Engine logs a password check as an `auth_via_mfa` for the password factor."""
+    return e.event_type == _VIA_MFA and (
+        _at(e.raw, "debugContext.debugData.factor") == "PASSWORD_AS_FACTOR"
+        or _str(_at(e.raw, "authenticationContext.credentialType")).upper() == "PASSWORD"
+    )
+
+
+def _request_id(e: _Event) -> str:
+    return _str(_at(e.raw, "debugContext.debugData.authnRequestId"))
+
+
+def _counted_twice(events: list[_Event]) -> set[int]:
+    """Password-factor events whose attempt a `user.session.start` already counts: Okta logs
+    both for one wrong password. Every retry in a sign-in shares its request ID, so they are
+    paired by count per request ID, not one to one, and only with session events that are a
+    password outcome themselves (a block or another failure in the same sign-in isn't)."""
+    sessions = Counter(
+        rid
+        for e in events
+        if e.event_type == "user.session.start"
+        and (rid := _request_id(e))
+        and _cause(e) in ("invalid_credentials", "locked_out")
+    )
+    twice: set[int] = set()
+    for i, e in enumerate(events):
+        if _password_factor(e) and sessions[rid := _request_id(e)] > 0:
+            sessions[rid] -= 1
+            twice.add(i)
+    return twice
 
 
 @dataclass
@@ -405,7 +446,10 @@ def _group(events: list[_Event]) -> dict[str, _Group]:
     groups: dict[str, _Group] = {}
     locks = [e.published for e in events if e.event_type.startswith(_LOCK) and e.published]
     unlocks = [e.published for e in events if e.event_type.startswith(_UNLOCK) and e.published]
-    for e in events:
+    twice = _counted_twice(events)
+    for i, e in enumerate(events):
+        if i in twice:
+            continue
         cause = _cause(e)
         if cause is None:
             continue
@@ -481,6 +525,9 @@ def _policies(events: list[_Event]) -> list[dict[str, Any]]:
             if kind == "Rule":
                 policy_id = _str(detail.get("policyId")) or None
                 key = (policy_id, _str(t.get("id")) or None)
+                # The rule's alternateId names its policy's kind ("Authenticator Enrollment
+                # Policy", "User identification policy"); live 9.1.
+                named = _cap(_str(t.get("alternateId")))
                 row = {
                     "rule_id": key[1],
                     "rule_name": _cap(_str(t.get("displayName"))) or None,
@@ -489,6 +536,8 @@ def _policies(events: list[_Event]) -> list[dict[str, Any]]:
                     "policy_kind": (
                         "authentication policy (ACCESS_POLICY)"
                         if policy_id
+                        else named
+                        if named and named != "unknown"
                         else "global session or authenticator enrollment policy "
                         "(OKTA_SIGN_ON or MFA_ENROLL)"
                     ),
@@ -524,11 +573,11 @@ def _devices(events: list[_Event]) -> list[dict[str, Any]]:
                 value = _scalar(d.get(name))
                 if value is not None:
                     row[name] = value
-            integrator = d.get("device_integrator")
-            if "genericError" in (integrator if isinstance(integrator, str) else repr(integrator)):
-                # A device integrator (osquery, EDR) returned an error instead of a signal: it
-                # fails any assurance check that reads it.
-                row["integrator_error"] = True
+            # Integrators (osquery, EDR) that returned an error instead of a signal: it fails
+            # the assurance checks that read that provider, so the provider is named.
+            errors = device_eval.provider_errors(d.get("device_integrator"))
+            if providers := sorted(errors.keys() - {device_eval.ATTESTATION}):
+                row["integrator_errors"] = [_cap(p) or "unknown" for p in providers][:_TOP]
         row = {k: v for k, v in row.items() if v is not None}
         if not row:
             continue
@@ -557,6 +606,21 @@ def _credential_types(events: list[_Event]) -> dict[str, int]:
     )
 
 
+def _authenticators(events: list[_Event]) -> dict[str, int]:
+    """The authenticator and method each verification used ("Okta Verify FastPass"): a
+    FastPass failure has no credentialType (live 9.1)."""
+    names: list[str] = []
+    for e in events:
+        for t in _targets(e.raw):
+            if t.get("type") == "AuthenticatorEnrollment":
+                name = _str(t.get("displayName"))
+                method = _str(_at(t, "detailEntry.methodTypeUsed"))
+                if label := " ".join(x for x in (name, method) if x):
+                    names.append(_cap(label))
+                break
+    return _top(names)
+
+
 def _risk(events: list[_Event]) -> dict[str, int]:
     levels: list[str] = []
     for e in events:
@@ -564,18 +628,39 @@ def _risk(events: list[_Event]) -> dict[str, int]:
         if not level:
             match = _RISK_LEVEL.search(_str(_at(e.raw, "debugContext.debugData.risk")))
             level = match[1] if match else ""
+        if not level:
+            logged = _str(_at(_log_only(e), "risk.level"))
+            level = logged if _LEVEL.fullmatch(logged) else ""
         if level:
             levels.append(_cap(level))
     return _top(levels)
 
 
 def _behaviors(events: list[_Event]) -> dict[str, int]:
-    """Behavior detections that were positive (`New Device`, `New Geo-Location`, …)."""
+    """Behavior detections that were positive (`New Device`, `New Geo-Location`, …): a
+    `{name=VALUE, …}` string on most events, JSON in `logOnlySecurityData` on a policy one."""
     found: list[str] = []
     for e in events:
         text = _str(_at(e.raw, "debugContext.debugData.behaviors"))
         found.extend(m.strip() for m in _BEHAVIOR.findall(text))
+        logged = None if text else _log_only(e).get("behaviors")
+        if isinstance(logged, dict):
+            found.extend(
+                name
+                for name, value in cast(dict[str, Any], logged).items()
+                if value == "POSITIVE" and _BEHAVIOR_NAME.fullmatch(name)
+            )
     return _top(_cap(f) for f in found)
+
+
+def _log_only(e: _Event) -> dict[str, Any]:
+    """`debugData.logOnlySecurityData`: a JSON object as a string, or {} when it isn't one."""
+    text = _at(e.raw, "debugContext.debugData.logOnlySecurityData")
+    try:
+        value = json.loads(text) if isinstance(text, str) else None
+    except (ValueError, RecursionError):
+        return {}
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
 
 def _clients(events: list[_Event]) -> list[dict[str, Any]]:
@@ -599,6 +684,7 @@ _EXTRACT: Mapping[str, Callable[[list[_Event]], Any]] = {
     "devices": _devices,
     "user_agents": _user_agents,
     "credential_types": _credential_types,
+    "authenticators": _authenticators,
     "risk": _risk,
     "behaviors": _behaviors,
     "clients": _clients,
@@ -678,10 +764,8 @@ async def _follow_ups(
     skips are added in job order, whatever order the jobs finish in. A failure of one job,
     expected or not, is reported in `skipped` and doesn't cancel the others."""
     jobs: list[tuple[str, Callable[[], Awaitable[dict[str, Any]]]]] = []
-    if "not_assigned" in groups:
-        apps = [a for a in _apps(groups["not_assigned"].events) if APP_ID.fullmatch(a["id"])]
-        for app in apps[:_APPS_CHECKED]:
-            jobs.append(("app_assignment", _assignment(ctx, uid, app)))
+    for app in _assignment_apps(groups):
+        jobs.append(("app_assignment", _assignment(ctx, uid, app, shared["app_labels"])))
     if groups.keys() & {"mfa_failed", "mfa_abandoned", "sign_on_policy_deny", "other_policy_deny"}:
         jobs.append(("authenticator_enrollment", _enrollments(ctx, uid, groups, shared)))
     if "locked_out" in groups or user.get("status") == "LOCKED_OUT":
@@ -712,21 +796,76 @@ async def _follow_ups(
             checks.append(row)
 
 
+def _assignment_apps(groups: Mapping[str, _Group]) -> list[dict[str, Any]]:
+    """The not-assigned apps whose assignment is checked."""
+    if "not_assigned" not in groups:
+        return []
+    apps = [a for a in _apps(groups["not_assigned"].events) if APP_ID.fullmatch(a["id"])]
+    return apps[:_APPS_CHECKED]
+
+
+async def _deny_labels(ctx: Context, groups: Mapping[str, _Group], labels: dict[str, str]) -> None:
+    """Labels of the apps behind denials, whose events name only the app's type. Best effort:
+    an app that can't be read keeps the event's name. Not-assigned apps are read by their check."""
+    events = [
+        e
+        for c in ("sign_on_policy_deny", "other_policy_deny")
+        if c in groups
+        for e in groups[c].events
+    ]
+    checked = {a["id"] for a in _assignment_apps(groups)}
+    ids = [a["id"] for a in _apps(events) if APP_ID.fullmatch(a["id"]) and a["id"] not in checked]
+
+    async def one(app_id: str) -> None:
+        try:
+            found = await ctx.get("getApplication", {"appId": app_id})
+        except (Unavailable, UpstreamError, RateLimited):
+            return
+        except Exception as e:
+            log_internal(_log, "diagnostics login-failures app label", e)
+            return
+        label = _at(found, "label")
+        if isinstance(label, str) and label:
+            labels[app_id] = _cap(label)
+
+    async with anyio.create_task_group() as tg:
+        for app_id in ids[:_APPS_CHECKED]:
+            tg.start_soon(one, app_id)
+
+
 def _assignment(
-    ctx: Context, uid: str, app: Mapping[str, Any]
+    ctx: Context, uid: str, app: Mapping[str, Any], labels: dict[str, str]
 ) -> Callable[[], Awaitable[dict[str, Any]]]:
     async def job() -> dict[str, Any]:
         row: dict[str, Any] = {"check": "app_assignment", "app_id": app["id"]}
         if "name" in app:
             row["app_name"] = app["name"]
+        # The app first: its label (the event names only its type, e.g. "OpenID Connect
+        # Client"), its status, and whether it still exists, which the assignment's 404
+        # doesn't tell. Best effort: another error leaves the assignment check to run.
+        found: Any = None
+        try:
+            found = await ctx.get("getApplication", {"appId": app["id"]})
+        except UpstreamError as e:
+            if e.status == 404:
+                return row | {"pass": False, "actual": "the app no longer exists"}
+        except (Unavailable, RateLimited):
+            pass
+        label, status = _at(found, "label"), _at(found, "status")
+        if isinstance(label, str) and label:
+            row["app_name"] = labels[app["id"]] = _cap(label)
+        inactive = isinstance(status, str) and status != "ACTIVE"
+        if inactive:
+            row["app_status"] = _cap(status)
         try:
             await ctx.get("getApplicationUser", {"appId": app["id"], "userId": uid})
         except UpstreamError as e:
             if e.status != 404:
                 raise
-            # Okta's 404 doesn't say which: no assignment, or no such app any more.
-            row |= {"pass": False, "actual": "not assigned now, or the app no longer exists"}
+            row |= {"pass": False, "actual": "not assigned now"}
         else:
+            if inactive:
+                return row | {"pass": False, "actual": "assigned now, but the app isn't active"}
             row |= {
                 "pass": True,
                 "actual": "assigned now",
@@ -745,18 +884,24 @@ def _enrollments(
         items = cast(list[Any], body) if isinstance(body, list) else []
         # The policy evaluation reads them too (the verification gate): one request.
         shared["enrollments"] = [cast(dict[str, Any], x) for x in items if isinstance(x, dict)]
-        enrolled = [
-            {
-                k: _cap(v)
+        # Identical rows (Okta Verify on two devices) are one row with a count.
+        counts = Counter(
+            tuple(
+                (k, _cap(v))
                 for k in ("key", "type", "name", "status")
                 if isinstance(v := i.get(k), str)
-            }
+            )
             for i in cast(list[dict[str, Any]], [x for x in items if isinstance(x, dict)])
-        ][:_ENROLLMENTS_SHOWN]
+        )
+        enrolled = [dict(r) | ({"count": n} if n > 1 else {}) for r, n in counts.items()][
+            :_ENROLLMENTS_SHOWN
+        ]
         failing = Counter[str]()
+        methods = Counter[str]()
         for cause in ("mfa_failed", "mfa_abandoned"):
             if cause in groups:
                 failing.update(_credential_types(groups[cause].events))
+                methods.update(_authenticators(groups[cause].events))
         row: dict[str, Any] = {"check": "authenticator_enrollment", "enrolled": enrolled}
         active = [e for e in enrolled if e.get("status") == "ACTIVE"]
         row["pass"] = bool(active)
@@ -764,6 +909,8 @@ def _enrollments(
             row["note"] = "no active authenticator enrollment: the user may need to enroll one"
         if failing:
             row["failing_credential_types"] = dict(failing.most_common(_TOP))
+        if methods:
+            row["failing_authenticators"] = dict(methods.most_common(_TOP))
         return row
 
     return job

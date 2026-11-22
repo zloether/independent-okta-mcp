@@ -59,6 +59,8 @@ class RuleRef:
     rule_id: str | None
     policy_id: str | None
     policy_name: str | None
+    kind: str | None = None
+    """A rule target's alternateId: its policy's kind ("User identification policy")."""
 
 
 @dataclass
@@ -83,6 +85,7 @@ class DenialGroup:
                         _s(t.get("id")) or None,
                         _s(detail.get("policyId")) or None,
                         _s(detail.get("policyName")) or None,
+                        _s(t.get("alternateId")) or None,
                     )
                 )
             elif isinstance(kind, str) and "Policy" in kind and _s(t.get("id")):
@@ -587,6 +590,11 @@ def _resolve(
             return cast(Mapping[str, Any], found), rs, rule
     if reasons:
         return reasons[0]
+    if ref.kind and ref.kind != "unknown":
+        return (
+            "rule not found in the global session or enrollment policies (the event names its "
+            f"policy as a {pe.clip(ref.kind)!r})"
+        )
     return "rule not found in the global session or enrollment policies"
 
 
