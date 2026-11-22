@@ -49,7 +49,9 @@ FAILURE_BACKOFF = 5.0
 _ERROR_CODE = re.compile(r"[a-z_]{1,64}")
 # For an error without an OAuth `error` code: Okta's API error code, else the shape of the
 # reply (key names, media type), so a failure says where to look without showing the body.
-_OKTA_ERROR_CODE = re.compile(r"E\d{7}")
+# A code, not text: Okta's are `E` plus digits, but the token endpoint's were seen not to
+# match `E\d{7}` (8.2.1 run 16), so any short token of code characters.
+_OKTA_ERROR_CODE = re.compile(r"[A-Za-z0-9_.-]{1,40}")
 _KEY_NAME = re.compile(r"[A-Za-z_]{1,32}")
 _MEDIA_TYPE = re.compile(r"[a-z0-9.+-]{1,32}/[a-z0-9.+-]{1,64}")
 _HINTS = {
@@ -315,13 +317,15 @@ class ClientCredentialsProvider:
 
 
 def _shape(body: object, content_type: str) -> str:
-    """What an error reply without an OAuth `error` code looked like: Okta's `E…` code, or its
+    """What an error reply without an OAuth `error` code looked like: Okta's `errorCode`, or its
     JSON key names, or its media type. Only values matching a fixed pattern, never body text."""
     if isinstance(body, dict):
         fields = cast(dict[object, object], body)
         code = fields.get("errorCode")
         if isinstance(code, str) and _OKTA_ERROR_CODE.fullmatch(code):
-            return f" {code}"
+            causes = fields.get("errorCauses")
+            n = len(cast(list[object], causes)) if isinstance(causes, list) else 0
+            return f" {code}" + (f" ({n} error causes)" if n else "")
         keys = sorted(k for k in fields if isinstance(k, str) and _KEY_NAME.fullmatch(k))[:8]
         return f" (JSON keys: {', '.join(keys)})" if keys else " (JSON, no usable keys)"
     if body is not None:

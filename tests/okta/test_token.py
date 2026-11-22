@@ -584,10 +584,18 @@ def test_backoff_is_shorter_than_the_background_refresh() -> None:
             r"^token request failed: HTTP 400 E0000021$",
         ),
         (
-            httpx2.Response(400, json={"errorCode": "<b>", "errorSummary": "s", "a-b": 1}),
+            httpx2.Response(400, json={"errorCode": "E00000x <b>", "errorSummary": "s", "a-b": 1}),
             True,
             r"^token request failed: HTTP 400 \(JSON keys: errorCode, errorSummary\)$",
         ),
+        (
+            httpx2.Response(
+                400, json={"errorCode": "E0000233x", "errorSummary": "s", "errorCauses": [{}, {}]}
+            ),
+            True,
+            r"^token request failed: HTTP 400 E0000233x \(2 error causes\)$",
+        ),
+        (httpx2.Response(400, json={"errorCode": 21}), True, r"HTTP 400 \(JSON keys: errorCode\)$"),
         (httpx2.Response(400, json={"<b>": 1}), True, r"HTTP 400 \(JSON, no usable keys\)$"),
         (httpx2.Response(400, json=["x"]), True, r"HTTP 400 \(JSON, not an object\)$"),
         (httpx2.Response(200, content=b"not json"), True, "malformed"),
