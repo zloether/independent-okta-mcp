@@ -63,3 +63,4 @@ Hardest to undo (design §12.2); changes need `/security-review`, and their plan
 - `Dockerfile`, `docker/compose.example.yaml`: runtime privileges
 - `.github/workflows/release.yml`, `scripts/release-verify.py`, `.github/allowed_signers`: what is published, and who can cause it
 - `scripts/okta-setup.py`, `terraform/okta/`: run with Super Admin; decide who gets tokens
+- `scripts/okta-probe.py`, `.github/workflows/live.yml`, `tests/live/`: a service key outside the server; what they print reaches terminals and public run logs

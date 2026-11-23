@@ -11,18 +11,22 @@ on:
       - "**"
       - "!docs/**"
       - "!*.md"
+      - "docs/deployment-scenarios.md"
       - "docs/design/mcp-server.md"
       - "docs/okta-setup.md"
       - "docs/runbook.md"
+      - "AGENTS.md"
       - "README.md"
   pull_request:
     paths:
       - "**"
       - "!docs/**"
       - "!*.md"
+      - "docs/deployment-scenarios.md"
       - "docs/design/mcp-server.md"
       - "docs/okta-setup.md"
       - "docs/runbook.md"
+      - "AGENTS.md"
       - "README.md"
 
 permissions:

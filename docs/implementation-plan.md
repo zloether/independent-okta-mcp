@@ -1,6 +1,6 @@
 # Implementation Plan
 
-Companion to [`design/mcp-server.md`](design/mcp-server.md) (r4). The design says *what* and *why*; this file says *in what order* and *how we know each step is done*. Work top to bottom; tick boxes as you go.
+Companion to [`design/mcp-server.md`](design/mcp-server.md) (r5). The design says *what* and *why*; this file says *in what order* and *how we know each step is done*. Work top to bottom; tick boxes as you go.
 
 ## How to work a step
 
@@ -31,7 +31,7 @@ Status key: ☐ todo · ◐ in progress · ☑ done · ⏸ blocked
 | 7. Packaging & deployment | 7.1–7.4 | ◐ |
 | 8. Hardening & release | 8.1–8.4 | ◐ |
 | 9. Composite commands (before 8.4) | 9.1 | ◐ |
-| 10. Post-v1 enhancements (not release-blocking) | 10.1–10.3 | ☐ |
+| 10. Post-v1 enhancements (not release-blocking) | 10.1–10.3 | ◐ |
 
 **Ordering note vs design §15:** the MCP server (Phase 4) comes *before* bulk registry authoring (Phase 5), so two pilot domains run end to end early and every later registry entry can be smoke-tested through the real server.
 
@@ -452,11 +452,11 @@ Design: §11.4, Appendix C · Depends: 7.2, 0.5
 
 Verify: someone (or a fresh Claude session) follows the runbook on a clean machine to a working `/readyz`.
 
-### 7.4 Replicated policy rollout ☐
+### 7.4 Replicated policy rollout ☑
 Design: §11.4 · Depends: 7.3 · From the deployment-model review, 2026-11-20 (decisions log)
-- [ ] `docs/deployment-scenarios.md` C: a rolling update runs two policies until it finishes (minutes), which the page now calls two sets of access. Say so, and when it matters: for a change that removes access, replace every replica at once (blue/green, or scale the old set to zero before the new one takes traffic) rather than rolling
-- [ ] Kubernetes: mount the policy from a ConfigMap (or Secret) whose name carries a hash of its content, so a policy edit is a new rollout; an in-place update changes nothing until pods restart (no hot reload) and leaves pods on different files. Note the same for `fsGroup` or `defaultMode` so the mounted secrets and policy are readable by uid 10001
-- [ ] Runbook §4.2 links the replicated variant instead of repeating it
+- [x] `docs/deployment-scenarios.md` C: a rolling update runs two policies until it finishes (minutes), which the page now calls two sets of access. Say so, and when it matters: for a change that removes access, replace every replica at once (blue/green, or scale the old set to zero before the new one takes traffic) rather than rolling
+- [x] Kubernetes: mount the policy from a ConfigMap (or Secret) whose name carries a hash of its content, so a policy edit is a new rollout; an in-place update changes nothing until pods restart (no hot reload) and leaves pods on different files. Note the same for `fsGroup` or `defaultMode` so the mounted secrets and policy are readable by uid 10001. Done 2026-11-23 as [policy rollout](deployment-scenarios.md#policy-rollout-across-replicas); the manifest is marked unverified (no cluster) and `tests/test_docs_drift.py` pins it to the Dockerfile's user and `Config`'s variables
+- [x] Runbook §4.2 links the replicated variant instead of repeating it
 
 Verify: the page's C section covers both; `/code-review`.
 
@@ -507,7 +507,7 @@ Live checks of what only Okta decides: the service token, routing, response shap
 Verify: a manual `workflow_dispatch` run is green (done 2026-11-22, run 21; a `push` run was green before it); a planted failure (a command whose role is removed, a view naming a missing field) fails it with no response body in the log (done 2026-11-23, run 27: the CI app's Super Admin swapped for Read Only Admin; a view field can't be planted, the loader rejects it first); `/security-review` of the workflow and `tests/live/`.
 
 ### 8.3 Documentation pass ◐
-- [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed). 8.3.1 fixed the design's header, domain and tool counts, V5 and the §17 row; §15's milestones and the "post-v1" wording were brought up to date on 2026-11-16 (a status column, the composite milestone M8, §7.2's composite resumability). Still to do: README usage once 4.6 has run, then a last check of AGENTS.md and the design against what ships
+- [ ] README usage, AGENTS.md current, design doc reflects what was built (bump revision if changed). 8.3.1 fixed the design's header, domain and tool counts, V5 and the §17 row; §15's milestones and the "post-v1" wording were brought up to date on 2026-11-16 (a status column, the composite milestone M8, §7.2's composite resumability). The last check of AGENTS.md and the design against what ships was done 2026-11-23 (design r5; the drift a test can catch is in `tests/test_docs_drift.py`: §11.3 variables, §13 events, §5.1 tools and counts, the §4.1 tree, trust boundaries, doc links; see the [decisions log](decisions-log.md)). Still to do: README usage once 4.6 has run, and a re-check of what the tests can't compare (§15 statuses, §16 V-items) at release
 
 ### 8.3.1 Public readiness ◐
 Review of 2026-11-15 before making the repository public (see the [decisions log](decisions-log.md)): docs, design, history and repo hygiene; not a code review.
@@ -606,17 +606,17 @@ Design: §7.1–7.2, §9.2, §11.4 · Depends: 2.8, 4.2, 6.1
 
 Verify: `uv run pytest tests/exec/ tests/test_app.py tests/test_audit.py`; `/security-review` (data egress).
 
-### 10.3 Rate-limit sizing guidance (per Okta plan) ☐
+### 10.3 Rate-limit sizing guidance (per Okta plan) ◐
 Design: §6.5, §13, §11.4 · Depends: 6.2, 7.3
 
 **Problem.** Operators must set the in-flight concurrency (`MCP_OKTA_MAX_INFLIGHT`) and the per-principal request rate (`MCP_REQUESTS_PER_MINUTE`), but the runbook gives no concrete starting values tied to Okta's per-tenant API rate limits. Guessing high causes 429 storms (2.4); guessing low wastes capacity.
 
 **Idea.** A runbook section that helps an operator *derive* starting values from their own tenant rather than from a copied table (Okta's per-tier numbers drift and vary by endpoint and the org's configured rate-limit percentage). Docs only — no code.
 
-- [ ] Runbook (7.3) sizing section: how to read the tenant's actual Management API rate-limit budget from the Okta Admin console (per-endpoint limits and the org's rate-limit percentage), then a method to pick starting values for `MCP_OKTA_MAX_INFLIGHT` and `MCP_REQUESTS_PER_MINUTE` as a fraction of that budget, leaving headroom for other Okta API consumers
-- [ ] Tie in V16 (the service app's own rate-limit share, 6.2/7.3): the server's total draw must fit inside the share the service app is granted
-- [ ] A worked example with placeholder numbers, clearly marked as illustrative, plus the tuning rule: watch logged 429s / `rate_limited` errors (6.2) and reduce by 10–20% on repeated hits
-- [ ] Cross-reference from the `MCP_OKTA_MAX_INFLIGHT` / `MCP_REQUESTS_PER_MINUTE` entries in the config docs (§11.3)
+- [x] Runbook (7.3) sizing section ([§4.9](runbook.md#49-rate-limit-sizing), 2026-11-23): how to read the tenant's actual Management API rate-limit budget from the Okta Admin console (per-endpoint limits and the org's rate-limit percentage), then a method to pick starting values for `MCP_OKTA_MAX_INFLIGHT` and `MCP_REQUESTS_PER_MINUTE` as a fraction of that budget, leaving headroom for other Okta API consumers
+- [ ] Tie in V16 (the service app's own rate-limit share, 6.2/7.3): the server's total draw must fit inside the share the service app is granted. The method uses the share as the budget (§4.9 step 2); still open: the measured share and whether it caps the service app at all (V16, needs the dev org)
+- [x] A worked example with placeholder numbers, clearly marked as illustrative, plus the tuning rule: watch logged 429s / `rate_limited` errors (6.2) and reduce by 10–20% on repeated hits
+- [x] Cross-reference from the `MCP_OKTA_MAX_INFLIGHT` / `MCP_REQUESTS_PER_MINUTE` entries in the config docs (§11.3)
 
 Verify: runbook has the sizing section with a derivation method (not a hardcoded vendor table) and a tuning note; config-var docs link to it.
 
@@ -643,7 +643,7 @@ Verify: runbook has the sizing section with a derivation method (not a hardcoded
 | V3 | Client registration: pre-registered vs DCR vs CIMD | 0.6 | 0.6 ◐ |
 | V4 | `.manage ⇒ .read` implication | 3.2 | 3.2 ☑ (not needed: `OKTA_SCOPES` is `.read` only) |
 | V5 | SDK v2 / 2026-07-28: stateless per-request principal, `cacheScope`, back-compat, auth helpers, `httpx` vs `httpx2` | 0.1 deps, 2.3, 4.2 | 0.4 ☑ (see [decisions log](decisions-log.md)) |
-| V6 | Read-only Admin sufficiency per domain | 5.x | 5.x ◐ (2026-11-13: role known for the 27 scopes in `SCOPE_ROLES`, 7 of which need more than Read-only Admin; 6 still unverified) |
+| V6 | Read-only Admin sufficiency per domain | 5.x | 5.x ◐ (2026-11-13: role known for the 27 scopes in `SCOPE_ROLES`, 7 of which need more than Read-only Admin; 6 still unverified; 2026-11-23: 28 scopes, 8 above Read-only Admin, after `okta.profileMappings.read` → `ORG_ADMIN`) |
 | V8 | Spec accuracy (scopes, operationIds, params) | 1.3, 5.x | 1.5 ◐ (5 gotchas catalogued) / 5.x |
 | V9–V11 | `resource` param, discovery, loopback, static client IDs | 4.4, 4.6 | 0.5 ☑; per-client results in 4.6 |
 | V13 | `uid` vs `sub`; ID-emitting groups expression | 4.3 | 0.5 ☑ |
