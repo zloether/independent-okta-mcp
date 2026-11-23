@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _hygiene import redact_ids
 from _live import ANSWERS, DOMAIN, Seeds
 
 from okta_mcp.okta.client import UpstreamError
@@ -56,6 +57,12 @@ def _open(seeds: Seeds) -> list[str]:
     ]
 
 
+def _label(path: str, seeds: Seeds) -> str:
+    """`path` as printed: seeded IDs by role, any other Okta ID redacted."""
+    path = path.replace(seeds.user_id, "<user>").replace(seeds.group_id, "<group>")
+    return redact_ids(path)
+
+
 async def test_routing(okta: tuple[Any, Any, list[Any]], org_url: str, seeds: Seeds) -> None:
     _provider, client, _sent = okta
     changed: dict[str, str] = {}
@@ -63,16 +70,17 @@ async def test_routing(okta: tuple[Any, Any, list[Any]], org_url: str, seeds: Se
     for path, (status, code) in _recorded(seeds).items():
         got = await _probe(client, org_url, path)
         if got[2] == "list":
-            lists.append(path)
+            lists.append(_label(path, seeds))
         if got[:2] != (status, code):
-            changed[path] = f"was {status} {code or '-'}, now {got[0]} {got[1] or '-'}"
+            was, now = f"{status} {code or '-'}", f"{got[0]} {got[1] or '-'}"
+            changed[_label(path, seeds)] = f"was {was}, now {now}"
     report: dict[str, str] = {}
     for path in _open(seeds):
         got = await _probe(client, org_url, path)
         if got[2] == "list":
-            lists.append(path)
-        report[path] = f"{got[0]} {got[1] or '-'} ({got[2]})"
-    # Paths name only seeded IDs and fixed literals, so they may be printed.
+            lists.append(_label(path, seeds))
+        report[_label(path, seeds)] = f"{got[0]} {got[1] or '-'} ({got[2]})"
+    # Paths with seeded IDs labeled by role and fixed literals only (no Okta IDs in logs).
     print("open routing probes:", json.dumps(report, indent=1))
     if target := os.environ.get("OKTA_LIVE_REPORT_ROUTING"):
         Path(target).write_text(json.dumps({"open": report, "changed": changed}, indent=1))

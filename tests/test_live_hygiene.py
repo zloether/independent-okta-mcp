@@ -3,7 +3,7 @@ in any captured section, or in a failure's own text, is blanked and the test fai
 changes."""
 
 import pytest
-from live._hygiene import LEAK, REMOVED, blank_secrets
+from live._hygiene import ID_LABEL, LEAK, REMOVED, blank_secrets, redact_ids, redact_report_ids
 
 SECRET = "tok-0123456789abcdefghijklmnopqrstuvwxyz"  # noqa: S105 - a fake, to be blanked
 
@@ -58,4 +58,45 @@ def test_clean_report_is_untouched() -> None:
 def test_no_secrets_known_is_a_no_op() -> None:
     report = _report([("Captured stdout call", SECRET)])
     assert not blank_secrets(report, [])
+    assert report.outcome == "passed"
+
+
+# Okta object IDs: 20 characters, starting with 0 (users 00u…, groups 00g…, apps 0oa…).
+GROUP = "00g1a2b3c4d5e6f7g8h9"
+APP = "0oaZ9y8X7w6V5u4T3s2r"
+
+
+def test_redact_ids_replaces_okta_shaped_ids() -> None:
+    text = f'"/api/v1/groups/{GROUP}.": 404, app {APP}'
+    assert redact_ids(text) == f'"/api/v1/groups/{ID_LABEL}.": 404, app {ID_LABEL}'
+
+
+def test_redact_ids_leaves_other_values() -> None:
+    others = ["E0000006", "E0000015", "okta.users.read", "00g1a2b3", "users me.smith@example.com"]
+    for kept in others:
+        assert redact_ids(kept) == kept
+    # Longer runs of the same characters aren't an ID.
+    assert redact_ids("x" + GROUP + "x") == "x" + GROUP + "x"
+
+
+def test_report_ids_are_redacted_without_failing() -> None:
+    report = _report(
+        [("Captured stdout call", f"probe groups/{GROUP}.\n"), ("Captured log call", "ok")],
+        outcome="failed",
+        longrepr=f"AssertionError: changed: groups/{GROUP}.",
+    )
+    assert redact_report_ids(report)
+    assert report.outcome == "failed"
+    assert report.sections == [
+        ("Captured stdout call", f"probe groups/{ID_LABEL}.\n"),
+        ("Captured log call", "ok"),
+    ]
+    assert report.longrepr == f"AssertionError: changed: groups/{ID_LABEL}."
+
+
+def test_report_without_ids_is_untouched() -> None:
+    longrepr = object()
+    report = _report([("Captured stdout call", "ok")], longrepr=longrepr)
+    assert not redact_report_ids(report)
+    assert report.longrepr is longrepr
     assert report.outcome == "passed"

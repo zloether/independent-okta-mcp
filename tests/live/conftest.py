@@ -32,7 +32,7 @@ from typing import Any
 import anyio
 import httpx2
 import pytest
-from _hygiene import blank_secrets
+from _hygiene import blank_secrets, redact_report_ids
 from _live import (
     _TOKENS,
     ADMIN_GROUP,
@@ -235,10 +235,12 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
     """`no_secrets` sees only a test's own capture; output from module and session fixtures
     (the service token's, the sign-in fixture's) lands in the report's "Captured … setup"
     sections, which `-rA` prints, and a failure's text is printed too. `blank_secrets` removes
-    any of them that holds a secret, and fails the test."""
+    any of them that holds a secret, and fails the test; `redact_report_ids` then replaces Okta
+    object IDs, which name objects in the CI org, without failing it."""
     outcome = yield
     report: pytest.TestReport = outcome.get_result()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
     blank_secrets(report, _secrets())
+    redact_report_ids(report)
 
 
 @functools.cache
