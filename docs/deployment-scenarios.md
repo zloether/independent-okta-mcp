@@ -73,7 +73,7 @@ The load balancer does TLS and health checks. **Health-check on `/healthz`, aler
 Each replica reads the policy once, at startup, and never again: there is no hot reload. So a replica serves the policy it started with until it is replaced, and a rolling update runs old and new replicas side by side until it finishes, usually for minutes. **For that window the deployment grants two sets of access.** Which one a call gets depends on the replica the load balancer picks, and a client's cached tool list (kept up to 5 minutes) may come from the other one. The same holds for a config change (`OKTA_SCOPES`, say) and for an upgrade whose registry renames or removes a command.
 
 - **A change that only adds access** (a new role, a command added to a role): roll as usual. Until the rollout finishes, some calls are refused that soon won't be.
-- **A change that removes access** (a group taken off a role, a command removed, a `deny` added): **replace every replica at once instead of rolling.** Either blue/green (bring up the new set, wait for `/readyz` on it, move the load balancer to it, then stop the old set), or scale the old set to zero before the new one takes traffic (a short outage instead of a window of old access; in Kubernetes, `strategy: Recreate`). The old access then ends when the switch does, not when the last old replica drains.
+- **A change that removes access** (a group taken off a role, a command removed, a `deny` added): **replace every replica at once instead of rolling.** Either blue/green (bring up the new set, check `/readyz` on it, move the load balancer to it, then stop the old set), or scale the old set to zero before the new one takes traffic (a short outage instead of a window of old access; in Kubernetes, `strategy: Recreate`). The old access then ends when the switch does, not when the last old replica drains.
 - **Removing one person** needs no rollout: take them out of the role groups in Okta ([runbook §4.3](runbook.md#43-adding-a-user-removing-a-user)). To end all access at once, use the [kill switch](runbook.md#5-kill-switch).
 
 Check the new policy first with `okta-mcp --check`, run once as a one-off task or Job with the same image, variables and mounts as the replicas, the way [runbook §4.2](runbook.md#42-policy-change) does with `docker compose run`.
@@ -120,6 +120,10 @@ spec:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }
+          # Kubernetes ignores the image's HEALTHCHECK. Probe /healthz, not /readyz: an Okta
+          # outage fails /readyz on every pod at once (see above).
+          livenessProbe: { httpGet: { path: /healthz, port: 8080 } }
+          readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
           env:
             - { name: MCP_POLICY_FILE, value: /etc/okta-mcp/policy.yaml }
             - { name: MCP_CURSOR_KEY_FILE, value: /etc/okta-mcp-secrets/cursor_key }

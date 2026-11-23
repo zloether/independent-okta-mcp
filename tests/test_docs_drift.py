@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from okta_mcp.config import Config
+from okta_mcp.config import _SECRETS, Config  # pyright: ignore[reportPrivateUsage]
 from okta_mcp.exec.executor import tool_name
 
 ROOT = Path(__file__).parents[1]
@@ -72,6 +72,7 @@ def test_design_and_readme_counts_match_registry() -> None:
     assert re.search(rf"composite commands \(\*\*{n}\*\*\)", summary)
     assert re.search(rf"One MCP tool per domain\*\* \({n}\)", summary)
     assert re.search(rf"\({n + 2} total\)", summary)
+    assert re.search(rf"grouped into \*\*{n - 1} domains\*\*", summary)  # all but diagnostics
     assert f"{n} command domains" in README.read_text(encoding="utf-8")
 
 
@@ -140,7 +141,8 @@ def test_kubernetes_example_matches_image_and_config() -> None:
     in step with the image's user and the server's variables."""
     text = SCENARIOS.read_text(encoding="utf-8")
     blocks = [yaml.safe_load(b) for b in re.findall(r"```yaml\n(.*?)```", text, re.S)]
-    kustomize, deployment = blocks
+    (kustomize,) = [b for b in blocks if "configMapGenerator" in b]
+    (deployment,) = [b for b in blocks if b.get("kind") == "Deployment"]
     assert kustomize["configMapGenerator"][0]["files"] == ["policy.yaml"]
     pod = deployment["spec"]["template"]["spec"]
     user = re.search(r"^USER (\d+):(\d+)$", (ROOT / "Dockerfile").read_text(), re.M)
@@ -160,29 +162,47 @@ def test_kubernetes_example_matches_image_and_config() -> None:
     }
     env = {e["name"]: e["value"] for e in container["env"]}
     aliases = {f.alias for f in Config.model_fields.values() if f.alias}
-    assert set(env) <= aliases | {f"{a}_FILE" for a in aliases}
+    assert set(env) <= aliases | {f"{a}_FILE" for a in _SECRETS}
     mounts = [m["mountPath"] for m in container["volumeMounts"]]
     assert all(m["readOnly"] for m in container["volumeMounts"])
-    assert not any(m == "/run/secrets" or m.startswith("/var/run") for m in mounts)
+    for run in ("/run", "/var/run"):  # Debian: /var/run is /run, the service-account token's
+        assert not any(m == run or m.startswith(run + "/") for m in mounts)
+    # Kubernetes ignores the image's HEALTHCHECK; probes on /healthz, not /readyz, so an Okta
+    # outage doesn't take every pod out of the Service (scenario C).
+    for probe in ("livenessProbe", "readinessProbe"):
+        assert container[probe]["httpGet"] == {"path": "/healthz", "port": 8080}, probe
     for name in ("MCP_POLICY_FILE", "MCP_CURSOR_KEY_FILE", "OKTA_PRIVATE_KEY_FILE"):
         assert str(Path(env[name]).parent) in mounts, name
 
 
 def _anchors(path: Path) -> set[str]:
-    """GitHub's heading anchors: lower case, punctuation but `-` dropped, spaces to `-`."""
-    headings = re.findall(r"^#+ (.+)$", path.read_text(encoding="utf-8"), re.M)
-    return {re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-") for h in headings}
+    """GitHub's heading anchors: lower case, punctuation but `-` dropped, spaces to `-`, and
+    `-1`, `-2`, … on repeats. Lines in fenced code aren't headings."""
+    text = re.sub(r"^```.*?^```", "", path.read_text(encoding="utf-8"), flags=re.M | re.S)
+    anchors: set[str] = set()
+    for heading in re.findall(r"^#+ (.+)$", text, re.M):
+        slug = re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+        n, unique = 0, slug
+        while unique in anchors:
+            n += 1
+            unique = f"{slug}-{n}"
+        anchors.add(unique)
+    return anchors
 
 
-@pytest.mark.parametrize(
-    "doc",
-    [DESIGN, RUNBOOK, SCENARIOS, ROOT / "docs" / "okta-setup.md", README, AGENTS],
-    ids=lambda p: p.name,
-)
+WATCHED = [DESIGN, RUNBOOK, SCENARIOS, ROOT / "docs" / "okta-setup.md", README, AGENTS]
+"""Docs that `ci.yml`'s `paths` run CI for (`tests/test_ci_workflow.py`). Links into other docs
+aren't checked: a docs-only change to one skips CI, so it would break an unrelated PR."""
+
+
+@pytest.mark.parametrize("doc", WATCHED, ids=lambda p: p.name)
 def test_links_to_docs_resolve(doc: Path) -> None:
+    watched = {p.resolve() for p in WATCHED}
     broken = []
     for target, anchor in re.findall(r"\]\(([^)\s#]*\.md)?#([^)\s]+)\)", doc.read_text("utf-8")):
-        path = (doc.parent / target).resolve() if target else doc
+        path = (doc.parent / target).resolve() if target else doc.resolve()
+        if path not in watched:
+            continue
         if not path.is_file() or anchor not in _anchors(path):
             broken.append(f"{target}#{anchor}")
     assert broken == []

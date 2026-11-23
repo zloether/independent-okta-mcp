@@ -281,7 +281,7 @@ Run `uv run python scripts/okta-setup.py check --config okta-setup.yaml` on a sc
 
 Two settings bound what the server asks of Okta, and both count per process (per replica):
 
-- **`MCP_REQUESTS_PER_MINUTE`** (default 600): Okta requests per signed-in user in any 60 seconds. Every request counts: each page of a list, each request a composite command makes, and a 429 retry. The service token request doesn't. A user whose calls a load balancer spreads over N replicas gets up to N times it.
+- **`MCP_REQUESTS_PER_MINUTE`** (default 600): Okta requests per signed-in user in any 60 seconds. Every request counts: each page of a list, each request a composite command makes, and each retry (after a 429, or for a new DPoP nonce). The service token request doesn't. A user whose calls a load balancer spreads over N replicas gets up to N times it.
 - **`MCP_OKTA_MAX_INFLIGHT`** (default 10): Okta requests in flight at once; one user holds at most half, rounded up. It caps concurrency, not rate: at a typical latency of a fraction of a second, 10 slots allow thousands of requests a minute, more than any bucket. So the per-minute budget is held by the per-user limit times the users active at once, and in the end by Okta's 429s.
 
 Neither setting knows Okta's limits. Okta counts per endpoint group ("bucket") per minute for the whole org, shared by every integration, and also limits concurrent requests; the numbers depend on the org's plan and the endpoint, and change, so derive the settings from your org's own numbers, not from a table copied here.
@@ -296,7 +296,7 @@ Neither setting knows Okta's limits. Okta counts per endpoint group ("bucket") p
 
 **Then tune from the logs.** Okta, not this arithmetic, has the last word:
 
-- `okta_rate_limited` with `reason` `over_max_wait` or `retry_failed` ([§4.7](#47-operational-logs-and-alerts)), and `rate_limited` outcomes in the audit log, are calls that failed on Okta's limit. If they repeat, lower `MCP_REQUESTS_PER_MINUTE` (and `MCP_OKTA_MAX_INFLIGHT`, if they come in bursts) by 10–20%, and watch again for a day of normal use. `okta_rate_limited` with `retry: true` alone is a 429 the retry absorbed.
+- `okta_rate_limited` with a `reason` other than `principal_limit` ([design §13](design/mcp-server.md#13-observability) lists them; `over_max_wait` and `retry_failed` are the usual ones, [§4.7](#47-operational-logs-and-alerts)) is a call that failed on Okta's limit. The audit log's `rate_limited` outcome covers both limits, Okta's and the server's, so tell them apart by these lines and `limiter_rejected`. If Okta's repeat, lower `MCP_REQUESTS_PER_MINUTE` (and `MCP_OKTA_MAX_INFLIGHT`, if they come in bursts) by 10–20%, and watch again for a day of normal use. `okta_rate_limited` with `retry: true` alone is a 429 the retry absorbed.
 - `limiter_rejected` with no `okta_rate_limited` means users hit the server's own limit while Okta had room: raise `MCP_REQUESTS_PER_MINUTE` by 10–20% at a time.
 - `inflight_share_wait` lines mean a user had half the slots; often they are one user's slow System Log queries.
 - The audit log's `okta_requests` and `duration_ms` per call show which commands cost the most requests.
