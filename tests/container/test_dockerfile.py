@@ -1,4 +1,5 @@
-"""The Dockerfile's `BASE_IMAGE` argument (design §11.2), read statically: no Docker needed.
+"""The Dockerfile's `BASE_IMAGE` argument and build inputs (design §11.2), read statically: no
+Docker needed.
 
 The build-time check is the Dockerfile's own `RUN` command, run here with `sh`, so a change to it
 is tested as written. CI's `container` job also builds with the argument.
@@ -7,6 +8,7 @@ is tested as written. CI's `container` job also builds with the argument.
 import re
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -78,3 +80,21 @@ def test_build_check_accepts_only_the_default_or_a_digest(value: str, accepted: 
     )
     assert (run.returncode == 0) is accepted
     assert ("must be pinned by digest" in run.stderr) is not accepted
+
+
+def test_license_files_reach_the_project_build() -> None:
+    # `uv sync` builds the project, and uv_build fails if a `license-files` entry is missing
+    # (pyproject.toml): each must be in the build context and copied before that sync.
+    root = Path(__file__).parents[2]
+    files = tomllib.loads((root / "pyproject.toml").read_text())["project"]["license-files"]
+    allowed = (root / ".dockerignore").read_text().splitlines()
+    build = DOCKERFILE.split("FROM ${BASE_IMAGE} AS build\n", 1)[1]
+    before_sync = build.split("RUN uv sync --frozen --no-dev --no-editable", 1)[0]
+    copied = {
+        name
+        for line in re.findall(r"^COPY (?!--)(.+) \./$", before_sync, re.MULTILINE)
+        for name in line.split()
+    }
+    for name in files:
+        assert f"!{name}" in allowed, name
+        assert name in copied, name
