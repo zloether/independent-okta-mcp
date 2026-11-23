@@ -1,9 +1,27 @@
 name: CI
 
+# While the repository is private, Actions minutes are metered (2026-11-23): docs-only
+# changes skip CI, and the matrix is cut to the oldest and newest Python. Put both back
+# when it goes public (plan 8.3.1, repository settings). Docs a test reads still run CI
+# (tests/test_ci_workflow.py checks the list against the tests).
 on:
   push:
     branches: [main]
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!*.md"
+      - "docs/design/mcp-server.md"
+      - "docs/okta-setup.md"
+      - "docs/runbook.md"
   pull_request:
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!*.md"
+      - "docs/design/mcp-server.md"
+      - "docs/okta-setup.md"
+      - "docs/runbook.md"
 
 permissions:
   contents: read
@@ -19,7 +37,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14", "3.15"]
+        # 3.13 and 3.14 back with the full matrix when the repository is public.
+        python-version: ["3.12", "3.15"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

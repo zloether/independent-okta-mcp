@@ -15,12 +15,14 @@ name: live
 
 on:
   schedule:
-    - cron: "17 7 * * *"
+    # Weekly (Mondays) while the repository is private and Actions minutes are metered;
+    # back to nightly ("17 7 * * *") when it goes public (plan 8.3.1).
+    - cron: "17 7 * * 1"
   workflow_dispatch:
   push:
     branches: [main]
     # Only what the live run executes or reads: docs-only merges would spend the CI org's
-    # rate limit and add noise to the failure issue. The nightly run still catches Okta drift.
+    # rate limit and add noise to the failure issue. The scheduled run still catches Okta drift.
     paths:
       - "src/**"
       - "tests/live/**"
@@ -109,7 +111,7 @@ jobs:
     # on purpose, then checks `diagnostics login-failures` names each cause. The only job that
     # changes anything in Okta (System Log events, a lockout the seeded policy undoes). After
     # `live`, so the two don't share the CI org's rate limit at once; whatever `live` ended with,
-    # but not on a cancelled run (it would still lock the user). Nightly and on demand only, not
+    # but not on a cancelled run (it would still lock the user). Scheduled and on demand only, not
     # on push: two runs inside the policy's auto-unlock time would find the user still locked.
     needs: live
     if: ${{ !cancelled() && github.event_name != 'push' }}

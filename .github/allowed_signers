@@ -1,0 +1,4 @@
+# Keys that may sign release tags (plan 8.3.2; scripts/release-verify.py reads this file as it
+# is on main's tip, so removing a line here revokes that key for every later release).
+# Format: ssh-keygen(1) ALLOWED SIGNERS.
+149006+zloether@users.noreply.github.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJPrkAmmGR3HTDLJvURc1wWccJ4d6NAFlAq3h2WBLqIn

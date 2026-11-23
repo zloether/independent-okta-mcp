@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _hygiene import redact_ids
 from _live import PAGING_SIZE, Call, Refusals, Seeds
 
 from okta_mcp.exec.output import REDACTED
@@ -239,7 +240,8 @@ def _report(sweep: Sweep) -> None:
     target = os.environ.get("OKTA_LIVE_REPORT")
     if not target:
         return
-    Path(target).write_text(json.dumps(sweep.__dict__, indent=1, sort_keys=True))
+    # The workflow copies this into the run summary, which pytest's report hook doesn't see.
+    Path(target).write_text(redact_ids(json.dumps(sweep.__dict__, indent=1, sort_keys=True)))
 
 
 async def test_every_command(call: Call, seeds: Seeds, refusals: Refusals) -> None:

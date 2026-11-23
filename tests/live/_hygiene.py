@@ -1,12 +1,51 @@
 """Output hygiene for the live tests (plan 8.2.1): the part of `conftest.py`'s report hook that
 can be tested without a live org (`tests/test_live_hygiene.py`)."""
 
+import re
 from collections.abc import Sequence
 
 import pytest
 
 LEAK = "a secret value appeared in captured output"
 REMOVED = "[removed: held a secret value]"
+
+# Okta object IDs (users 00u…, groups 00g…, apps 0oa…, authorization servers aus…, zones
+# nzo…): 20 letters and digits, always with a digit. Not secrets, but they name objects in the
+# CI org, and the run logs and summaries are public once the repository is (2026-11-23, user
+# decision): redacted, not failed. A 20-letter word (a camelCase key name) has no digit.
+OKTA_ID = re.compile(r"(?<![0-9A-Za-z])(?=[A-Za-z]*[0-9])[0-9A-Za-z]{20}(?![0-9A-Za-z])")
+ID_LABEL = "<okta-id>"
+
+
+def redact_ids(text: str) -> str:
+    """`text` with every Okta-shaped object ID replaced by `ID_LABEL`."""
+    return OKTA_ID.sub(ID_LABEL, text)
+
+
+def redact_report_ids(report: pytest.TestReport) -> bool:
+    """Redact Okta IDs in every part of `report` pytest would print: its captured sections and
+    its failure text. The outcome is unchanged. True if anything was redacted."""
+    changed = False
+    sections: list[tuple[str, str]] = []
+    for title, text in report.sections:
+        clean = redact_ids(text)
+        changed |= clean != text
+        sections.append((title, clean))
+    if isinstance(report.longrepr, tuple):
+        # A skip: pytest unpacks (path, line, reason), so keep the shape.
+        path, line, reason = report.longrepr
+        if (clean := redact_ids(reason)) != reason:
+            changed = True
+            report.longrepr = (path, line, clean)
+    elif report.longrepr is not None:
+        failure = str(report.longrepr)
+        clean = redact_ids(failure)
+        if clean != failure:
+            changed = True
+            report.longrepr = clean
+    if changed:
+        report.sections = sections
+    return changed
 
 
 def blank_secrets(report: pytest.TestReport, secrets: Sequence[str]) -> bool:

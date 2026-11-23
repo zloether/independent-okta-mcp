@@ -11,12 +11,15 @@ Rules for agents working in this repo. Loaded every session: keep it to what eve
 | [`docs/implementation-plan.md`](docs/implementation-plan.md) | Starting or finishing a step: its status, checklist, Verify block and "How to work a step" |
 | [`docs/decisions-log.md`](docs/decisions-log.md) | Before changing something a step decided (search by step ID); append a row for every decision and review outcome |
 | [`docs/design/mcp-server.md`](docs/design/mcp-server.md) | Only the § refs the step names; update it in the same PR if the step changes the design |
+| [`docs/releasing.md`](docs/releasing.md) | Changing `release.yml`, `scripts/release-verify.py` or the release steps (human doc: update it with them) |
 | [`docs/agents/subagents.md`](docs/agents/subagents.md) | Before delegating to a subagent |
 | [`docs/runbook.md`](docs/runbook.md), [`docs/deployment-scenarios.md`](docs/deployment-scenarios.md), [`docs/okta-setup.md`](docs/okta-setup.md), [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md), [`CHANGELOG.md`](CHANGELOG.md) | Changing operator-visible behavior (human docs: update them with it) |
 
 ## Working a step
 
 Follow the plan's "How to work a step": tests first, update the plan's status and the decisions log. Every change gets **`/code-review`** before a PR is opened (or, on a branch with one, before it's called done); fix the findings or log why not, then re-run the checks. A change to a trust boundary (below) also gets **`/security-review`**; neither replaces the other. Re-run both on fix commits that touch a trust boundary. Log each review's outcome.
+
+**Push less often.** While the repository is private, GitHub Actions minutes are metered (2,000 a month) and every push to a pull request branch runs CI (about 11 billed minutes). Commit locally, and push when the change is reviewed and ready, not after each commit or fix. Docs-only pushes skip CI (`ci.yml` `paths`). Never start `live.yml` by hand unless the task needs it.
 
 Done means these pass, plus the reviews:
 
@@ -58,4 +61,5 @@ Hardest to undo (design §12.2); changes need `/security-review`, and their plan
 - `exec/cursor.py`, `okta/paginate.py`: token-attached URL following
 - `okta/token.py`, `okta/dpop.py`: service credentials
 - `Dockerfile`, `docker/compose.example.yaml`: runtime privileges
+- `.github/workflows/release.yml`, `scripts/release-verify.py`, `.github/allowed_signers`: what is published, and who can cause it
 - `scripts/okta-setup.py`, `terraform/okta/`: run with Super Admin; decide who gets tokens
