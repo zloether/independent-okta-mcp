@@ -14,9 +14,12 @@ whose captured output holds the service token or a line of the private key.
 
 Seed objects come from `okta-ci-org-terraform` in the infra repo, found by name from
 `OKTA_LIVE_SEED_PREFIX` (default `okta-mcp-ci`) and `OKTA_LIVE_SEED_DOMAIN` (`example.com`).
-Nothing here creates or changes anything in Okta: the client has only `get`.
+Nothing here creates or changes anything in Okta (the client has only `get`), except
+`test_signin.py`: its sign-ins fail on purpose, as the seeded test user, and lock that user
+until the seeded policy unlocks it. It runs only with `OKTA_LIVE_SIGNIN_PASSWORD` set.
 """
 
+import functools
 import json
 import logging
 import os
@@ -29,6 +32,7 @@ from typing import Any
 import anyio
 import httpx2
 import pytest
+from _hygiene import blank_secrets
 from _live import (
     _TOKENS,
     ADMIN_GROUP,
@@ -226,13 +230,29 @@ def no_secrets(
     sys.stderr.write(err)
 
 
-def _secrets() -> list[str]:
-    found: list[str] = []
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Iterator[None]:
+    """`no_secrets` sees only a test's own capture; output from module and session fixtures
+    (the service token's, the sign-in fixture's) lands in the report's "Captured … setup"
+    sections, which `-rA` prints, and a failure's text is printed too. `blank_secrets` removes
+    any of them that holds a secret, and fails the test."""
+    outcome = yield
+    report: pytest.TestReport = outcome.get_result()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+    blank_secrets(report, _secrets())
+
+
+@functools.cache
+def _key_lines() -> tuple[str, ...]:
+    """The private key's body lines, read once: the key file doesn't change during a run."""
     path = os.environ.get("OKTA_PRIVATE_KEY_FILE")
-    if path and Path(path).is_file():
-        lines = Path(path).read_text().splitlines()
-        found += [ln for ln in lines if len(ln) >= 40 and not ln.startswith("-----")]
-    return found + list(_TOKENS)
+    if not (path and Path(path).is_file()):
+        return ()
+    lines = Path(path).read_text().splitlines()
+    return tuple(ln for ln in lines if len(ln) >= 40 and not ln.startswith("-----"))
+
+
+def _secrets() -> list[str]:
+    return [*_key_lines(), *_TOKENS]
 
 
 @pytest.fixture(scope="session")

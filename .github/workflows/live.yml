@@ -104,12 +104,85 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/ci-service.pem"
 
+  signin:
+    # Login-failure checks (tests/live/test_signin.py): signs the seeded test user in to fail
+    # on purpose, then checks `diagnostics login-failures` names each cause. The only job that
+    # changes anything in Okta (System Log events, a lockout the seeded policy undoes). After
+    # `live`, so the two don't share the CI org's rate limit at once; whatever `live` ended with,
+    # but not on a cancelled run (it would still lock the user). Nightly and on demand only, not
+    # on push: two runs inside the policy's auto-unlock time would find the user still locked.
+    needs: live
+    if: ${{ !cancelled() && github.event_name != 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: okta-dev
+    env:
+      OKTA_LIVE: "1"
+      MCP_REQUESTS_PER_MINUTE: "60"
+    steps:
+      - name: Configured?
+        id: setup
+        env:
+          PASSWORD: ${{ secrets.OKTA_LIVE_SIGNIN_PASSWORD }}
+        # Until the sign-in seeds and their secret exist, say so and pass: the rest of the
+        # live checks shouldn't go red for a part not set up yet. Never prints the value.
+        run: |
+          if [ -z "$PASSWORD" ]; then
+            echo "::notice::Sign-in checks not configured: no OKTA_LIVE_SIGNIN_PASSWORD secret on okta-dev"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.setup.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: steps.setup.outputs.enabled == 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.24"
+          python-version: "3.12"
+      - if: steps.setup.outputs.enabled == 'true'
+        run: uv sync --frozen
+      - name: Write the service key
+        if: steps.setup.outputs.enabled == 'true'
+        env:
+          KEY: ${{ secrets.OKTA_PRIVATE_KEY }}
+        # As in `live`.
+        run: |
+          case "$KEY" in
+            *"-----BEGIN "*"PRIVATE KEY-----"*) ;;
+            *) echo "::error::Secret OKTA_PRIVATE_KEY is empty or not PEM"; exit 1 ;;
+          esac
+          umask 077
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/ci-service.pem"
+          echo "OKTA_PRIVATE_KEY_FILE=$RUNNER_TEMP/ci-service.pem" >> "$GITHUB_ENV"
+      - name: Sign-in checks
+        if: steps.setup.outputs.enabled == 'true'
+        env:
+          OKTA_ORG_URL: ${{ secrets.OKTA_ORG_URL }}
+          OKTA_CLIENT_ID: ${{ secrets.OKTA_CLIENT_ID }}
+          OKTA_KEY_ID: ${{ secrets.OKTA_KEY_ID }}
+          OKTA_SCOPES: ${{ secrets.OKTA_SCOPES }}
+          OKTA_LIVE_SIGNIN_PASSWORD: ${{ secrets.OKTA_LIVE_SIGNIN_PASSWORD }}
+        run: |
+          host="${OKTA_ORG_URL#*://}"
+          host="${host%%/*}"
+          if [ -n "$host" ]; then echo "::add-mask::$host"; fi
+          uv run pytest tests/live/test_signin.py --tb=line -p no:cacheprovider -rA
+      - name: Remove the service key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/ci-service.pem"
+
   report:
     # Its own job: it needs to write issues, and gets no environment, secret or checkout.
-    needs: live
+    needs: [live, signin]
     # Not only failure(): a run stopped by its timeout ends cancelled, and should open the
     # issue too.
-    if: always() && needs.live.result != 'success'
+    # `signin` is skipped on push, and that isn't a failure.
+    if: >-
+      always() && (needs.live.result != 'success' ||
+      (needs.signin.result != 'success' && needs.signin.result != 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
