@@ -161,11 +161,37 @@ async def test_bearer_without_dpop(key_file: Path) -> None:
         "/api/v1/users\n",
         "/api/v1/../../oauth2/v1/clients",
         "https://evil.example.com/api/v1/users",
+        "/api/v1/..#x",  # httpx2 would send `/api`
+        "/api/v1/users#frag",
     ],
 )
 def test_refuses_paths_off_the_management_api(path: str) -> None:
     with pytest.raises(probe.ProbeError):
         probe.check_path(path)
+
+
+@pytest.mark.anyio
+async def test_a_repeated_path_reports_its_own_answer(key_file: Path) -> None:
+    calls = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        if request.url.path == "/oauth2/v1/token":
+            return token_ok()
+        calls += 1
+        if calls == 1:
+            return httpx2.Response(200, json=[])
+        raise httpx2.ConnectError("refused")
+
+    results = await probe.run(
+        settings(key_file),
+        ["/api/v1/users", "/api/v1/users"],
+        transport=httpx2.MockTransport(handler),
+    )
+    assert [probe.describe(r) for r in results] == [
+        "GET /api/v1/users -> 200 list of 0",
+        "GET /api/v1/users -> - no answer",
+    ]
 
 
 @pytest.mark.parametrize(

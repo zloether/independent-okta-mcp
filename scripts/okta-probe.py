@@ -16,7 +16,9 @@ Prints one line per path: `GET <path> -> <status> <detail>`, where `detail` is `
 `object` for a success, and Okta's `errorCode` (only if it is `E` and seven digits) or OAuth
 `error` code (lower-case letters and `_`) for a failure, else `-`. Never a token, a response
 body, a field value or Okta's error text. Paths must be on the org's Management API
-(`/api/v1/…`, `/<area>/api/…` or `/oauth2/v1/clients/…`). Only GET is ever sent.
+(`/api/v1/…`, `/<area>/api/…` or `/oauth2/v1/clients/…`), percent-encoded as they are to be
+sent. Besides the token request (a POST to `/oauth2/v1/token`, as the server sends), only GET
+is sent.
 
 Exit status: 0 every path answered 2xx, 1 at least one didn't, 2 settings or token error.
 """
@@ -91,11 +93,23 @@ def check_org(org: str) -> str:
 
 
 def check_path(path: str) -> str:
-    """`path` if it is a Management API path on the org, else ProbeError."""
-    if not _API_PATH.fullmatch(path) or _DOT_SEGMENT.search(path) or "\\" in path:
+    """`path` if it is a Management API path that is sent exactly as given, else ProbeError.
+    Anything httpx2 would rewrite (dot segments, a fragment, a character it percent-encodes)
+    is refused, so the path checked is the path sent."""
+    try:
+        sent = httpx2.URL("https://org.invalid" + path).raw_path.decode()
+    except (httpx2.InvalidURL, UnicodeDecodeError):
+        sent = None
+    if (
+        not _API_PATH.fullmatch(path)
+        or _DOT_SEGMENT.search(path)
+        or "\\" in path
+        or "#" in path
+        or sent != path
+    ):
         raise ProbeError(
             f"refused {path!r}: only Management API paths "
-            "(/api/v1/…, /<area>/api/…, /oauth2/v1/clients/…)"
+            "(/api/v1/…, /<area>/api/…, /oauth2/v1/clients/…), percent-encoded, no fragment"
         )
     return path
 
@@ -157,13 +171,14 @@ async def run(
         results: list[Result] = []
         for path in paths:
             url = org + path
+            answers.pop(path, None)  # this request's answer only, if the path repeats
             try:
                 await client.get(url)
             except (UpstreamError, RateLimited):
                 pass  # the answer hook has the status; the client's message is for MCP callers
             except OriginError:
                 raise ProbeError(f"refused {path!r}: not on the org") from None
-            status, detail = answers.get(httpx2.URL(url).raw_path.decode(), (None, "no answer"))
+            status, detail = answers.get(path, (None, "no answer"))
             results.append(Result(path, status, detail))
         return results
 

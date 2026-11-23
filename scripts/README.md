@@ -36,7 +36,7 @@ Sends one GET per Management API path with the server's own service app settings
 uv run python scripts/okta-probe.py /api/v1/mappings /api/v1/meta/schemas/user/default
 ```
 
-It prints no token, body, field value or Okta error text, and sends only GET.
+It prints no token, body, field value or Okta error text. Besides the service token request, it sends only GET. Give paths percent-encoded, as they are to be sent.
 
 ## update-spec.py
 

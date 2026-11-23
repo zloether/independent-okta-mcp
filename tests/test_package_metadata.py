@@ -36,8 +36,8 @@ def test_python_classifiers_match_requires_python() -> None:
 
 
 def test_no_license_classifier() -> None:
-    # The license isn't OSI-approved, so no `License ::` classifier fits; PEP 639 also forbids
-    # one alongside a license expression.
+    # The license isn't OSI-approved, so no `License ::` classifier fits (and PEP 639 forbids
+    # one if `license` ever becomes an SPDX expression).
     assert not [c for c in PROJECT["classifiers"] if c.startswith("License ::")]
 
 

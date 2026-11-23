@@ -25,4 +25,6 @@ No release has been tagged and no image is published; the server builds from a c
 - Audit log, per-user request limits, JSON operational logs.
 - Container image definition and Compose example; Okta setup script and Terraform module.
 - `diagnostics login-failures`, a composite command for help-desk roles.
+- `scripts/okta-probe.py`: one GET per Management API path with the server's own service app settings, printing each status and Okta error code, to find the admin role a scope needs on your org.
+- Install docs for a package install from a release's hashed `requirements.lock` (runbook §3.6); a plain `pip install` is not supported for production.
 - `BASE_IMAGE` build argument: build the image on your own Debian or Ubuntu Python base, pinned by digest (a tag is refused).
