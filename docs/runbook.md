@@ -152,7 +152,9 @@ REPO=zloether/independent-okta-mcp
 gh release download "v$VERSION" --repo "$REPO" \
   --pattern requirements.lock --pattern SHA256SUMS --pattern '*.whl'
 sha256sum -c --ignore-missing SHA256SUMS
-gh attestation verify independent_okta_mcp-"$VERSION"-py3-none-any.whl --repo "$REPO"
+gh attestation verify independent_okta_mcp-"$VERSION"-py3-none-any.whl --repo "$REPO" \
+  --signer-workflow "$REPO/.github/workflows/release.yml" --source-ref "refs/tags/v$VERSION" \
+  --deny-self-hosted-runners   # --repo alone accepts any workflow or branch in the repository
 
 python3.12 -m venv /opt/okta-mcp                   # Python 3.12 or later
 /opt/okta-mcp/bin/pip install --require-hashes --no-deps -r requirements.lock

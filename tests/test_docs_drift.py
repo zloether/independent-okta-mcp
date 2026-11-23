@@ -206,20 +206,17 @@ def _anchors(path: Path) -> set[str]:
     return anchors
 
 
-WATCHED = [DESIGN, RUNBOOK, SCENARIOS, ROOT / "docs" / "okta-setup.md", README, AGENTS]
-"""Docs that `ci.yml`'s `paths` run CI for (`tests/test_ci_workflow.py`). A link into another
-doc is checked only for the file, not the anchor: a docs-only change to that doc's headings
-skips CI, so it would break an unrelated PR."""
-
-
-@pytest.mark.parametrize("doc", WATCHED, ids=lambda p: p.name)
+@pytest.mark.parametrize(
+    "doc",
+    sorted([*ROOT.glob("*.md"), *(ROOT / "docs").rglob("*.md")]),
+    ids=lambda p: str(p.relative_to(ROOT)),
+)
 def test_links_to_docs_resolve(doc: Path) -> None:
-    watched = {p.resolve() for p in WATCHED}
     broken = []
     for target, anchor in re.findall(r"\]\(([^)\s#]*\.md)?#([^)\s]+)\)", doc.read_text("utf-8")):
         path = (doc.parent / target).resolve() if target else doc.resolve()
         if not path.is_file():
             broken.append(f"{target}#{anchor} (no such file)")
-        elif path in watched and anchor not in _anchors(path):
+        elif anchor not in _anchors(path):
             broken.append(f"{target}#{anchor}")
     assert broken == []

@@ -126,6 +126,24 @@ def test_build_jobs_check_out_the_tagged_commit(jobs: dict[str, dict[str, Any]])
             assert step["with"].get("ref") == "${{ github.sha }}", name
 
 
+@pytest.mark.parametrize(
+    "path", [WORKFLOW, ROOT / "docs" / "releasing.md", ROOT / "docs" / "runbook.md"]
+)
+def test_attestation_verify_pins_release_workflow_and_tag(path: Path) -> None:
+    """`--repo` alone accepts an attestation from any workflow on any branch of the repo,
+    and anyone with write access can run one (8.3.1 access review)."""
+    text = path.read_text().replace("\\\n", " ")
+    commands = re.findall(r"gh attestation verify [^\n`]+", text)
+    assert commands, path
+    repo = r"(\$GITHUB_REPOSITORY|\$REPO|zloether/independent-okta-mcp)"
+    # $GITHUB_REF is the pushed tag only inside the workflow; on an operator's machine it is unset.
+    ref = r"(refs/tags/v|\$GITHUB_REF\b)" if path == WORKFLOW else r"refs/tags/v"
+    for cmd in commands:
+        assert re.search(rf'--signer-workflow "?{repo}/\.github/workflows/release\.yml\b', cmd), cmd
+        assert re.search(rf'--source-ref "?{ref}', cmd), cmd
+        assert "--deny-self-hosted-runners" in cmd, cmd
+
+
 def test_allowed_signers_file() -> None:
     lines = [ln for ln in SIGNERS.read_text().splitlines() if ln and not ln.startswith("#")]
     assert lines

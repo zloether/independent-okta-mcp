@@ -26,6 +26,6 @@ No release has been tagged and no image is published; the server builds from a c
 - Container image definition and Compose example; Okta setup script and Terraform module.
 - `diagnostics login-failures`, a composite command for help-desk roles.
 - `scripts/okta-probe.py`: one GET per Management API path with the server's own service app settings, printing each status and Okta error code, to find the admin role a scope needs on your org.
-- Install docs for a package install from a release's hashed `requirements.lock` (runbook §3.6); a plain `pip install` is not supported for production.
+- Install docs for a package install from a release's hashed `requirements.lock` (runbook §3.6); a plain `pip install` is not supported for production. Its `gh attestation verify` accepts only an attestation made by `release.yml` for that tag on a GitHub-hosted runner.
 - The package states its license as `LicenseRef-Commons-Clause-Apache-2.0` and ships `LICENSE` and `NOTICE` (the vendored Okta spec's attribution) in the wheel, the sdist and the image.
 - `BASE_IMAGE` build argument: build the image on your own Debian or Ubuntu Python base, pinned by digest (a tag is refused).

@@ -50,10 +50,12 @@ If a run fails after `image` pushed, the GHCR tag exists but no release does; fi
 
 ## Checking a release
 
+`--repo` alone accepts an attestation from any workflow on any branch of the repository, and anyone with write access can run one; the other flags pin it to `release.yml` run for that tag on a GitHub-hosted runner.
+
 ```bash
-gh attestation verify oci://ghcr.io/zloether/independent-okta-mcp@sha256:<digest> --repo zloether/independent-okta-mcp
+gh attestation verify oci://ghcr.io/zloether/independent-okta-mcp@sha256:<digest> --repo zloether/independent-okta-mcp --signer-workflow zloether/independent-okta-mcp/.github/workflows/release.yml --source-ref refs/tags/v<version> --deny-self-hosted-runners
 ```
 
 ```bash
-gh attestation verify independent_okta_mcp-<version>-py3-none-any.whl --repo zloether/independent-okta-mcp
+gh attestation verify independent_okta_mcp-<version>-py3-none-any.whl --repo zloether/independent-okta-mcp --signer-workflow zloether/independent-okta-mcp/.github/workflows/release.yml --source-ref refs/tags/v<version> --deny-self-hosted-runners
 ```
