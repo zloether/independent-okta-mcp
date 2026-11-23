@@ -13,8 +13,9 @@ Passes (exit 0) only if all hold, else exits 1 with one fixed message:
 - the tagged commit is `--sha` (the workflow's `GITHUB_SHA`) and is on `main`;
 - `project.version` in that commit's `pyproject.toml` equals the name without the `v`.
 
-With `--fetch`, first fetches `main` (unshallowing a shallow clone) and the tag from `origin`, overwriting a local tag of
-that name (actions/checkout can leave a lightweight copy of an annotated tag). Writes
+With `--fetch`, first fetches `main` (unshallowing a shallow clone) and the tag from
+`origin`, overwriting a local tag of that name (actions/checkout can leave a lightweight
+copy of an annotated tag). Writes
 `version=` and `prerelease=` to `$GITHUB_OUTPUT`. Prints nothing from the signature, the
 signers file or git's output: only the tag name, after it has matched the pattern.
 """
