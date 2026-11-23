@@ -80,7 +80,7 @@ Check the new policy first with `okta-mcp --check`, run once as a one-off task o
 
 #### Kubernetes
 
-> **Unverified:** not run against a cluster. Checked only against the [`Dockerfile`](../Dockerfile) (user and group 10001) and the mounts in [`docker/compose.example.yaml`](../docker/compose.example.yaml).
+> **Run on a local cluster** (2026-11-23: Docker Desktop's Kubernetes 1.36, placeholder Okta values), with three additions the excerpt leaves out: `spec.selector` and pod labels (required), and the locally built image with `imagePullPolicy: Never`. Then uid 10001 read the ConfigMap and Secret files (owner root, group 10001, `0440`); the server started with a read-only root filesystem, no capabilities, `no_new_privs` and the RuntimeDefault seccomp filter, and no service account token mounted; a policy edit made a new ConfigMap name and a rollout; `0400` without `fsGroup` failed with exit 2 naming the file. **Not run:** an image from a registry by digest, `Recreate` or blue/green, a Service or load balancer in front, and `/readyz` against a real org.
 
 - **Mount the policy from a ConfigMap whose name carries a hash of its content**, so a policy edit is a new pod template, and so a new rollout. Kustomize's `configMapGenerator` does this: it appends a hash of the content to the name and rewrites the Deployment's reference. Without Kustomize, put the hash in the name yourself (`okta-mcp-policy-<first 10 hex of sha256>`). Old pods keep reading the old ConfigMap until they are gone, and keeping it makes a rollback another rollout. A Secret works the same way; for the service key and cursor key, which come from a secrets manager, follow the key rotation steps instead ([runbook §4.4](runbook.md#44-service-key-rotation), [§4.5](runbook.md#45-cursor-key-rotation)), since they end in a restart too.
 - **Don't edit a mounted ConfigMap in place.** The kubelet updates the files in running pods eventually (not at all for a `subPath` mount), but the server read its policy at startup, so nothing changes until pods restart. Then the pods that happen to restart (a crash, an eviction, a scale-up) read the new file while the rest serve the old one: two policies, with no rollout to show it or to finish it.
@@ -88,7 +88,7 @@ Check the new policy first with `okta-mcp --check`, run once as a one-off task o
 - **Keep the secrets out of `/run/secrets`** (the compose example's path): on Debian-based images `/var/run` is `/run`, where Kubernetes mounts the service account token under `/var/run/secrets/kubernetes.io/`. The server never calls the Kubernetes API, so turn that token off too.
 
 ```yaml
-# kustomization.yaml. Unverified: not run against a cluster.
+# kustomization.yaml
 resources: [deployment.yaml]
 configMapGenerator:
   - name: okta-mcp-policy          # becomes okta-mcp-policy-<hash>
@@ -96,7 +96,7 @@ configMapGenerator:
 ```
 
 ```yaml
-# deployment.yaml (excerpt). Unverified: not run against a cluster.
+# deployment.yaml (excerpt: add selector and labels)
 apiVersion: apps/v1
 kind: Deployment
 metadata:

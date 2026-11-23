@@ -137,8 +137,8 @@ def test_agents_docs_table_links_exist() -> None:
 
 
 def test_kubernetes_example_matches_image_and_config() -> None:
-    """Deployment scenario C's manifest (plan 7.4) is unverified against a cluster; this keeps it
-    in step with the image's user and the server's variables."""
+    """Deployment scenario C's manifest (plan 7.4), as run on a local cluster on 2026-11-23: keeps
+    it in step with the image's user and the server's variables, and with the modes that ran."""
     text = SCENARIOS.read_text(encoding="utf-8")
     docs = [d for b in re.findall(r"```yaml\n(.*?)```", text, re.S) for d in yaml.safe_load_all(b)]
     blocks = [d for d in docs if isinstance(d, dict)]
@@ -155,7 +155,7 @@ def test_kubernetes_example_matches_image_and_config() -> None:
     assert ctx["seccompProfile"] == {"type": "RuntimeDefault"}
     for volume in pod["volumes"]:
         source = volume.get("configMap") or volume["secret"]
-        assert source["defaultMode"] & 0o040, "group 10001 must be able to read it"
+        assert source["defaultMode"] == 0o440, "read by group 10001 (fsGroup), no one else"
     (container,) = pod["containers"]
     assert container["securityContext"] == {
         "readOnlyRootFilesystem": True,

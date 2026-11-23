@@ -407,13 +407,13 @@ Design: §12.3 · Depends: 4.5
 - [x] `audit.py`: one JSON line per call/denial; `MCP_AUDIT_ARGS=hash`; arg redaction; never result bodies
 - [x] Tests: fields present; hash mode; no secrets/tokens in output
 
-### 6.2 Limiter & operational logs ◐
+### 6.2 Limiter & operational logs ☑
 Design: §6.5, §13 · Depends: 2.4, 4.5
 - [x] Per-principal Okta-request limiter enforced in the HTTP path; `rate_limited` errors
 - [x] Per-principal share of the in-flight slots (e.g. at most half of `MCP_OKTA_MAX_INFLIGHT`): ten slow System Log calls from one user fit inside `MCP_REQUESTS_PER_MINUTE` and hold every slot (2026-11-10 review)
 - [x] Back off after a failed service-token request (a few seconds, served from the stored error): today every tool call during an outage or a bad key sends its own token POST, and those aren't charged to the per-principal limiter
 - [x] Log Okta's `errorCode` on an upstream 401/403 (a fixed Okta string, not result data), so an operator can tell a missing admin role (`E0000006`) from a missing feature (`E0000015`); today every 403 gets one fixed message and no code (2026-11-13 V6 sweep)
-- [ ] V16: cap the service app's rate-limit share in the dev org and confirm 429s arrive at the cap; record the value for the runbook (needs the dev org)
+- [x] V16: cap the service app's rate-limit share in the dev org and confirm 429s arrive at the cap; record the value for the runbook. Done 2026-11-23: 10% (100% → `X-Rate-Limit-Limit: 500`, 10% → `50`, 429 from request #51; see the [decisions log](decisions-log.md))
 - [x] Structured operational logs with `request_id`; 429/retry/limiter/truncation/JWKS events
 - [x] Tests: integration test trips the limiter; log events emitted
 
@@ -431,12 +431,12 @@ Design: §11.2 · Depends: 4.5
 
 Verify: `docker build . && docker run --read-only …` health checks pass; CI container job green; `/security-review`.
 
-### 7.2 Compose example 🔒 ◐
+### 7.2 Compose example 🔒 ☑
 Design: §11.4 · Depends: 7.1
 - [x] `docker/compose.example.yaml`: secrets as files, read-only policy file mount, read-only root FS, `cap_drop: [ALL]`, `no-new-privileges`, loopback port binding (or no published port, proxy on a shared network), with a comment saying why: `MCP_TRUST_PROXY` trusts any peer (design §11.4)
 - [x] `tests/test_compose_example.py`: hardening, loopback-only ports, no inline secrets, no `MCP_ENV`/dev-mode override, read-only policy mount that must exist, example values pass `load_config`
 - [x] CI brings the example up with the built image: `tests/container/test_compose.py` in the `container` job
-- [ ] Bring-up with dev-org values (needs the dev org; done with placeholder values, see the [decisions log](decisions-log.md)). A deployment with dev-org values runs (2026-11-16) from a private compose file with the same runtime hardening, but its image comes from a bundle and its logs go to CloudWatch, so this example file itself is still to bring up
+- [x] Bring-up with dev-org values: done 2026-11-23, `compose.example.yaml` unchanged plus a private override of its `CHANGE` values only, to a healthy container and `/readyz` 200 (see the [decisions log](decisions-log.md)). `MCP_PUBLIC_URL` was a placeholder, so no `/mcp` call with a real token went through this container; that path ran on 2026-11-16's private deployment and is 4.6's
 
 Verify: `docker compose -f docker/compose.example.yaml config` validates; bring-up with dev-org values works.
 
@@ -447,7 +447,7 @@ Design: §11.4, Appendix C · Depends: 7.2, 0.5
 - [x] Audit log handling (6.1): restrict read access (the file is created 0600), retention, SIEM shipping; rotate a file sink with `copytruncate`, since the server doesn't reopen it
 - [x] Refresh tokens and user removal (spike 0.6): choosing A or B (link [`okta-setup.md`](okta-setup.md#refresh-tokens-option-a-or-b)); removing a user is group removal under A, plus clearing sessions with `oauthTokens=true` (or deactivating the user) under B; under B the Global Session Policy doesn't bound refresh chains, so `lifetime_minutes` is the re-sign-in and MFA interval; failed refreshes have no `User` target in the System Log, so find them by client ID
 - [ ] Clean-machine walkthrough to a working `/readyz` (needs the dev org; the Verify below)
-- [ ] Settle the runbook's **unverified** items against the dev org: whether the console keeps a pasted JWK's `kid`, a gap-free Terraform key rotation, whether `okta-setup.py check` works with a token narrower than Super Administrator, the rate-limit share (V16), and whether deactivating the service app ends service tokens already issued (kill switch step 2). The §3.3 Caddyfile is settled (2026-11-16, see the [decisions log](decisions-log.md))
+- [ ] Settle the runbook's **unverified** items against the dev org: whether the console keeps a pasted JWK's `kid`, a gap-free Terraform key rotation, whether `okta-setup.py check` works with a token narrower than Super Administrator (Read-only Administrator doesn't, 2026-11-23; Org Administrator or a custom role not tried), the rate-limit share (V16, settled 2026-11-23: it caps the service app), and whether deactivating the service app ends service tokens already issued (kill switch step 2). The §3.3 Caddyfile is settled (2026-11-16, see the [decisions log](decisions-log.md))
 - [x] `okta-mcp --check`: load config, registry, scrub rules and policy, print warnings, exit 0 or 2 without serving, so a policy change can be checked before the restart that would otherwise be an outage (runbook §4.2)
 
 Verify: someone (or a fresh Claude session) follows the runbook on a clean machine to a working `/readyz`.
@@ -455,7 +455,7 @@ Verify: someone (or a fresh Claude session) follows the runbook on a clean machi
 ### 7.4 Replicated policy rollout ☑
 Design: §11.4 · Depends: 7.3 · From the deployment-model review, 2026-11-20 (decisions log)
 - [x] `docs/deployment-scenarios.md` C: a rolling update runs two policies until it finishes (minutes), which the page now calls two sets of access. Say so, and when it matters: for a change that removes access, replace every replica at once (blue/green, or scale the old set to zero before the new one takes traffic) rather than rolling
-- [x] Kubernetes: mount the policy from a ConfigMap (or Secret) whose name carries a hash of its content, so a policy edit is a new rollout; an in-place update changes nothing until pods restart (no hot reload) and leaves pods on different files. Note the same for `fsGroup` or `defaultMode` so the mounted secrets and policy are readable by uid 10001. Done 2026-11-23 as [policy rollout](deployment-scenarios.md#policy-rollout-across-replicas); the manifest is marked unverified (no cluster) and `tests/test_docs_drift.py` pins it to the Dockerfile's user and `Config`'s variables
+- [x] Kubernetes: mount the policy from a ConfigMap (or Secret) whose name carries a hash of its content, so a policy edit is a new rollout; an in-place update changes nothing until pods restart (no hot reload) and leaves pods on different files. Note the same for `fsGroup` or `defaultMode` so the mounted secrets and policy are readable by uid 10001. Done 2026-11-23 as [policy rollout](deployment-scenarios.md#policy-rollout-across-replicas); `tests/test_docs_drift.py` pins it to the Dockerfile's user and `Config`'s variables. Run on a local cluster 2026-11-23 (Docker Desktop Kubernetes): file modes, security context and the policy-edit rollout as the page says; see the [decisions log](decisions-log.md)
 - [x] Runbook §4.2 links the replicated variant instead of repeating it
 
 Verify: the page's C section covers both; `/code-review`.
@@ -514,12 +514,12 @@ Review of 2026-11-15 before making the repository public (see the [decisions log
 - [x] History and tree scanned for secrets, real org hostnames and real email domains: none
 - [x] `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `NOTICE` (Okta spec attribution, non-affiliation); README status says what has and hasn't run live, and that there is no independent audit
 - [x] `docs/compatibility-matrix.md` with how a client connects; runbook: what redaction doesn't cover (custom profile attributes, System Log string values), a proxy example and limits; design §12.1 and R8 for the same; request body limit pinned by a test
-- [x] Pull request text read before publication (62 pull requests: bodies, comments, reviews, review comments; delegated, spot-checked; see the decisions log): no secrets, org identifiers, real IDs, personal data or pasted responses. Repeated 2026-11-23 for #63–#84 and issues #68 and #85 (bodies, comments, reviews, review comments; none had a comment or review besides the issues' bot links): clean. Repeat for anything opened between then and the visibility change
-- [ ] **Repository settings, right after it is public (user):** GitHub offers these only on a public repository, so they can't be set first. In the same sitting as the visibility change, put back what was cut to save private-repo Actions minutes (2026-11-23, see the [decisions log](decisions-log.md)): `ci.yml`'s full matrix (3.12–3.15) and no `paths` filter on `push`/`pull_request` (then delete `tests/test_ci_workflow.py`), `live.yml`'s nightly schedule (`17 7 * * *`), the README's "Checked nightly" row and AGENTS.md's "Push less often" note; private vulnerability reporting on (`SECURITY.md` relies on it; until it is on, the reporting link there leads nowhere); branch protection on `main` with CI required; secret scanning with push protection; approval required for workflows from first-time contributors' forks. Before the change: check what access the `zeta-logic-bot` account keeps, and delete live runs 18–27 outright (their logs are already deleted, but their step summaries may outlive the logs, and those runs printed a seeded group ID before the 2026-11-23 redaction)
+- [x] Pull request text read before publication (62 pull requests: bodies, comments, reviews, review comments; delegated, spot-checked; see the decisions log): no secrets, org identifiers, real IDs, personal data or pasted responses. Repeated 2026-11-23 for #63–#84 and issues #68 and #85 (bodies, comments, reviews, review comments; none had a comment or review besides the issues' bot links): clean. #86 and #87 read 2026-11-23: clean. Repeat for anything opened between then and the visibility change
+- [ ] **Repository settings, right after it is public (user):** GitHub offers these only on a public repository, so they can't be set first. In the same sitting as the visibility change, put back what was cut to save private-repo Actions minutes (2026-11-23, see the [decisions log](decisions-log.md)): `ci.yml`'s full matrix (3.12–3.15) and no `paths` filter on `push`/`pull_request` (then delete `tests/test_ci_workflow.py`), `live.yml`'s nightly schedule (`17 7 * * *`), the README's "Checked nightly" row and AGENTS.md's "Push less often" note; private vulnerability reporting on (`SECURITY.md` relies on it; until it is on, the reporting link there leads nowhere); branch protection on `main` with CI required; secret scanning with push protection; approval required for workflows from first-time contributors' forks. Before the change: check what access the `zeta-logic-bot` account keeps, and ~~delete live runs 18–27 outright~~ (done 2026-11-23: runs 18–27 deleted; 15–17 checked, their logs hold only `***` and no Okta IDs; 1–14's logs were already deleted; see the decisions log)
 - [ ] **Independent security review** by someone other than the tools that wrote the code, of the 🔒 paths at least; until then the README and `SECURITY.md` say there has been none
 - [x] Relicensing (user decision, 2026-11-15: the license must stay changeable): `CONTRIBUTING.md` has contributors grant the licensor the right to relicense their contribution. It is a statement in a file, not a signed CLA; if outside contributions become frequent, a CLA check on pull requests makes the agreement explicit per contributor
 - [x] Delete `spikes/` (2026-11-23, ahead of 0.6 and 4.6, whose client checks now run against the server): the service probe kept as `scripts/okta-probe.py` with tests, the rest dropped (see the [decisions log](decisions-log.md))
-- [ ] The live checks the README lists as not yet done are 4.6, 7.2, 7.3, 8.2 and 9.1's live items; the README's status table changes as they close
+- [ ] The live checks the README lists as not yet done are 4.6, 7.3, 8.2 and 9.1's live items; the README's status table changes as they close (7.2, V16 and the 7.4 manifest moved to its checked row 2026-11-23)
 
 Verify: the settings item is done within the hour after the visibility change; README status matches this plan.
 
@@ -606,7 +606,7 @@ Design: §7.1–7.2, §9.2, §11.4 · Depends: 2.8, 4.2, 6.1
 
 Verify: `uv run pytest tests/exec/ tests/test_app.py tests/test_audit.py`; `/security-review` (data egress).
 
-### 10.3 Rate-limit sizing guidance (per Okta plan) ◐
+### 10.3 Rate-limit sizing guidance (per Okta plan) ☑
 Design: §6.5, §13, §11.4 · Depends: 6.2, 7.3
 
 **Problem.** Operators must set the in-flight concurrency (`MCP_OKTA_MAX_INFLIGHT`) and the per-principal request rate (`MCP_REQUESTS_PER_MINUTE`), but the runbook gives no concrete starting values tied to Okta's per-tenant API rate limits. Guessing high causes 429 storms (2.4); guessing low wastes capacity.
@@ -614,7 +614,7 @@ Design: §6.5, §13, §11.4 · Depends: 6.2, 7.3
 **Idea.** A runbook section that helps an operator *derive* starting values from their own tenant rather than from a copied table (Okta's per-tier numbers drift and vary by endpoint and the org's configured rate-limit percentage). Docs only — no code.
 
 - [x] Runbook (7.3) sizing section ([§4.9](runbook.md#49-rate-limit-sizing), 2026-11-23): how to read the tenant's actual Management API rate-limit budget from the Okta Admin console (per-endpoint limits and the org's rate-limit percentage), then a method to pick starting values for `MCP_OKTA_MAX_INFLIGHT` and `MCP_REQUESTS_PER_MINUTE` as a fraction of that budget, leaving headroom for other Okta API consumers
-- [ ] Tie in V16 (the service app's own rate-limit share, 6.2/7.3): the server's total draw must fit inside the share the service app is granted. The method uses the share as the budget (§4.9 step 2); still open: the measured share and whether it caps the service app at all (V16, needs the dev org)
+- [x] Tie in V16 (the service app's own rate-limit share, 6.2/7.3): the server's total draw must fit inside the share the service app is granted. The method uses the share as the budget (§4.9 step 2). Measured 2026-11-23 on the dev org: a 10% share caps the client-credentials service app (`X-Rate-Limit-Limit` 500 at 100%, 50 at 10% on `/api/v1/groups`, 429 from the 51st request; see the [decisions log](decisions-log.md))
 - [x] A worked example with placeholder numbers, clearly marked as illustrative, plus the tuning rule: watch logged 429s / `rate_limited` errors (6.2) and reduce by 10–20% on repeated hits
 - [x] Cross-reference from the `MCP_OKTA_MAX_INFLIGHT` / `MCP_REQUESTS_PER_MINUTE` entries in the config docs (§11.3)
 
