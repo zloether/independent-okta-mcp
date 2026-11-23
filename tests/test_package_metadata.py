@@ -26,8 +26,10 @@ def test_summary_says_it_is_not_okta_s() -> None:
 def test_development_status_matches_the_readme() -> None:
     status = [c for c in PROJECT["classifiers"] if c.startswith("Development Status ::")]
     assert status == ["Development Status :: 2 - Pre-Alpha"]
-    # Move both together: the classifier names the README's status line.
-    assert "**Pre-alpha." in README
+    # Move both together: until a first release is published, the README says
+    # "under active development" and the classifier stays Pre-Alpha.
+    assert "**Under active development." in README
+    assert "pre-alpha" not in README.lower()
 
 
 def test_python_classifiers_match_requires_python() -> None:

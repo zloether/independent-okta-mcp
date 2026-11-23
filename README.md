@@ -6,7 +6,7 @@ An independent project: not affiliated with, endorsed by or supported by Okta, I
 
 ## Status
 
-**Pre-alpha. Don't point it at a production org yet.** There is no release and no published image; it builds from a checkout.
+**Under active development. Don't point it at a production org yet.** There is no release and no published image; it builds from a checkout.
 
 | | |
 |---|---|
