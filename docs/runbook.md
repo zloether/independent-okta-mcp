@@ -196,6 +196,8 @@ If the check fails, the running server is untouched: fix the policy (§4.2) or g
 3. Keep a copy of the old file. Install the checked one as `policy.yaml` and recreate the container (the commands under §3.1, "Replacing a mounted file"), then check `/readyz`.
 4. If the container still exits with status `2` (for example, a variable changed between the check and the restart), the reasons are in the logs (`docker compose logs okta-mcp`). Put the old file back the same way. The server never starts with a partly valid policy (fail closed), so a bad file is an outage, not a widening.
 
+With more than one replica, a rolling update serves the old and the new policy at once until it finishes; for a change that removes access, replace every replica at once instead: see [deployment scenarios, policy rollout](deployment-scenarios.md#policy-rollout-across-replicas), which also covers Kubernetes.
+
 There is no hot reload, and no `tools/list` change notification. Clients pick up the new tool lists when their cached list expires (§11.4). Warnings (for example, a role that grants nothing because its deny covers its allow, or `search_attributes` no allowed command can use) don't stop the server or fail the check; `--check` prints them, and the server logs them at startup.
 
 A group ID that no role names grants nothing. Adding a user to a new Okta group does nothing until the policy names that group's ID.
@@ -269,11 +271,37 @@ JSON lines on stderr (§13). Worth alerting on:
 | `limiter_rejected` | One user hit `MCP_REQUESTS_PER_MINUTE` |
 | `okta_refused` (warning: `Okta refused the service app's request: HTTP 401/403 <errorCode>`) | `E0000006`: the service app's admin role is too narrow for a command's scope; see the [scope table](okta-setup.md#service-app-scopes-and-admin-roles). `E0000015`: the org may lack the feature the command needs. Without an `errorCode`, `error_code` holds the OAuth error if Okta sent one: `invalid_dpop_proof` means Okta rejected the DPoP proof (check the server's clock; on `sessions get` only, it's [expected](okta-setup.md#service-app-scopes-and-admin-roles)), `insufficient_scope` a scope the service app lacks. A 401 with `E0000011` or `invalid_token` (invalid token) or no code: a token or DPoP problem; the server drops the token and gets a new one on the next call, so repeats mean the key, clock or DPoP setup is wrong. Alert on `error_code` counts, not on single lines |
 
-The default `MCP_REQUESTS_PER_MINUTE` (600) is above some Okta buckets (the users list was 300/min on a trial org, plan 2.4). On a small org, set it below your smallest bucket.
+The default `MCP_REQUESTS_PER_MINUTE` (600) is above some Okta buckets (the users list was 300/min on a trial org, plan 2.4). Size it for your org with [§4.9](#49-rate-limit-sizing).
 
 ### 4.8 Drift
 
 Run `uv run python scripts/okta-setup.py check --config okta-setup.yaml` on a schedule. `check` reads the service app's admin-role assignments, and the setup guide calls for a Super Administrator token for that. Whether a narrower token can read them is unverified. A scheduled job that holds a Super Administrator token is a bigger risk than the drift it catches, so either run `check` by hand on a calendar, or keep that token in a secret store with the same care as the service key. It exits `1` on any `todo` or `manual` item, for example a grant or admin role someone added to the service app, an access policy widened to all clients, or a second key. Under Terraform, a scheduled `terraform plan -detailed-exitcode` catches changes to the objects it manages, but not an extra access policy or rule someone adds on the authorization server; `check` reports those, so run it too, or alert on policy and rule changes for that server in the System Log.
+
+### 4.9 Rate-limit sizing
+
+Two settings bound what the server asks of Okta, and both count per process (per replica):
+
+- **`MCP_REQUESTS_PER_MINUTE`** (default 600): Okta requests per signed-in user in any 60 seconds. Every request counts: each page of a list, each request a composite command makes, and a 429 retry. The service token request doesn't. A user whose calls a load balancer spreads over N replicas gets up to N times it.
+- **`MCP_OKTA_MAX_INFLIGHT`** (default 10): Okta requests in flight at once; one user holds at most half, rounded up. It caps concurrency, not rate: at a typical latency of a fraction of a second, 10 slots allow thousands of requests a minute, more than any bucket. So the per-minute budget is held by the per-user limit times the users active at once, and in the end by Okta's 429s.
+
+Neither setting knows Okta's limits. Okta counts per endpoint group ("bucket") per minute for the whole org, shared by every integration, and also limits concurrent requests; the numbers depend on the org's plan and the endpoint, and change, so derive the settings from your org's own numbers, not from a table copied here.
+
+1. **Read your org's limits.** The Admin Console's rate limit dashboard (Reports → Rate Limits; unverified, the menu moves) lists each bucket's limit and recent use. Every Okta response also carries `X-Rate-Limit-Limit`, `-Remaining` and `-Reset` for its bucket. Note the buckets the roles' commands use most: usually users (`/api/v1/users`), groups, apps and the System Log (`/api/v1/logs`). The smallest of those bounds you. Note the org's concurrent-request limit too, from Okta's rate-limit documentation for your plan.
+2. **Take the service app's share.** The share set under Application Rate Limits ([§2](#2-okta-setup), V16) is the server's budget for each bucket: budget = bucket limit × share. Unverified (V16): that the share caps a `private_key_jwt` client-credentials app; until the dev-org check, plan as if it does and watch for the opposite.
+3. **Aim below the budget.** Target about 80% of it, so retries and other replicas' bursts fit.
+4. **Set `MCP_REQUESTS_PER_MINUTE`** = target ÷ (replicas × users you expect to be busy at once), rounded down. One busy user then can't use more than their part of the budget, even when spread across every replica. A busy user here is one running long lists or composite commands back to back; most interactive use is a few requests a minute.
+5. **Set `MCP_OKTA_MAX_INFLIGHT`** so that replicas × it stays well under the org's concurrent limit, with room for the other integrations, and at 4 or more per replica, so one slow list doesn't take every slot.
+
+**Worked example (illustrative: placeholder numbers, not Okta's).** The smallest bucket the roles use allows 400 requests a minute, and the service app's share is 50%: the budget is 200, the target 160. Two replicas, and up to two busy users at once: `MCP_REQUESTS_PER_MINUTE` = 160 ÷ (2 × 2) = 40. A list of 1,000 users at 200 per page is 5 requests, so 40 a minute is still several large lists a minute per user. With an org concurrent limit of 50 shared with other integrations, give the server about a fifth of it, 10, as 5 per replica: `MCP_OKTA_MAX_INFLIGHT=5`.
+
+**Then tune from the logs.** Okta, not this arithmetic, has the last word:
+
+- `okta_rate_limited` with `reason` `over_max_wait` or `retry_failed` ([§4.7](#47-operational-logs-and-alerts)), and `rate_limited` outcomes in the audit log, are calls that failed on Okta's limit. If they repeat, lower `MCP_REQUESTS_PER_MINUTE` (and `MCP_OKTA_MAX_INFLIGHT`, if they come in bursts) by 10–20%, and watch again for a day of normal use. `okta_rate_limited` with `retry: true` alone is a 429 the retry absorbed.
+- `limiter_rejected` with no `okta_rate_limited` means users hit the server's own limit while Okta had room: raise `MCP_REQUESTS_PER_MINUTE` by 10–20% at a time.
+- `inflight_share_wait` lines mean a user had half the slots; often they are one user's slow System Log queries.
+- The audit log's `okta_requests` and `duration_ms` per call show which commands cost the most requests.
+
+Check the dashboard after a change too: the server's 429s are its own, but other integrations' 429s in the same bucket are the ones the share is meant to prevent.
 
 ## 5. Kill switch
 
