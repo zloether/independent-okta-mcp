@@ -13,7 +13,7 @@
 # - Built once: the sdist and wheel in `build`, the image in `image` (pushed by digest, then
 #   tested as pulled). rcN tags go to TestPyPI and a GHCR rc tag; finals to PyPI.
 # - Fetches from origin without credentials, so it needs the repository to be public
-#   (until then `verify` fails, closed).
+#   (if it isn't, `verify` fails, closed).
 name: release
 
 on:
@@ -155,10 +155,11 @@ jobs:
           printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker pull "$IMAGE"
           docker logout ghcr.io
+      # `--repo` alone would accept an attestation made by any workflow on any branch here.
       - name: Verify the image attestation
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh attestation verify "oci://$IMAGE" --repo "$GITHUB_REPOSITORY"
+        run: gh attestation verify "oci://$IMAGE" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref "$GITHUB_REF" --deny-self-hosted-runners
       - run: uv sync --frozen
       - run: uv run pytest tests/container
         env:
@@ -225,7 +226,7 @@ jobs:
           {
             echo "Image: \`$IMAGE\`"
             echo
-            echo "Verify: \`gh attestation verify oci://$IMAGE --repo $GITHUB_REPOSITORY\`"
+            echo "Verify: \`gh attestation verify oci://$IMAGE --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml --source-ref $GITHUB_REF --deny-self-hosted-runners\`"
             echo
             echo "Install from the hashed lock (\`requirements.lock\`), then the wheel; see docs/runbook.md. A plain \`pip install\` takes ranges, not the lock, and is not supported for production."
             echo
