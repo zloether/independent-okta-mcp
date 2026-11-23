@@ -87,7 +87,7 @@ Some endpoints also need an Okta feature that not every org has, whatever the ro
 
 ## Before you start
 
-1. **An admin API token.** `apply` creates an authorization server and assigns an admin role, which needs a **Super Administrator** token. `check` only reads, but those reads include admin-role assignments, so use the same token. The token is used only by this tool. Never give it to the server, and revoke it when you are done.
+1. **An admin API token.** `apply` creates an authorization server and assigns an admin role, which needs a **Super Administrator** token. `check` only reads, but those reads include admin-role assignments, so use the same token (a Read-only Administrator token stops at the service app's grants with `403`; [runbook §4.8](runbook.md#48-drift)). The token is used only by this tool. Never give it to the server, and revoke it when you are done.
 
    ```sh
    export OKTA_ORG_URL=https://example.okta.com
