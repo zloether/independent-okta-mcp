@@ -19,6 +19,8 @@ Rules for agents working in this repo. Loaded every session: keep it to what eve
 
 Follow the plan's "How to work a step": tests first, update the plan's status and the decisions log. Every change gets **`/code-review`** before a PR is opened (or, on a branch with one, before it's called done); fix the findings or log why not, then re-run the checks. A change to a trust boundary (below) also gets **`/security-review`**; neither replaces the other. Re-run both on fix commits that touch a trust boundary. Log each review's outcome.
 
+**Push less often.** While the repository is private, GitHub Actions minutes are metered (2,000 a month) and every push to a pull request branch runs CI (about 11 billed minutes). Commit locally, and push when the change is reviewed and ready, not after each commit or fix. Docs-only pushes skip CI (`ci.yml` `paths`). Never start `live.yml` by hand unless the task needs it.
+
 Done means these pass, plus the reviews:
 
 ```
