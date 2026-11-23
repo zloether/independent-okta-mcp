@@ -427,6 +427,18 @@ def test_schemas_scope_needs_org_admin_which_apply_never_assigns(config: Path, c
     assert "remove ['SUPER_ADMIN']" in capsys.readouterr().out
 
 
+def test_profile_mappings_scope_needs_org_admin(config: Path, capsys) -> None:
+    # Live run 27 (2026-11-23): `schemas get-mapping` got E0000006 under Read Only Admin;
+    # `list-mappings` didn't. The scope's role is the one every command under it needs.
+    assert setup.SCOPE_ROLES["okta.profileMappings.read"] == setup.ORG_ADMIN
+    use_scopes(config, "okta.users.read, okta.profileMappings.read")
+    assert run(FakeOkta(), "apply", config) == 1
+    assert (
+        "[manual] role ORG_ADMIN: okta.profileMappings.read needs ORG_ADMIN; assign it by hand"
+        in capsys.readouterr().out
+    )
+
+
 def test_super_admin_scope_outranks_org_admin_scope(config: Path, capsys) -> None:
     use_scopes(config, "okta.users.read, okta.schemas.read, okta.orgs.read")
     assert run(FakeOkta(), "check", config) == 1

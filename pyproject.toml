@@ -1,10 +1,25 @@
 [project]
 name = "independent-okta-mcp"
 version = "0.0.0"
-description = "Read-only MCP server for the Okta Management API with group-based tool policy"
+description = "Independent, read-only MCP server for the Okta Management API with group-based tool policy. Not affiliated with or endorsed by Okta."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
+keywords = ["mcp", "okta", "model-context-protocol", "identity", "read-only"]
+# No `License ::` classifier: Apache-2.0 with the Commons Clause isn't OSI-approved.
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: System :: Systems Administration :: Authentication/Directory",
+]
 dependencies = [
     "anyio>=4.6",
     "httpx2>=2.16",
@@ -16,6 +31,13 @@ dependencies = [
     "starlette>=0.48",
     "uvicorn>=0.34",
 ]
+
+[project.urls]
+Homepage = "https://github.com/zloether/independent-okta-mcp"
+Source = "https://github.com/zloether/independent-okta-mcp"
+Documentation = "https://github.com/zloether/independent-okta-mcp/tree/main/docs"
+Issues = "https://github.com/zloether/independent-okta-mcp/issues"
+Changelog = "https://github.com/zloether/independent-okta-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 okta-mcp = "okta_mcp.__main__:main"
@@ -45,7 +67,6 @@ select = ["E", "W", "F", "I", "B", "UP", "S", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
-"spikes/**" = ["S101"]
 # Runs the docker CLI on fixed arguments.
 "tests/container/**" = ["S101", "S603", "S607"]
 

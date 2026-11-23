@@ -89,7 +89,6 @@ SCOPE_ROLES = {
     "okta.authorizationServers.read": READ_ONLY_ADMIN,
     "okta.idps.read": READ_ONLY_ADMIN,
     "okta.captchas.read": READ_ONLY_ADMIN,
-    "okta.profileMappings.read": READ_ONLY_ADMIN,
     "okta.userTypes.read": READ_ONLY_ADMIN,
     "okta.uischemas.read": READ_ONLY_ADMIN,
     "okta.devices.read": READ_ONLY_ADMIN,
@@ -97,6 +96,7 @@ SCOPE_ROLES = {
     "okta.devicePostureChecks.read": READ_ONLY_ADMIN,
     "okta.sessions.read": READ_ONLY_ADMIN,  # `sessions get` works only without DPoP
     "okta.schemas.read": ORG_ADMIN,  # user and group schemas; app user schemas need less
+    "okta.profileMappings.read": ORG_ADMIN,  # get-mapping (run 27); list-mappings needs less
     "okta.linkedObjects.read": ORG_ADMIN,
     "okta.orgs.read": SUPER_ADMIN,  # four org-settings commands; the rest need less
     "okta.logStreams.read": SUPER_ADMIN,

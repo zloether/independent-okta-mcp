@@ -55,7 +55,6 @@ Okta answers a service-app request only when the token's scope **and** the app's
 | `okta.authorizationServers.read` | `READ_ONLY_ADMIN` | `authorization-servers` |
 | `okta.idps.read` | `READ_ONLY_ADMIN` | `identity-providers` (role shown for `list` only) |
 | `okta.captchas.read` | `READ_ONLY_ADMIN` | `org-settings get-captcha-settings` |
-| `okta.profileMappings.read` | `READ_ONLY_ADMIN` | `schemas list-mappings`, `get-mapping` |
 | `okta.userTypes.read` | `READ_ONLY_ADMIN` | `schemas list-user-types`, `get-user-type` |
 | `okta.uischemas.read` | `READ_ONLY_ADMIN` | `schemas list-ui-schemas`, `get-ui-schema` |
 | `okta.devices.read` | `READ_ONLY_ADMIN` | `devices` |
@@ -64,6 +63,7 @@ Okta answers a service-app request only when the token's scope **and** the app's
 | `okta.sessions.read` | `READ_ONLY_ADMIN` | `sessions`, only with DPoP off (see below) |
 | `okta.schemas.read` | `ORG_ADMIN` | `schemas get-user-schema`, `get-group-schema` (`get-app-user-schema` needs only `READ_ONLY_ADMIN`) |
 | `okta.linkedObjects.read` | `ORG_ADMIN` | `schemas list-linked-objects`, `get-linked-object` |
+| `okta.profileMappings.read` | `ORG_ADMIN` | `schemas get-mapping` (`list-mappings` needs only `READ_ONLY_ADMIN`; Org Admin inferred, see below) |
 | `okta.orgs.read` | `SUPER_ADMIN` | `org-settings get-third-party-admin-setting`, `get-support-settings`, `get-admin-app-setting`, `get-client-privileges`; the rest of `org-settings` and `attack-protection` need only `READ_ONLY_ADMIN` |
 | `okta.logStreams.read` | `SUPER_ADMIN` | `schemas list-log-stream-schemas`, `get-log-stream-schema` |
 | `okta.appGrants.read` | `SUPER_ADMIN` | `apps list-grants`, `get-grant` |
@@ -72,7 +72,7 @@ Okta answers a service-app request only when the token's scope **and** the app's
 
 `diagnostics` commands read several domains. They need only the scopes in the table rows that name them; the other scopes they can use are optional. Without one, the command still runs and lists the check it skipped (and the scope it would need) in its result. `diagnostics login-failures` also uses `okta.apps.read` (whether the user is assigned to the app that refused them), `okta.policies.read` (the policy rules behind a denial, and the password policy), `okta.networkZones.read` (zone conditions) and `okta.authenticators.read` (which authenticators a rule can accept), `okta.deviceAssurance.read` (device assurance policies a rule requires) and `okta.devicePostureChecks.read` (names and remediation text of advanced posture checks; read only when an assurance policy uses them, so an org without posture checks doesn't need it). Grant the ones whose checks you want.
 
-The table was found in a dev org (2026-11-13) by running each command under Read-only Administrator, then Org Administrator, then Super Administrator. A role is the one every command under the scope needs; where only some of a scope's commands need it, the last column says which.
+The table was found in a dev org (2026-11-13) by running each command under Read-only Administrator, then Org Administrator, then Super Administrator. One correction since: `schemas get-mapping` passed under Read-only Administrator in the dev org but got HTTP 403 (`E0000006`) in the CI org (2026-11-23), probably because a mapping into the Okta user profile needs the user schema's role; Org Administrator is inferred from `get-user-schema`, not yet seen on `get-mapping`. To check a role on your own org, give the service app that role and run [`scripts/okta-probe.py`](../scripts/okta-probe.py) on the commands' paths. A role is the one every command under the scope needs; where only some of a scope's commands need it, the last column says which.
 
 The service app needs the highest role in the table among its scopes, so each deployment picks its role by picking scopes. Okta allows a call only when the token's scopes and the app's role both do, and every scope here is `.read`, so even a Super Administrator service app can't write. A broader role still lets a stolen service key read more of what its scopes cover, and would let it write if someone later granted the app a `.manage` scope. To stay at Read-only Administrator, leave out the scopes that need more: their commands disappear from every user's tool list. Granting such a scope while keeping the narrower role isn't supported: `check` reports the missing role, Terraform fails the plan, and the commands the last column names get HTTP 403 from Okta.
 

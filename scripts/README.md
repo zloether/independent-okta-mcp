@@ -6,6 +6,7 @@ Tools run by hand from a checkout, never by the server. Run each from the repo r
 |---|---|---|
 | [`okta-setup.py`](okta-setup.py) | Okta admin | Checks, or creates, the Okta objects the server needs |
 | [`okta-setup.example.yaml`](okta-setup.example.yaml) | Okta admin | Example config for `okta-setup.py` |
+| [`okta-probe.py`](okta-probe.py) | Okta admin | Shows which Okta endpoints the server's service app can read, and why not |
 | [`update-spec.py`](update-spec.py) | Maintainer | Pins a newer Okta Management OpenAPI spec |
 | [`gen-fixtures.py`](gen-fixtures.py) | Developer | Generates per-command test fixtures from the pinned spec |
 | [`sanitize-fixture.py`](sanitize-fixture.py) | Developer | Turns a recorded dev-org response into a committable fixture |
@@ -26,6 +27,16 @@ uv run python scripts/okta-setup.py apply --config okta-setup.yaml   # [--yes] s
 ```
 
 `check` only reads. `apply` shows its plan and asks before it creates missing objects and links. It never deletes or loosens anything; other differences are reported for you to fix by hand. The setup token is for this script only; never give it to the server.
+
+## okta-probe.py
+
+Sends one GET per Management API path with the server's own service app settings and code (`OKTA_ORG_URL`, `OKTA_CLIENT_ID`, `OKTA_PRIVATE_KEY_FILE`, `OKTA_KEY_ID`, `OKTA_SCOPES`, `OKTA_DPOP`), and prints each status with Okta's error code. Use it to check the admin role a scope needs on your org ([docs/okta-setup.md](../docs/okta-setup.md)): `E0000006` means the role is too narrow, `E0000015` that the org lacks the feature.
+
+```
+uv run python scripts/okta-probe.py /api/v1/mappings /api/v1/meta/schemas/user/default
+```
+
+It prints no token, body, field value or Okta error text, and sends only GET.
 
 ## update-spec.py
 
