@@ -72,7 +72,7 @@ Verify: open a new Claude Code session and confirm AGENTS.md content is loaded (
 
 ### 0.3 CI ☑
 Design: §14 (Hygiene row) · Depends: 0.1
-- [x] `.github/workflows/ci.yml`: Python 3.12 + 3.13 + 3.14 matrix; `uv sync --frozen`; ruff check + format check; pyright; pytest; `uv lock --check`; `pip-audit`
+- [x] `.github/workflows/ci.yml`: Python 3.12 + 3.13 + 3.14 + 3.15 matrix (3.15 added 2026-11-23); `uv sync --frozen`; ruff check + format check; pyright; pytest; `uv lock --check`; `pip-audit`
 - [x] Pin action versions by SHA
 
 Verify: push the branch; workflow green on every Python version in the matrix.
