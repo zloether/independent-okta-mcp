@@ -11,6 +11,7 @@ Rules for agents working in this repo. Loaded every session: keep it to what eve
 | [`docs/implementation-plan.md`](docs/implementation-plan.md) | Starting or finishing a step: its status, checklist, Verify block and "How to work a step" |
 | [`docs/decisions-log.md`](docs/decisions-log.md) | Before changing something a step decided (search by step ID); append a row for every decision and review outcome |
 | [`docs/design/mcp-server.md`](docs/design/mcp-server.md) | Only the § refs the step names; update it in the same PR if the step changes the design |
+| [`docs/releasing.md`](docs/releasing.md) | Changing `release.yml`, `scripts/release-verify.py` or the release steps (human doc: update it with them) |
 | [`docs/agents/subagents.md`](docs/agents/subagents.md) | Before delegating to a subagent |
 | [`docs/runbook.md`](docs/runbook.md), [`docs/deployment-scenarios.md`](docs/deployment-scenarios.md), [`docs/okta-setup.md`](docs/okta-setup.md), [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md), [`CHANGELOG.md`](CHANGELOG.md) | Changing operator-visible behavior (human docs: update them with it) |
 
@@ -58,4 +59,5 @@ Hardest to undo (design §12.2); changes need `/security-review`, and their plan
 - `exec/cursor.py`, `okta/paginate.py`: token-attached URL following
 - `okta/token.py`, `okta/dpop.py`: service credentials
 - `Dockerfile`, `docker/compose.example.yaml`: runtime privileges
+- `.github/workflows/release.yml`, `scripts/release-verify.py`, `.github/allowed_signers`: what is published, and who can cause it
 - `scripts/okta-setup.py`, `terraform/okta/`: run with Super Admin; decide who gets tokens

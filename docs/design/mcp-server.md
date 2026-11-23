@@ -789,6 +789,15 @@ Startup fails fast on missing/invalid values, unreadable key, invalid policy, or
 
 ---
 
+### 11.5 Release pipeline
+
+[`.github/workflows/release.yml`](../../.github/workflows/release.yml) (plan 8.3.2), separate from CI, runs only on a pushed `v*` tag. The image is the primary artifact; the sdist and wheel are secondary, for operators who build their own image. Maintainer steps: [`docs/releasing.md`](../releasing.md).
+
+- **Gates.** The tag ruleset lets only the maintainer create, move or delete `v*` tags; the `release` environment (deployment: `v*` tags only, maintainer as required reviewer) wraps every job that can publish or sign. `verify` runs [`scripts/release-verify.py`](../../scripts/release-verify.py) from `main`: an annotated tag whose object names it, SSH-signed by a key in `.github/allowed_signers` as it is on `main`'s tip (removing a key there revokes it), on a commit of `main` equal to `GITHUB_SHA`, named `vX.Y.Z` or `vX.Y.ZrcN` and equal to `project.version`. `verify` catches mistakes, not a hostile writer: the workflow runs as it is in the tagged commit, so the ruleset and the reviewer are what stop a tag on another commit.
+- **No stored credentials.** Workflow permissions default to none, each job states its own; GHCR uses the job token, PyPI Trusted Publishing, attestations the job's OIDC identity. No `secrets.` but the job token. `tests/test_release_workflow.py` pins these.
+- **Built once.** `build` makes the sdist and wheel (wheel from the sdist) and the hashed lock (`uv export --frozen --no-dev --no-emit-project`, with `SHA256SUMS`). `image` builds the `Dockerfile` and pushes `ghcr.io/<repo>:<version>` with BuildKit SBOM and `mode=max` provenance on the image index, then a GitHub build-provenance attestation on that index digest. `image-test` pulls that digest, checks the attestation, runs `tests/container/` and Trivy as CI does. Only then `pypi` attests the dists and uploads them with PEP 740 attestations (rc tags to TestPyPI), and `github-release` publishes the dists, lock and checksums with the image digest in the notes. No `latest` tag: operators pin the digest.
+- Two approvals per release (`image`, then `pypi` after the image tests pass), since PyPI's publisher is bound to the environment of the job that uploads. Artifact attestations on a private repository need GitHub Enterprise Cloud, and `verify` fetches without credentials: the pipeline is for the public repository.
+
 ## 12. Security
 
 ### 12.1 Threat model
@@ -836,6 +845,7 @@ Recorded in `AGENTS.md`. Code in these paths must pass `/security-review` before
 - `src/okta_mcp/exec/cursor.py`, `src/okta_mcp/okta/paginate.py` (token-attached URL following)
 - `src/okta_mcp/okta/token.py`, `src/okta_mcp/okta/dpop.py` (service credential handling)
 - `Dockerfile`, `docker/compose.example.yaml` (runtime privileges)
+- `.github/workflows/release.yml`, `scripts/release-verify.py`, `.github/allowed_signers` (what gets published, and who can cause it; §11.5)
 
 ### 12.3 Audit logging
 
