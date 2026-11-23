@@ -93,11 +93,14 @@ class Repo:
     def push_tag(self, name: str, as_name: str | None = None) -> None:
         _git(self.work, "push", "-q", "origin", f"refs/tags/{name}:refs/tags/{as_name or name}")
 
-    def verify(self, tag: str, *extra: str) -> tuple[int, str, str]:
+    def verify(self, tag: str, *extra: str, depth: int | None = None) -> tuple[int, str, str]:
         ci = self.tmp / "ci"
         if ci.exists():
             shutil.rmtree(ci)
-        _run("git", "clone", "-q", "--no-tags", self.origin, ci, cwd=self.tmp)
+        # file:// so --depth applies, as actions/checkout's default depth 1 does.
+        shallow = ["--depth", str(depth)] if depth else []
+        src = self.origin.as_uri() if depth else self.origin
+        _run("git", "clone", "-q", "--no-tags", *shallow, src, ci, cwd=self.tmp)
         out = self.tmp / "github_output"
         out.write_text("")
         env = _ENV | {"GITHUB_OUTPUT": str(out)}
@@ -227,3 +230,13 @@ def test_tag_object_name_must_match_ref(repo: Repo) -> None:
     code, log, _ = repo.verify("v0.1.0rc1")
     assert code != 0
     assert "names" in log
+
+
+def test_tag_behind_main_tip_in_a_shallow_clone(repo: Repo) -> None:
+    """main moved on after the tagged commit; the job's checkout is depth 1."""
+    repo.tag("v0.1.0rc1")
+    repo.commit()
+    _git(repo.work, "push", "-q", "origin", "main")
+    repo.push_tag("v0.1.0rc1")
+    code, log, _ = repo.verify("v0.1.0rc1", depth=1)
+    assert code == 0, log

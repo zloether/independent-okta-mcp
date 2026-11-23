@@ -22,6 +22,8 @@ on:
 
 permissions: {}
 
+# One release at a time. GitHub keeps one pending run per group and cancels an older pending
+# one, so push the next tag only after the last run has ended (docs/releasing.md).
 concurrency:
   group: release
   cancel-in-progress: false
@@ -40,6 +42,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
+          # Full history: the script checks the tagged commit is an ancestor of main's tip.
+          fetch-depth: 0
           persist-credentials: false
       - name: Check the tag
         id: tag
@@ -132,6 +136,7 @@ jobs:
     permissions:
       contents: read
       packages: read
+      attestations: read
     env:
       IMAGE: ghcr.io/${{ github.repository }}@${{ needs.image.outputs.digest }}
     steps:

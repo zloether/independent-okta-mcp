@@ -37,7 +37,8 @@ For the maintainer. How [`release.yml`](../.github/workflows/release.yml) works 
    ```
 
 3. Approve the `image` job, then the `pypi` job once `image-test` passes (Actions → the run → Review deployments). Before approving, check the run's commit is the one you tagged.
-4. `vX.Y.ZrcN` goes to TestPyPI, a GHCR `X.Y.ZrcN` tag and a GitHub pre-release; `vX.Y.Z` to PyPI, GHCR `X.Y.Z` and a release. Nothing is tagged `latest`.
+4. One tag at a time: a run waiting for approval holds the `release` concurrency group, and a third tag pushed meanwhile cancels the second's queued run. Push the next tag after the last run has ended.
+5. `vX.Y.ZrcN` goes to TestPyPI, a GHCR `X.Y.ZrcN` tag and a GitHub pre-release; `vX.Y.Z` to PyPI, GHCR `X.Y.Z` and a release. Nothing is tagged `latest`.
 
 A refused tag (unsigned, not on `main`, version mismatch) fails `verify` and publishes nothing. Delete it and tag again (deleting needs the ruleset bypass):
 

@@ -13,7 +13,7 @@ Passes (exit 0) only if all hold, else exits 1 with one fixed message:
 - the tagged commit is `--sha` (the workflow's `GITHUB_SHA`) and is on `main`;
 - `project.version` in that commit's `pyproject.toml` equals the name without the `v`.
 
-With `--fetch`, first fetches `main` and the tag from `origin`, overwriting a local tag of
+With `--fetch`, first fetches `main` (unshallowing a shallow clone) and the tag from `origin`, overwriting a local tag of
 that name (actions/checkout can leave a lightweight copy of an annotated tag). Writes
 `version=` and `prerelease=` to `$GITHUB_OUTPUT`. Prints nothing from the signature, the
 signers file or git's output: only the tag name, after it has matched the pattern.
@@ -58,7 +58,13 @@ def verify(tag: str, *, fetch: bool, sha: str | None) -> tuple[str, bool]:
     version, prerelease = m.group(1), m.group(2) is not None
     ref = f"refs/tags/{tag}"
     if fetch:
-        _git("fetch", "--quiet", "--no-tags", "origin", f"+refs/heads/main:{MAIN}")
+        # A shallow clone (actions/checkout's default) hides the ancestry checked below.
+        deepen = (
+            ["--unshallow"]
+            if _git("rev-parse", "--is-shallow-repository").stdout.strip() == "true"
+            else []
+        )
+        _git("fetch", "--quiet", "--no-tags", *deepen, "origin", f"+refs/heads/main:{MAIN}")
         _git("fetch", "--quiet", "--no-tags", "--force", "origin", f"+{ref}:{ref}")
 
     if _git("cat-file", "-t", ref).stdout.strip() != "tag":
