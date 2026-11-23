@@ -140,7 +140,8 @@ def test_kubernetes_example_matches_image_and_config() -> None:
     """Deployment scenario C's manifest (plan 7.4) is unverified against a cluster; this keeps it
     in step with the image's user and the server's variables."""
     text = SCENARIOS.read_text(encoding="utf-8")
-    blocks = [yaml.safe_load(b) for b in re.findall(r"```yaml\n(.*?)```", text, re.S)]
+    docs = [d for b in re.findall(r"```yaml\n(.*?)```", text, re.S) for d in yaml.safe_load_all(b)]
+    blocks = [d for d in docs if isinstance(d, dict)]
     (kustomize,) = [b for b in blocks if "configMapGenerator" in b]
     (deployment,) = [b for b in blocks if b.get("kind") == "Deployment"]
     assert kustomize["configMapGenerator"][0]["files"] == ["policy.yaml"]
@@ -178,10 +179,24 @@ def test_kubernetes_example_matches_image_and_config() -> None:
 
 def _anchors(path: Path) -> set[str]:
     """GitHub's heading anchors: lower case, punctuation but `-` dropped, spaces to `-`, and
-    `-1`, `-2`, … on repeats. Lines in fenced code aren't headings."""
-    text = re.sub(r"^```.*?^```", "", path.read_text(encoding="utf-8"), flags=re.M | re.S)
+    `-1`, `-2`, … on repeats. Lines in fenced code (``` or ~~~, any length) aren't headings."""
+    headings: list[str] = []
+    fence: str | None = None  # the open fence's marker; closed by a run of the same, as long
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if match := re.match(r" {0,3}(`{3,}|~{3,})", line):
+            marker = match[1]
+            if fence is None:
+                fence = marker
+            elif (
+                marker[0] == fence[0]
+                and len(marker) >= len(fence)
+                and not line.strip()[len(marker) :]
+            ):
+                fence = None
+        elif fence is None and (heading := re.match(r"#{1,6} (.+)$", line)):
+            headings.append(heading[1])
     anchors: set[str] = set()
-    for heading in re.findall(r"^#+ (.+)$", text, re.M):
+    for heading in headings:
         slug = re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
         n, unique = 0, slug
         while unique in anchors:
@@ -192,8 +207,9 @@ def _anchors(path: Path) -> set[str]:
 
 
 WATCHED = [DESIGN, RUNBOOK, SCENARIOS, ROOT / "docs" / "okta-setup.md", README, AGENTS]
-"""Docs that `ci.yml`'s `paths` run CI for (`tests/test_ci_workflow.py`). Links into other docs
-aren't checked: a docs-only change to one skips CI, so it would break an unrelated PR."""
+"""Docs that `ci.yml`'s `paths` run CI for (`tests/test_ci_workflow.py`). A link into another
+doc is checked only for the file, not the anchor: a docs-only change to that doc's headings
+skips CI, so it would break an unrelated PR."""
 
 
 @pytest.mark.parametrize("doc", WATCHED, ids=lambda p: p.name)
@@ -202,8 +218,8 @@ def test_links_to_docs_resolve(doc: Path) -> None:
     broken = []
     for target, anchor in re.findall(r"\]\(([^)\s#]*\.md)?#([^)\s]+)\)", doc.read_text("utf-8")):
         path = (doc.parent / target).resolve() if target else doc.resolve()
-        if path not in watched:
-            continue
-        if not path.is_file() or anchor not in _anchors(path):
+        if not path.is_file():
+            broken.append(f"{target}#{anchor} (no such file)")
+        elif path in watched and anchor not in _anchors(path):
             broken.append(f"{target}#{anchor}")
     assert broken == []

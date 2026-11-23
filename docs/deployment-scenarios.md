@@ -66,7 +66,7 @@ Two or more replicas in different zones behind a load balancer: a managed contai
 - **Give every replica the same policy file and config.** Roll out a policy change as a new deployment, after `okta-mcp --check` passes on it ([runbook §4.2](runbook.md#42-policy-change)). While a rolling update runs, old and new replicas serve two policies at once: see [Policy rollout](#policy-rollout-across-replicas).
 - **Expect one service token per replica.** Each replica gets its own service token and its own DPoP key. That's fine, but each one draws on the service app's rate-limit share.
 
-The load balancer does TLS and health checks. **Health-check on `/healthz`, alert on `/readyz`.** `/readyz` fails when the service token or the issuer's keys can't be had, and every replica shares the service app and the issuer: an Okta-side failure fails them all at once, and a load balancer checking `/readyz` would then drain every replica and answer clients with its own 502s instead of the server's errors. Put a WAF with per-address rate rules on a public load balancer, or use an internal load balancer if every client is on your network. The [every-scenario](#every-scenario) requirements still apply to the tasks. The secrets come from the platform's secrets manager as files, and the platform's own role reads them, not the containers'.
+The load balancer does TLS and health checks. **Health-check on `/healthz`, alert on `/readyz`** (a new replica then answers `/mcp` with 503 and `Retry-After` for the seconds until its first JWKS fetch). `/readyz` fails when the service token or the issuer's keys can't be had, and every replica shares the service app and the issuer: an Okta-side failure fails them all at once, and a load balancer checking `/readyz` would then drain every replica and answer clients with its own 502s instead of the server's errors. Put a WAF with per-address rate rules on a public load balancer, or use an internal load balancer if every client is on your network. The [every-scenario](#every-scenario) requirements still apply to the tasks. The secrets come from the platform's secrets manager as files, and the platform's own role reads them, not the containers'.
 
 ### Policy rollout across replicas
 
@@ -122,7 +122,9 @@ spec:
             allowPrivilegeEscalation: false
             capabilities: { drop: [ALL] }
           # Kubernetes ignores the image's HEALTHCHECK. Probe /healthz, not /readyz: an Okta
-          # outage fails /readyz on every pod at once (see above).
+          # outage fails /readyz on every pod at once (see above). The cost: a new pod takes
+          # traffic before its first JWKS fetch, and /mcp answers 503 with Retry-After until then
+          # (usually seconds), so expect a few 503s in each rollout.
           livenessProbe: { httpGet: { path: /healthz, port: 8080 } }
           readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
           env:
