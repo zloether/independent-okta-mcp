@@ -14,6 +14,7 @@ on:
       - "docs/design/mcp-server.md"
       - "docs/okta-setup.md"
       - "docs/runbook.md"
+      - "README.md"
   pull_request:
     paths:
       - "**"
@@ -22,6 +23,7 @@ on:
       - "docs/design/mcp-server.md"
       - "docs/okta-setup.md"
       - "docs/runbook.md"
+      - "README.md"
 
 permissions:
   contents: read

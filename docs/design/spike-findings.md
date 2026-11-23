@@ -1,6 +1,6 @@
 # Spike Findings — Okta dev org (step 0.5)
 
-Results of the live checks for design §16 items V1, V9, V10, V11, V13, V15. Each section: **result**, **evidence**, **design impact**. Helpers: `spikes/okta/okta_spike.py` (`uv run python spikes/okta/okta_spike.py --help`). Evidence uses `example.okta.com` / `example.com` placeholders; never paste tokens, keys or Okta result bodies here.
+Results of the live checks for design §16 items V1, V9, V10, V11, V13, V15. Each section: **result**, **evidence**, **design impact**. The helpers were `spikes/okta/okta_spike.py` and `spikes/oauth/client_check.py`, deleted 2026-11-23; the service-app probe lives on as `scripts/okta-probe.py`. Evidence uses `example.okta.com` / `example.com` placeholders; never paste tokens, keys or Okta result bodies here.
 
 ## Setup
 
@@ -77,14 +77,9 @@ Per-client discovery behavior is in the [compatibility matrix](../compatibility-
 
 ## Client compatibility matrix
 
-Step 0.6. A real MCP client only starts sign-in after the server answers `401` with Protected Resource Metadata, so this uses the check server `spikes/oauth/client_check.py` instead of waiting for Phase 4. V9 and V11 above already fix two columns: `resource` handling doesn't matter, and the redirect URI must be fixed and registered exactly.
+Step 0.6. A real MCP client only starts sign-in after the server answers `401` with Protected Resource Metadata, so this used a check server (`spikes/oauth/client_check.py`, since deleted) instead of waiting for Phase 4. The server itself now answers the same way, so later clients are checked against it ([compatibility matrix](../compatibility-matrix.md)). V9 and V11 above already fix two columns: `resource` handling doesn't matter, and the redirect URI must be fixed and registered exactly.
 
-Procedure, per client:
-
-1. Find how the client takes a fixed `client_id` and redirect port. Register that exact redirect URI on the spike public client (Okta admin console → the app → Sign-in redirect URIs).
-2. `uv run python spikes/oauth/client_check.py --issuer <issuer> --client-id <public client_id>` (port 8000, which matches the AS audience).
-3. Add `http://127.0.0.1:8000/mcp` to the client as an HTTP MCP server and start sign-in. Sign in as each test user.
-4. Call `whoami`: `uid` and `groups` should be that user's. Copy the server's request log lines (they show which discovery URLs the client tried; no tokens) into the row's evidence.
+The procedure used, per client: register the client's exact redirect URI on the public client; start the check server with the AS issuer and the public client ID, on the port the AS audience names; add `http://127.0.0.1:8000/mcp` to the client, sign in as each test user and call `whoami`; copy the server's request log lines (which discovery URLs the client tried; no tokens) into the row's evidence.
 
 The matrix itself is now [`docs/compatibility-matrix.md`](../compatibility-matrix.md), with how to connect each client. The findings behind its Claude Code row follow.
 

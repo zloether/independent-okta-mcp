@@ -14,6 +14,7 @@ No release has been tagged and no image is published; the server builds from a c
 
 - `MCP_MAX_TOKEN_AGE` defaults to 3600 (was 86400): a token issued more than an hour ago is refused. Authorization servers set up with `scripts/okta-setup.py` or `terraform/okta` issue tokens of at most 30 minutes and are unaffected; set the variable for one that issues longer ones (the server logs `token_too_old` when it refuses an unexpired token for its age).
 - A failed service token request now logs Okta's error code even when Okta puts it in `errorCode` instead of `error`, with the matching hint (for example `HTTP 400 invalid_client (check OKTA_CLIENT_ID, OKTA_PRIVATE_KEY_FILE and OKTA_KEY_ID …)`). A reply with no code says what it looked like (its JSON key names or media type), never its content.
+- `okta.profileMappings.read` needs Org Administrator on the service app, not Read-only Administrator: `schemas get-mapping` got HTTP 403 under Read-only Administrator in the CI org. `scripts/okta-setup.py check` now reports the role as missing, and `terraform/okta` needs `allow_org_admin = true` with that scope. To stay at Read-only Administrator, drop the scope (both mapping commands disappear).
 - `scripts/okta-setup.py` no longer uses a role group that existed, with members, before the tool first used it: it reports the group as `manual` until its ID is listed under `reviewed_groups` in the config.
 
 ### Added
@@ -24,4 +25,7 @@ No release has been tagged and no image is published; the server builds from a c
 - Audit log, per-user request limits, JSON operational logs.
 - Container image definition and Compose example; Okta setup script and Terraform module.
 - `diagnostics login-failures`, a composite command for help-desk roles.
+- `scripts/okta-probe.py`: one GET per Management API path with the server's own service app settings, printing each status and Okta error code, to find the admin role a scope needs on your org.
+- Install docs for a package install from a release's hashed `requirements.lock` (runbook §3.6); a plain `pip install` is not supported for production.
+- The package states its license as `LicenseRef-Commons-Clause-Apache-2.0` and ships `LICENSE` and `NOTICE` (the vendored Okta spec's attribution) in the wheel, the sdist and the image.
 - `BASE_IMAGE` build argument: build the image on your own Debian or Ubuntu Python base, pinned by digest (a tag is refused).

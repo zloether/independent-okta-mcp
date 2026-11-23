@@ -4,6 +4,7 @@
 !pyproject.toml
 !uv.lock
 !LICENSE
+!NOTICE
 !README.md
 !src/
 # Inside src/: never bytecode caches or key material, even if a developer left some there.

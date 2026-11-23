@@ -142,6 +142,28 @@ Then sign in from an MCP client as one test user per role. Check that `okta_stat
 
 Results are Okta data, and some of it is controlled by outsiders. For example, failed sign-ins put an attacker-chosen username into the System Log, and users write their own profile fields. A model can read instructions planted there as if they came from the user (§12.1, prompt injection). Ask users to connect independent-okta-mcp in a session that has no tools able to send data out (web fetch, email, write access to other systems), or to keep human approval on for those tools.
 
+### 3.6 Without a container: install from a release
+
+The image is the supported way to run the server. To install the package yourself (to build your own image, or on a host without Docker), use a release's assets, never a bare `pip install`: the wheel's dependency metadata holds version ranges, so a plain `pip install independent-okta-mcp` resolves whatever versions are newest that day, not the ones CI tested. That is **not supported for production**. Each release carries `requirements.lock` (every dependency pinned with its hashes, exported from `uv.lock`), the wheel and sdist, and `SHA256SUMS`.
+
+```sh
+VERSION=X.Y.Z          # the release, without the v
+REPO=zloether/independent-okta-mcp
+gh release download "v$VERSION" --repo "$REPO" \
+  --pattern requirements.lock --pattern SHA256SUMS --pattern '*.whl'
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify independent_okta_mcp-"$VERSION"-py3-none-any.whl --repo "$REPO"
+
+python3.12 -m venv /opt/okta-mcp                   # Python 3.12 or later
+/opt/okta-mcp/bin/pip install --require-hashes --no-deps -r requirements.lock
+/opt/okta-mcp/bin/pip install --no-deps independent_okta_mcp-"$VERSION"-py3-none-any.whl
+/opt/okta-mcp/bin/okta-mcp --check                 # with the server's environment set
+```
+
+`--require-hashes` refuses any dependency whose file doesn't match the lock; `--no-deps` on both steps keeps pip from resolving anything the lock doesn't name. The wheel isn't in the lock (it's the release's own build), so it is checked by `SHA256SUMS` and its attestation instead. From a checkout of the release tag, `uv sync --frozen --no-dev` installs the same set from `uv.lock`.
+
+The container's hardening (read-only filesystem, no capabilities, uid 10001; design §11.4) doesn't come with a package install: run it as an unprivileged user, give that user read access only to the policy and key files, and put it behind the same proxy (§3.3).
+
 ## 4. Operate
 
 ### 4.1 Upgrade

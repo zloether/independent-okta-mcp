@@ -27,6 +27,10 @@ What is left is tracked in the [plan](docs/implementation-plan.md).
 - [Design](docs/design/mcp-server.md) · [Plan](docs/implementation-plan.md) · [Changelog](CHANGELOG.md)
 - [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
 
+## Install
+
+There is no release yet. From the first one: the container image from GHCR, pinned by digest (the supported way), or the package installed from the release's hashed `requirements.lock` and wheel ([runbook §3.6](docs/runbook.md#36-without-a-container-install-from-a-release)). A plain `pip install independent-okta-mcp` resolves unpinned dependency versions and is not supported for production. The license is not OSI-approved (see [License](#license)), which some company dependency policies block.
+
 ## Local dev mode (stdio)
 
 Try it against a dev org from a local MCP client. No authentication: the caller is the principal in a file, checked by the normal policy. Refused when `MCP_ENV=production`.
@@ -53,4 +57,4 @@ Use a read-only admin's API token, or the service app (`OKTA_CLIENT_ID`, `OKTA_P
 
 ## License
 
-Apache-2.0 with the Commons Clause: free to use and modify, not to sell. See [LICENSE](LICENSE). The vendored Okta OpenAPI specification is Okta's, under Apache-2.0 ([NOTICE](NOTICE)).
+Apache-2.0 with the Commons Clause: free to use and modify, not to sell. See [LICENSE](LICENSE). The Commons Clause makes it source-available, not open source: it isn't an OSI-approved license. The vendored Okta OpenAPI specification is Okta's, under Apache-2.0 ([NOTICE](NOTICE)).

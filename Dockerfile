@@ -30,7 +30,7 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 # Dependencies first, so a source change doesn't refetch them.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
-COPY LICENSE README.md ./
+COPY LICENSE NOTICE README.md ./
 COPY src/ src/
 # Non-editable: the package (with its data files) is installed into the venv, so the runtime
 # stage needs no source tree. No group/other write bits anywhere in the venv (uv leaves its
