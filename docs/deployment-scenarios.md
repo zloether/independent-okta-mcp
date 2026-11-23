@@ -113,6 +113,7 @@ spec:
         runAsUser: 10001
         runAsGroup: 10001
         fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }   # Docker applies its default; Kubernetes doesn't
       containers:
         - name: okta-mcp
           image: <registry>/okta-mcp:<tag>@sha256:<digest>

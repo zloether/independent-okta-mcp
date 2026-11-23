@@ -151,6 +151,7 @@ def test_kubernetes_example_matches_image_and_config() -> None:
     ctx = pod["securityContext"]
     assert (ctx["runAsUser"], ctx["runAsGroup"], ctx["fsGroup"]) == (uid, gid, gid)
     assert pod["automountServiceAccountToken"] is False
+    assert ctx["seccompProfile"] == {"type": "RuntimeDefault"}
     for volume in pod["volumes"]:
         source = volume.get("configMap") or volume["secret"]
         assert source["defaultMode"] & 0o040, "group 10001 must be able to read it"
