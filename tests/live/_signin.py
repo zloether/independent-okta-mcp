@@ -138,7 +138,11 @@ class Signin:
         f = form(reply, name)
         if f is None or not isinstance(f.get("href"), str):
             raise SigninError(f"no '{name}' form; offered: {outcome(reply).remediations}")
-        if httpx2.URL(f["href"]).origin != httpx2.URL(self._org).origin:
+        try:
+            origin = httpx2.URL(f["href"]).origin
+        except (httpx2.InvalidURL, ValueError):
+            raise SigninError(f"'{name}' form has no valid href") from None
+        if origin != httpx2.URL(self._org).origin:
             raise SigninError(f"'{name}' form posts off the org")
         return await self._post(f["href"], {**values, "stateHandle": reply.get("stateHandle")})
 

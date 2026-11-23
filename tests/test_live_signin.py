@@ -27,7 +27,7 @@ PASSWORD = "correct horse battery staple"  # noqa: S105 - a fake, checked never 
 def _form(name: str, *fields: str, href: str | None = None) -> dict[str, Any]:
     return {
         "name": name,
-        "href": href or f"{ORG}/idp/idx/{name}",
+        "href": f"{ORG}/idp/idx/{name}" if href is None else href,
         "method": "POST",
         "value": [{"name": f} for f in fields] + [{"name": "stateHandle", "value": "s"}],
     }
@@ -299,3 +299,30 @@ async def test_lookalike_hrefs_are_refused(href: str) -> None:
     with pytest.raises(SigninError, match="off the org"):
         await _run(okta, "attempt", "0oaclient")
     assert all(r.url.host == "example.okta.com" for r in okta.requests)
+
+
+@pytest.mark.parametrize("href", ["/idp/idx/identify", "javascript:alert(1)", ""])
+async def test_unparseable_href_is_a_named_error(href: str) -> None:
+    okta = Okta({"/idp/idx/introspect": [_reply("s1", _form("identify", "identifier", href=href))]})
+    with pytest.raises(SigninError, match="'identify' form has no valid href"):
+        await _run(okta, "attempt", "0oaclient")
+
+
+async def test_default_port_is_the_same_origin() -> None:
+    okta = Okta(
+        {
+            "/idp/idx/introspect": [
+                _reply(
+                    "s1",
+                    _form(
+                        "identify",
+                        "identifier",
+                        "credentials",
+                        href="https://example.okta.com:443/idp/idx/identify",
+                    ),
+                )
+            ],
+            "/idp/idx/identify": [_reply("s2", keys=("errors.E0000004",))],
+        }
+    )
+    assert (await _run(okta, "attempt", "0oaclient")).messages == ["errors.E0000004"]

@@ -19,6 +19,7 @@ Nothing here creates or changes anything in Okta (the client has only `get`), ex
 until the seeded policy unlocks it. It runs only with `OKTA_LIVE_SIGNIN_PASSWORD` set.
 """
 
+import functools
 import json
 import logging
 import os
@@ -31,6 +32,7 @@ from typing import Any
 import anyio
 import httpx2
 import pytest
+from _hygiene import blank_secrets
 from _live import (
     _TOKENS,
     ADMIN_GROUP,
@@ -232,32 +234,25 @@ def no_secrets(
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Iterator[None]:
     """`no_secrets` sees only a test's own capture; output from module and session fixtures
     (the service token's, the sign-in fixture's) lands in the report's "Captured … setup"
-    sections, which `-rA` prints. Blank any section holding a secret, and fail the test."""
+    sections, which `-rA` prints, and a failure's text is printed too. `blank_secrets` removes
+    any of them that holds a secret, and fails the test."""
     outcome = yield
     report: pytest.TestReport = outcome.get_result()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
-    found = _secrets()
-    if not found:
-        return
-    leaked = False
-    sections: list[tuple[str, str]] = []
-    for title, text in report.sections:
-        if any(secret in text for secret in found):
-            leaked = True
-            text = "[removed: held a secret value]"
-        sections.append((title, text))
-    if leaked:
-        report.sections = sections
-        report.outcome = "failed"
-        report.longrepr = "a secret value appeared in captured output"
+    blank_secrets(report, _secrets())
+
+
+@functools.cache
+def _key_lines() -> tuple[str, ...]:
+    """The private key's body lines, read once: the key file doesn't change during a run."""
+    path = os.environ.get("OKTA_PRIVATE_KEY_FILE")
+    if not (path and Path(path).is_file()):
+        return ()
+    lines = Path(path).read_text().splitlines()
+    return tuple(ln for ln in lines if len(ln) >= 40 and not ln.startswith("-----"))
 
 
 def _secrets() -> list[str]:
-    found: list[str] = []
-    path = os.environ.get("OKTA_PRIVATE_KEY_FILE")
-    if path and Path(path).is_file():
-        lines = Path(path).read_text().splitlines()
-        found += [ln for ln in lines if len(ln) >= 40 and not ln.startswith("-----")]
-    return found + list(_TOKENS)
+    return [*_key_lines(), *_TOKENS]
 
 
 @pytest.fixture(scope="session")
