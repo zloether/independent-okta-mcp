@@ -100,3 +100,20 @@ def test_report_without_ids_is_untouched() -> None:
     assert not redact_report_ids(report)
     assert report.longrepr is longrepr
     assert report.outcome == "passed"
+
+
+def test_redact_ids_covers_other_okta_prefixes() -> None:
+    for okta_id in ["aus1a2b3c4d5e6f7g8h9", "nzo1a2b3c4d5e6f7g8h9", "tos1a2b3c4d5e6f7g8h9"]:
+        assert redact_ids(f"server {okta_id}.") == f"server {ID_LABEL}."
+
+
+def test_redact_ids_keeps_twenty_letter_words() -> None:
+    """Key names in the reports are camelCase words; IDs always hold a digit."""
+    assert redact_ids("authenticatorEnrollm") == "authenticatorEnrollm"
+
+
+def test_skip_report_keeps_its_tuple_shape() -> None:
+    """pytest folds skips by unpacking (path, line, reason): only the reason is redacted."""
+    report = _report([], outcome="skipped", longrepr=("x.py", 3, f"Skipped: no {GROUP}"))
+    assert redact_report_ids(report)
+    assert report.longrepr == ("x.py", 3, f"Skipped: no {ID_LABEL}")
