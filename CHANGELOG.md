@@ -4,6 +4,10 @@ Changes an operator or user of the server would notice. The format follows [Keep
 
 ## Unreleased
 
+### Changed
+
+- `docker/compose.example.yaml` and runbook §1 run `0.1.1`, `ghcr.io/zloether/independent-okta-mcp:0.1.1`, pinned by its index digest, which runs natively on ARM hosts (an arm64 Mac, Graviton); the `platform: linux/amd64` note is gone.
+
 ## 0.1.1 - 2026-11-24
 
 ### Added
