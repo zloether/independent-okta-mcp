@@ -1,8 +1,9 @@
-"""Invariants of .github/workflows/release.yml (plan 8.3.2, design §11.5).
+"""Invariants of .github/workflows/release.yml (plans 8.3.2, 8.4.1; design §11.5).
 
 Pinned here so a later edit that widens the release path fails CI: the trigger, per-job
 permissions, the `release` environment around everything that can publish, the verify gate,
-SHA-pinned actions and no expressions in shell."""
+SHA-pinned actions and no expressions in shell; and that the image ships as one index of
+`linux/amd64` and `linux/arm64`, each built and tested on its own native runner."""
 
 import re
 from pathlib import Path
@@ -13,14 +14,21 @@ import yaml
 
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+CI = ROOT / ".github" / "workflows" / "ci.yml"
 SIGNERS = ROOT / ".github" / "allowed_signers"
 
 # Permissions that can publish or sign, and so need the protected environment.
 PUBLISHING = {"id-token", "packages", "attestations"}
 
+# The image's platforms, each on a GitHub-hosted runner of that architecture (not QEMU).
+PLATFORMS = {
+    "linux/amd64": ("ubuntu-latest", "x86_64"),
+    "linux/arm64": ("ubuntu-24.04-arm", "aarch64"),
+}
 
-def _load() -> dict[str, Any]:
-    data = yaml.safe_load(WORKFLOW.read_text())
+
+def _load(path: Path = WORKFLOW) -> dict[str, Any]:
+    data = yaml.safe_load(path.read_text())
     # PyYAML reads the bare key `on` as True.
     data["on"] = data.pop(True, data.get("on"))
     return data
@@ -160,6 +168,123 @@ def test_image_attestation_verified_while_logged_in(jobs: dict[str, dict[str, An
     assert len(login) == len(verify) == len(logout) == 1, (login, verify, logout)
     assert login[0] < verify[0] < logout[0]
     assert steps[logout[0]].get("if") == "always()"
+
+
+def _matrix(job: dict[str, Any]) -> list[dict[str, str]]:
+    return job["strategy"]["matrix"]["include"]
+
+
+def _uses(job: dict[str, Any], action: str) -> list[dict[str, Any]]:
+    return [s for s in job["steps"] if s.get("uses", "").startswith(f"{action}@")]
+
+
+def _runs(job: dict[str, Any]) -> str:
+    return "\n".join(s.get("run", "") for s in job["steps"])
+
+
+def test_no_emulation(jobs: dict[str, dict[str, Any]]) -> None:
+    """An emulated arm64 build isn't the runtime that ships (8.4.1): every platform builds on
+    its own native runner."""
+    text = WORKFLOW.read_text()
+    assert "setup-qemu-action" not in text
+    assert "binfmt" not in text
+
+
+def test_image_built_per_platform_on_native_runners(jobs: dict[str, dict[str, Any]]) -> None:
+    job = jobs["image-build"]
+    legs = {leg["platform"]: leg["runner"] for leg in _matrix(job)}
+    assert legs == {p: runner for p, (runner, _) in PLATFORMS.items()}
+    assert job["runs-on"] == "${{ matrix.runner }}"
+    (build,) = _uses(job, "docker/build-push-action")
+    assert build["with"]["platforms"] == "${{ matrix.platform }}"
+    # SBOM and BuildKit provenance per platform; `imagetools create` carries them into the index.
+    assert build["with"]["sbom"] is True
+    assert build["with"]["provenance"] == "mode=max"
+
+
+def test_image_build_cannot_publish(jobs: dict[str, dict[str, Any]]) -> None:
+    """Builds run before approval, so they get no write permission and push nothing: only the
+    approved `image` job pushes."""
+    job = jobs["image-build"]
+    assert job["permissions"] == {"contents": "read"}
+    assert "environment" not in job
+    (build,) = _uses(job, "docker/build-push-action")
+    assert build["with"]["push"] is False
+    assert build["with"]["outputs"].startswith("type=oci,")
+    assert "docker login" not in _runs(job)
+    (upload,) = _uses(job, "actions/upload-artifact")
+    assert upload["with"]["name"] == "${{ matrix.artifact }}"
+    assert {leg["artifact"] for leg in _matrix(job)} == {
+        "image-" + p.replace("/", "-") for p in PLATFORMS
+    }
+
+
+def test_index_holds_both_platforms(jobs: dict[str, dict[str, Any]]) -> None:
+    job = jobs["image"]
+    assert "image-build" in _needs(job)
+    assert job.get("environment") == "release"
+    (download,) = _uses(job, "actions/download-artifact")
+    assert download["with"]["pattern"] == "image-linux-*"
+    run = _runs(job)
+    # Each layout checked against its platform before the push, the index after it.
+    per_layout = r'test "$got" = "[\"$platform\"]"'
+    both = """test "$got" = '["linux/amd64","linux/arm64"]'"""
+    assert "for platform in linux/amd64 linux/arm64; do" in run
+    assert run.index(per_layout) < run.index("imagetools create") < run.index(both)
+    assert run.index(both) < run.index('echo "digest=')
+
+
+def test_attestation_covers_the_index_digest(jobs: dict[str, dict[str, Any]]) -> None:
+    """The index digest (from `imagetools create`) is what's attested, what `image-test` pulls
+    and what the release notes print."""
+    job = jobs["image"]
+    (push,) = [s for s in job["steps"] if s.get("id") == "push"]
+    assert "imagetools create" in push["run"]
+    assert '."containerimage.descriptor".digest' in push["run"]
+    assert job["outputs"]["digest"] == "${{ steps.push.outputs.digest }}"
+    (attest,) = _uses(job, "actions/attest-build-provenance")
+    assert attest["with"]["subject-digest"] == "${{ steps.push.outputs.digest }}"
+    assert attest["with"]["push-to-registry"] is True
+    steps = job["steps"]
+    assert steps.index(push) < steps.index(attest)
+    digest_ref = "${{ needs.image.outputs.digest }}"
+    assert digest_ref in jobs["image-test"]["env"]["IMAGE"]
+    (notes,) = [s for s in jobs["github-release"]["steps"] if s.get("name") == "Create the release"]
+    assert digest_ref in notes["env"]["IMAGE"]
+
+
+def test_image_tested_natively_on_each_platform(jobs: dict[str, dict[str, Any]]) -> None:
+    """An untested arm64 image doesn't ship: the same checks, `tests/container/` and Trivy on
+    every leg, each checking that it runs its own architecture."""
+    job = jobs["image-test"]
+    legs = {leg["runner"]: leg["machine"] for leg in _matrix(job)}
+    assert legs == dict(PLATFORMS.values())
+    assert job["runs-on"] == "${{ matrix.runner }}"
+    assert job["strategy"].get("fail-fast") is False
+    run = _runs(job)
+    assert 'docker pull "$IMAGE"' in run
+    assert "platform.machine()" in run and '"$MACHINE"' in run
+    assert "gh attestation verify" in run
+    assert "uv run pytest tests/container" in run
+    assert "aquasec/trivy" in run and "--exit-code 1" in run
+    # Both legs must pass before anything is published to PyPI or the release is made.
+    assert "image-test" in _needs(jobs["pypi"])
+
+
+def test_ci_builds_and_tests_the_image_on_each_platform() -> None:
+    job = _load(CI)["jobs"]["container"]
+    legs = {leg["runner"]: leg["machine"] for leg in _matrix(job)}
+    assert legs == dict(PLATFORMS.values())
+    assert job["runs-on"] == "${{ matrix.runner }}"
+    # The `main` ruleset requires `container`: the amd64 leg keeps that check name.
+    assert job["name"] == "${{ matrix.name }}"
+    names = {leg["runner"]: leg["name"] for leg in _matrix(job)}
+    assert names["ubuntu-latest"] == "container"
+    run = _runs(job)
+    assert "docker build -t okta-mcp:ci ." in run
+    assert "platform.machine()" in run
+    assert "uv run pytest tests/container" in run
+    assert "aquasec/trivy" in run
 
 
 def test_allowed_signers_file() -> None:

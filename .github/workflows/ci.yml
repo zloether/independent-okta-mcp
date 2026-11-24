@@ -39,8 +39,21 @@ jobs:
 
   container:
     # Plans 7.1, 7.2: build the image, check how it runs, alone and from
-    # docker/compose.example.yaml (tests/container), scan it.
-    runs-on: ubuntu-latest
+    # docker/compose.example.yaml (tests/container), scan it. On both platforms the release
+    # ships, each on a native runner (plan 8.4.1), so an arm64 break shows up before a release.
+    # amd64 keeps the check name `container`, which the `main` ruleset requires.
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: container
+            runner: ubuntu-latest
+            machine: x86_64
+          - name: container (arm64)
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,6 +64,10 @@ jobs:
           version: "0.13.7"
           python-version: "3.12"
       - run: docker build -t okta-mcp:ci .
+      - name: Check the platform
+        env:
+          MACHINE: ${{ matrix.machine }}
+        run: test "$(docker run --rm --entrypoint python okta-mcp:ci -c 'import platform; print(platform.machine())')" = "$MACHINE"
       - run: uv sync --frozen
       - run: uv run pytest tests/container
         env:

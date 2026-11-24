@@ -4,9 +4,19 @@ Changes an operator or user of the server would notice. The format follows [Keep
 
 ## Unreleased
 
+## 0.1.1 - 2026-11-24
+
+### Added
+
+- The image is multi-platform: `ghcr.io/zloether/independent-okta-mcp:0.1.1` is one index of `linux/amd64` and `linux/arm64`, so `docker pull` takes the host's own platform and an ARM host (an arm64 Mac, Graviton) runs it natively. Each platform is built and tested (`tests/container/`, the Trivy scan) on a runner of its own architecture, and carries its own SBOM and BuildKit provenance; the release notes' digest, and the GitHub attestation, are the index's. Pin that digest as before: `gh attestation verify` is unchanged.
+
 ### Changed
 
-- `docker/compose.example.yaml` and the runbook run the published `0.1.0` image, `ghcr.io/zloether/independent-okta-mcp:0.1.0`, pinned by digest, instead of building from a checkout; upgrades are a tag and digest bump and `docker compose pull`. The `0.1.0` image is `linux/amd64` only: on an ARM host, set `platform: linux/amd64` (emulated) until a multi-arch release (arm64 is planned).
+- `docker/compose.example.yaml` and the runbook run the published `0.1.0` image, `ghcr.io/zloether/independent-okta-mcp:0.1.0`, pinned by digest, instead of building from a checkout; upgrades are a tag and digest bump and `docker compose pull`. The `0.1.0` image is `linux/amd64` only: on an ARM host, set `platform: linux/amd64` (emulated) for it, or pin `0.1.1`. The example moves to `0.1.1` once it is published.
+
+### Security
+
+- No third-party fixes: no Dependabot update (locked dependencies, actions, base image digests) has merged since `0.1.0`, so the image's Python packages and base are the same as `0.1.0`'s, apart from Debian security updates the build installs. Nothing to check after upgrading.
 
 ## 0.1.0 - 2026-11-23
 
