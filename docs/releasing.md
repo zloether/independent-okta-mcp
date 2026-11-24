@@ -36,9 +36,9 @@ For the maintainer. How [`release.yml`](../.github/workflows/release.yml) works 
    git push origin v0.1.0rc1
    ```
 
-3. Approve the `image` job, then the `pypi` job once `image-test` passes (Actions → the run → Review deployments). Before approving, check the run's commit is the one you tagged.
+3. Approve the `image` job once `build` and both `image-build` jobs (amd64, arm64) pass, then the `pypi` job once both `image-test` jobs pass (Actions → the run → Review deployments). Before approving, check the run's commit is the one you tagged. Expect about 5 minutes of job time besides the waits for approval (the single-platform `0.1.0` run took 4.5); an arm64 runner can take longer to start.
 4. One tag at a time: a run waiting for approval holds the `release` concurrency group, and a third tag pushed meanwhile cancels the second's queued run. Push the next tag after the last run has ended.
-5. `vX.Y.ZrcN` goes to TestPyPI, a GHCR `X.Y.ZrcN` tag and a GitHub pre-release; `vX.Y.Z` to PyPI, GHCR `X.Y.Z` and a release. Nothing is tagged `latest`.
+5. `vX.Y.ZrcN` goes to TestPyPI, a GHCR `X.Y.ZrcN` tag and a GitHub pre-release; `vX.Y.Z` to PyPI, GHCR `X.Y.Z` and a release. Nothing is tagged `latest`. From `0.1.1` the GHCR tag is one index of `linux/amd64` and `linux/arm64` (`0.1.0` and its rc are `linux/amd64` only).
 
 A refused tag (unsigned, not on `main`, version mismatch) fails `verify` and publishes nothing. Delete it, fix the cause (for a mismatch, step 1 again: the tag must equal `version` on `main`), and tag again (deleting needs the ruleset bypass):
 
@@ -46,9 +46,15 @@ A refused tag (unsigned, not on `main`, version mismatch) fails `verify` and pub
 git push origin :refs/tags/v0.1.0rc1
 ```
 
-If a run fails after `image` pushed, the GHCR tag exists but no release does; fix, bump the rc number, or for a final the patch version (`0.1.0` to `0.1.1`), (step 1: `version`, `uv lock`, merged to `main`) and tag again rather than reusing the tag.
+If `build` or an `image-build` job fails, `image` doesn't start and nothing is published: handle the tag like a refused one, above. If a run fails after `image` pushed, the GHCR tag exists but no release does; fix, bump the rc number, or for a final the patch version (`0.1.0` to `0.1.1`), (step 1: `version`, `uv lock`, merged to `main`) and tag again rather than reusing the tag.
 
 ## Checking a release
+
+The image's platforms (from `0.1.1`, `linux/amd64` and `linux/arm64`, each with an SBOM and BuildKit provenance manifest beside it):
+
+```bash
+docker buildx imagetools inspect ghcr.io/zloether/independent-okta-mcp@sha256:<digest>
+```
 
 `--repo` alone accepts an attestation from any workflow on any branch of the repository, and anyone with write access can run one; the other flags pin it to `release.yml` run for that tag on a GitHub-hosted runner.
 
