@@ -1,7 +1,8 @@
 # Example deployment (design §11.4, plan 7.2). It runs the published image, pinned by digest, so
 # this directory can live anywhere: copy this file and policy.example.yaml from the release's
-# tag, fill in the values marked CHANGE, copy policy.example.yaml to policy.yaml and edit it,
-# put the secrets in ./secrets/ (policy.yaml and secrets/ are git-ignored in the checkout), then:
+# tag (for 0.1.1, from main: the v0.1.1 tag's copy still pins 0.1.0), fill in the values marked
+# CHANGE, copy policy.example.yaml to policy.yaml and edit it, put the secrets in ./secrets/
+# (policy.yaml and secrets/ are git-ignored in the checkout), then:
 #
 #   docker compose -f compose.example.yaml pull
 #   docker compose -f compose.example.yaml up -d

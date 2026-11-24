@@ -29,7 +29,7 @@ You need:
 - An Okta org with API Access Management ([prerequisites](okta-setup.md#prerequisites)) and a Super Administrator to run setup.
 - A Linux host with Docker Engine ≥ 25 and Compose v2, and a reverse proxy with a certificate for the public hostname.
 - The image the [compose example](../docker/compose.example.yaml) pins: `ghcr.io/zloether/independent-okta-mcp:0.1.1@sha256:3a4d9cd4e6fafa07b4f0ecf248d8cb69c6ee2d28130ba64d55eb44664400296b`, the digest in the release notes. Check its attestation before the first `up` and after each bump ([Checking a release](releasing.md#checking-a-release)). It is one index of `linux/amd64` and `linux/arm64`, so an ARM host runs it natively.
-- `docker/compose.example.yaml` and `docker/policy.example.yaml` from the release's tag: a checkout of the tag, or the two files copied to a directory on the host.
+- `docker/compose.example.yaml` and `docker/policy.example.yaml` from the release's tag: a checkout of the tag, or the two files copied to a directory on the host. For `0.1.1` take them from `main` instead: the switch to `0.1.1` landed after its tag, whose compose file still pins `0.1.0` (`linux/amd64` only).
 
 ## 2. Okta setup
 
