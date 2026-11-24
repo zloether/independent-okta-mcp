@@ -59,3 +59,17 @@ gh attestation verify oci://ghcr.io/zloether/independent-okta-mcp@sha256:<digest
 ```bash
 gh attestation verify independent_okta_mcp-<version>-py3-none-any.whl --repo zloether/independent-okta-mcp --signer-workflow zloether/independent-okta-mcp/.github/workflows/release.yml --source-ref refs/tags/v<version> --deny-self-hosted-runners
 ```
+
+## Taking down a compromised release
+
+Only for a release with malicious code in a published file ([`SECURITY.md`](../SECURITY.md#supported-versions)). A release with an ordinary vulnerability stays published; the next release fixes it. Work in this order: stopping the way in comes before deleting, or the next release can be compromised the same way.
+
+1. **Stop the way in.** Find how the code got in before publishing anything else. The paths a release can come from: the signing key, the maintainer's GitHub account, a commit merged to `main`, an action or base image the workflow pulled, a locked dependency.
+   - Remove a suspect key from [`.github/allowed_signers`](../.github/allowed_signers) on `main`. The check reads `main`'s tip, so this refuses every later tag signed with it.
+   - Rotate the maintainer's GitHub credentials (password, 2FA recovery codes, SSH keys, personal access tokens), and read the account's and the repository's security logs.
+   - Compare the tagged commit with what was reviewed, and the run's resolved action SHAs, base image digests and wheel hashes with what is pinned.
+2. **Delete from PyPI.** On pypi.org: the project → Manage → Releases → the version → Options → Delete. PyPI never accepts a deleted file name or version again, so the fix ships as a new version. Don't yank: a yanked file is still served to an exact `==` pin and to a direct file install, which is how [runbook §3.6](runbook.md#36-without-a-container-install-from-a-release) installs the wheel. Then email security@pypi.org with the version and file hashes, so mirrors and malware scanners that cached the files hear of it.
+3. **Delete from GHCR.** The package's page on GitHub → View and manage all versions → the version carrying the tag → Delete version (the image index; its SBOM and provenance are inside it). Hosts that already pulled the digest keep running it; only the advisory reaches them.
+4. **Delete the GitHub release** and its assets. Keep the tag: it records what was published, and the version can't be reused anyway.
+5. **Publish a GitHub security advisory** (Security → Advisories → New draft security advisory; ecosystem pip, package `independent-okta-mcp`, the affected version). Name the image digest and the wheel and sdist sha256 values, since the attestations stay valid: they are in Sigstore's public, append-only log, so `gh attestation verify` still passes on the compromised files. Tell operators that the code ran with their service key and cursor key, so they follow [runbook §5](runbook.md#5-kill-switch): stop the server, deactivate the service app, rotate the service key and the cursor key, and read Okta's System Log for the service app's client ID.
+6. **Release the fix** as the next patch version from a commit you have checked, after step 1 is closed ([Cutting a release](#cutting-a-release)), and add the advisory's link to its changelog **Security** entry.
