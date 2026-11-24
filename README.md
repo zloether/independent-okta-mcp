@@ -6,14 +6,14 @@ An independent project: not affiliated with, endorsed by or supported by Okta, I
 
 ## Status
 
-**Under active development. Don't point it at a production org yet.** There is no release and no published image; it builds from a checkout.
+**Under active development. Don't point it at a production org yet.** There is no release yet; release candidates (`rcN` tags) only test the publishing pipeline and are not for use. It builds from a checkout.
 
 | | |
 |---|---|
 | Done | The server, policy engine, 24 command domains, container and setup tools, tested against mocked Okta in CI |
-| Checked against an Okta dev org | The setup script; most commands through stdio dev mode; OAuth sign-in from Claude Code to this server over loopback HTTP and through a TLS proxy (Caddy), with tool calls; the compose example up to a ready container; the service app's rate-limit share capping its requests. The Kubernetes example ran on a local cluster |
-| Checked nightly in CI against an Okta org | The service token with DPoP; every registry command but eight the CI org can't serve; each example role's allowed and refused calls; paging; path routing ([plan 8.2.1](docs/implementation-plan.md)) |
-| Not yet done | Token refresh against this server; clients other than Claude Code; a deployment from the [runbook](docs/runbook.md) on a clean machine; `diagnostics login-failures` against real sign-in failures; the runbook steps marked **unverified** |
+| Checked against an Okta dev org | The setup script; most commands through stdio dev mode; OAuth sign-in from Claude Code to this server over loopback HTTP and through a TLS proxy (Caddy), with tool calls; the compose example up to a ready container; the service app's rate-limit share capping its requests; `diagnostics login-failures` against real sign-in failures (lockout, unassigned app, policy DENY, MFA, device assurance and posture). The Kubernetes example ran on a local cluster |
+| Checked nightly in CI against an Okta org | The service token with DPoP; every registry command but eight the CI org can't serve; each example role's allowed and refused calls; paging; path routing; `diagnostics login-failures` on four sign-in failures the job causes ([plan 8.2.1](docs/implementation-plan.md)) |
+| Not yet done | Token refresh against this server; clients other than Claude Code; a deployment from the [runbook](docs/runbook.md) on a clean machine; `diagnostics login-failures` on IdP and threat events; the runbook steps marked **unverified** |
 | Review | Written and reviewed with AI assistance (Claude Code), directed by the maintainer. No independent security audit ([SECURITY.md](SECURITY.md#review-status)) |
 
 What is left is tracked in the [plan](docs/implementation-plan.md).

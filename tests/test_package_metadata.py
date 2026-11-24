@@ -76,6 +76,8 @@ def test_built_wheel_carries_the_license(tmp_path: Path) -> None:
         capture_output=True,
     )
     (wheel,) = tmp_path.glob("*.whl")
+    # The name runbook §3.6 and docs/releasing.md download and verify.
+    assert wheel.name == f"independent_okta_mcp-{PROJECT['version']}-py3-none-any.whl"
     with zipfile.ZipFile(wheel) as z:
         names = z.namelist()
         (meta,) = [n for n in names if n.endswith(".dist-info/METADATA")]
