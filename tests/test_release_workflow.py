@@ -90,6 +90,18 @@ def test_every_job_waits_for_verify(jobs: dict[str, dict[str, Any]]) -> None:
             assert reaches(name), name
 
 
+def test_image_pushed_only_once_everything_is_built(jobs: dict[str, dict[str, Any]]) -> None:
+    """A pushed tag spends the version: nothing is pushed until the dists and both platforms
+    are built."""
+    assert {"build", "image-build"} <= set(_needs(jobs["image"]))
+
+
+def test_layouts_outlive_the_approval_wait(jobs: dict[str, dict[str, Any]]) -> None:
+    # `image` waits for a human; a short retention could expire the layouts before approval.
+    (upload,) = _uses(jobs["image-build"], "actions/upload-artifact")
+    assert "retention-days" not in upload["with"]
+
+
 def test_publish_happens_after_image_tests(jobs: dict[str, dict[str, Any]]) -> None:
     assert "image-test" in _needs(jobs["pypi"])
     assert {"image-test", "pypi"} <= set(_needs(jobs["github-release"]))
