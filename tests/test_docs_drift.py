@@ -2,6 +2,7 @@
 documentation pass needn't be repeated by hand."""
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ RUNBOOK = ROOT / "docs" / "runbook.md"
 AGENTS = ROOT / "AGENTS.md"
 README = ROOT / "README.md"
 SCENARIOS = ROOT / "docs" / "deployment-scenarios.md"
+REPO = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["urls"]["Source"]
 
 
 def section(path: Path, start: str, end: str) -> str:
@@ -213,8 +215,14 @@ def _anchors(path: Path) -> set[str]:
 )
 def test_links_to_docs_resolve(doc: Path) -> None:
     broken = []
-    for target, anchor in re.findall(r"\]\(([^)\s#]*\.md)?#([^)\s]+)\)", doc.read_text("utf-8")):
-        path = (doc.parent / target).resolve() if target else doc.resolve()
+    # The README links into the repository by URL (PyPI shows it); those resolve from ROOT.
+    links = re.findall(
+        rf"\]\(({re.escape(REPO)}/blob/main/)?([^)\s#]*\.md)?#([^)\s]+)\)",
+        doc.read_text("utf-8"),
+    )
+    for repo_url, target, anchor in links:
+        base = ROOT if repo_url else doc.parent
+        path = (base / target).resolve() if target else doc.resolve()
         if not path.is_file():
             broken.append(f"{target}#{anchor} (no such file)")
         elif anchor not in _anchors(path):

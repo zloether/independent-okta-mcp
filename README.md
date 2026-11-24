@@ -6,30 +6,30 @@ An independent project: not affiliated with, endorsed by or supported by Okta, I
 
 ## Status
 
-**Under active development. Don't point it at a production org yet.** There is no release yet; release candidates (`rcN` tags) only test the publishing pipeline and are not for use. It builds from a checkout.
+**Alpha. Don't point it at a production org yet.** `0.1.0` is the first release. Before `1.0` a minor version can rename commands or change the policy file format and environment variables; read the [changelog](https://github.com/zloether/independent-okta-mcp/blob/main/CHANGELOG.md) before upgrading.
 
 | | |
 |---|---|
 | Done | The server, policy engine, 24 command domains, container and setup tools, tested against mocked Okta in CI |
 | Checked against an Okta dev org | The setup script; most commands through stdio dev mode; OAuth sign-in from Claude Code to this server over loopback HTTP and through a TLS proxy (Caddy), with tool calls; the compose example up to a ready container; the service app's rate-limit share capping its requests; `diagnostics login-failures` against real sign-in failures (lockout, unassigned app, policy DENY, MFA, device assurance and posture). The Kubernetes example ran on a local cluster |
-| Checked nightly in CI against an Okta org | The service token with DPoP; every registry command but eight the CI org can't serve; each example role's allowed and refused calls; paging; path routing; `diagnostics login-failures` on four sign-in failures the job causes ([plan 8.2.1](docs/implementation-plan.md)) |
-| Not yet done | Token refresh against this server; clients other than Claude Code; a deployment from the [runbook](docs/runbook.md) on a clean machine; `diagnostics login-failures` on IdP and threat events; the runbook steps marked **unverified** |
-| Review | Written and reviewed with AI assistance (Claude Code), directed by the maintainer. No independent security audit ([SECURITY.md](SECURITY.md#review-status)) |
+| Checked nightly in CI against an Okta org | The service token with DPoP; every registry command but eight the CI org can't serve; each example role's allowed and refused calls; paging; path routing; `diagnostics login-failures` on four sign-in failures the job causes ([plan 8.2.1](https://github.com/zloether/independent-okta-mcp/blob/main/docs/implementation-plan.md)) |
+| Not yet done | Token refresh against this server; clients other than Claude Code; a deployment from the [runbook](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md) on a clean machine; `diagnostics login-failures` on IdP and threat events; the runbook steps marked **unverified** |
+| Review | Written and reviewed with AI assistance (Claude Code), directed by the maintainer. No independent security audit ([SECURITY.md](https://github.com/zloether/independent-okta-mcp/blob/main/SECURITY.md#review-status)) |
 
-What is left is tracked in the [plan](docs/implementation-plan.md).
+What is left is tracked in the [plan](https://github.com/zloether/independent-okta-mcp/blob/main/docs/implementation-plan.md).
 
 ## Read more
 
-- [Okta setup](docs/okta-setup.md): prerequisites (API Access Management), clients, service app
-- [Deployment scenarios](docs/deployment-scenarios.md): where to host it, internal or internet-facing, one host or replicated
-- [Runbook](docs/runbook.md): deploy, operate, rotate, kill switch
-- [Clients](docs/compatibility-matrix.md): how an MCP client connects, and which have been tried
-- [Design](docs/design/mcp-server.md) · [Plan](docs/implementation-plan.md) · [Changelog](CHANGELOG.md)
-- [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+- [Okta setup](https://github.com/zloether/independent-okta-mcp/blob/main/docs/okta-setup.md): prerequisites (API Access Management), clients, service app
+- [Deployment scenarios](https://github.com/zloether/independent-okta-mcp/blob/main/docs/deployment-scenarios.md): where to host it, internal or internet-facing, one host or replicated
+- [Runbook](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md): deploy, operate, rotate, kill switch
+- [Clients](https://github.com/zloether/independent-okta-mcp/blob/main/docs/compatibility-matrix.md): how an MCP client connects, and which have been tried
+- [Design](https://github.com/zloether/independent-okta-mcp/blob/main/docs/design/mcp-server.md) · [Plan](https://github.com/zloether/independent-okta-mcp/blob/main/docs/implementation-plan.md) · [Changelog](https://github.com/zloether/independent-okta-mcp/blob/main/CHANGELOG.md)
+- [Security policy](https://github.com/zloether/independent-okta-mcp/blob/main/SECURITY.md) · [Contributing](https://github.com/zloether/independent-okta-mcp/blob/main/CONTRIBUTING.md)
 
 ## Install
 
-There is no release yet. From the first one: the container image from GHCR, pinned by digest (the supported way), or the package installed from the release's hashed `requirements.lock` and wheel ([runbook §3.6](docs/runbook.md#36-without-a-container-install-from-a-release)). A plain `pip install independent-okta-mcp` resolves unpinned dependency versions and is not supported for production. The license is not OSI-approved (see [License](#license)), which some company dependency policies block.
+From a [release](https://github.com/zloether/independent-okta-mcp/releases): the container image from GHCR, pinned by the digest in its release notes (the supported way), or the package installed from the release's hashed `requirements.lock` and wheel ([runbook §3.6](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md#36-without-a-container-install-from-a-release)). A plain `pip install independent-okta-mcp` from PyPI resolves unpinned dependency versions and is not supported for production. The license is not OSI-approved (see License below), which some company dependency policies block.
 
 ## Local dev mode (stdio)
 
@@ -57,4 +57,4 @@ Use a read-only admin's API token, or the service app (`OKTA_CLIENT_ID`, `OKTA_P
 
 ## License
 
-Apache-2.0 with the Commons Clause: free to use and modify, not to sell. See [LICENSE](LICENSE). The Commons Clause makes it source-available, not open source: it isn't an OSI-approved license. The vendored Okta OpenAPI specification is Okta's, under Apache-2.0 ([NOTICE](NOTICE)).
+Apache-2.0 with the Commons Clause: free to use and modify, not to sell. See [LICENSE](https://github.com/zloether/independent-okta-mcp/blob/main/LICENSE). The Commons Clause makes it source-available, not open source: it isn't an OSI-approved license. The vendored Okta OpenAPI specification is Okta's, under Apache-2.0 ([NOTICE](https://github.com/zloether/independent-okta-mcp/blob/main/NOTICE)).
