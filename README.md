@@ -29,7 +29,7 @@ What is left is tracked in the [plan](https://github.com/zloether/independent-ok
 
 ## Install
 
-From a [release](https://github.com/zloether/independent-okta-mcp/releases): the container image from GHCR, pinned by the digest in its release notes (the supported way; `0.1.0` is `linux/amd64` only, arm64 is planned), or the package installed from the release's hashed `requirements.lock` and wheel ([runbook §3.6](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md#36-without-a-container-install-from-a-release)). A plain `pip install independent-okta-mcp` from PyPI resolves unpinned dependency versions and is not supported for production. The license is not OSI-approved (see License below), which some company dependency policies block.
+From a [release](https://github.com/zloether/independent-okta-mcp/releases): the container image from GHCR, pinned by the digest in its release notes (the supported way; `linux/amd64` and `linux/arm64` from `0.1.1`), or the package installed from the release's hashed `requirements.lock` and wheel ([runbook §3.6](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md#36-without-a-container-install-from-a-release)). A plain `pip install independent-okta-mcp` from PyPI resolves unpinned dependency versions and is not supported for production. The license is not OSI-approved (see License below), which some company dependency policies block.
 
 ## Local dev mode (stdio)
 
