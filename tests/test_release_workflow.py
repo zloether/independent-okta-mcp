@@ -98,8 +98,9 @@ def test_image_pushed_only_once_everything_is_built(jobs: dict[str, dict[str, An
 
 def test_layouts_outlive_the_approval_wait(jobs: dict[str, dict[str, Any]]) -> None:
     # `image` waits for a human; a short retention could expire the layouts before approval.
+    # Explicit, so a short repository default can't apply.
     (upload,) = _uses(jobs["image-build"], "actions/upload-artifact")
-    assert "retention-days" not in upload["with"]
+    assert int(upload["with"]["retention-days"]) >= 14
 
 
 def test_publish_happens_after_image_tests(jobs: dict[str, dict[str, Any]]) -> None:

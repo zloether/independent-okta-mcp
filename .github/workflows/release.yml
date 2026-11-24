@@ -1,7 +1,7 @@
 # Release pipeline (plan 8.3.2, design §11.5). Runs on a pushed `v*` tag, nothing else.
 #
 # verify -> build + image-build (amd64, arm64) -> image (approve) -> image-test (amd64, arm64)
-#        -> pypi (approve) -> github-release
+#   -> pypi (approve) -> github-release
 #
 # - `verify` (scripts/release-verify.py) refuses anything but an annotated, SSH-signed tag
 #   from a key in main's .github/allowed_signers, on a commit of main, matching pyproject's
@@ -131,6 +131,8 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ runner.temp }}/image/
           if-no-files-found: error
+          # Outlasts the wait for `image`'s approval, whatever the repository default.
+          retention-days: 30
 
   image:
     # `build` too: a release whose dists fail must not push an image (its version is then spent).
