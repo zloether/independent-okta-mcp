@@ -144,6 +144,24 @@ def test_attestation_verify_pins_release_workflow_and_tag(path: Path) -> None:
         assert "--deny-self-hosted-runners" in cmd, cmd
 
 
+def test_image_attestation_verified_while_logged_in(jobs: dict[str, dict[str, Any]]) -> None:
+    """`gh attestation verify oci://` reads the image from GHCR with Docker's credentials, and
+    a new package is private until the maintainer makes it public after the first run."""
+    steps = jobs["image-test"]["steps"]
+
+    def at(command: str) -> list[int]:
+        return [i for i, s in enumerate(steps) if command in s.get("run", "")]
+
+    login, verify, logout = (
+        at("docker login ghcr.io"),
+        at("gh attestation verify"),
+        at("docker logout ghcr.io"),
+    )
+    assert len(login) == len(verify) == len(logout) == 1, (login, verify, logout)
+    assert login[0] < verify[0] < logout[0]
+    assert steps[logout[0]].get("if") == "always()"
+
+
 def test_allowed_signers_file() -> None:
     lines = [ln for ln in SIGNERS.read_text().splitlines() if ln and not ln.startswith("#")]
     assert lines

@@ -154,12 +154,15 @@ jobs:
         run: |
           printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker pull "$IMAGE"
-          docker logout ghcr.io
       # `--repo` alone would accept an attestation made by any workflow on any branch here.
+      # Still logged in: gh reads the image from GHCR with Docker's credentials, and a new
+      # package is private until the maintainer makes it public.
       - name: Verify the image attestation
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh attestation verify "oci://$IMAGE" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" --source-ref "$GITHUB_REF" --deny-self-hosted-runners
+      - if: always()
+        run: docker logout ghcr.io
       - run: uv sync --frozen
       - run: uv run pytest tests/container
         env:

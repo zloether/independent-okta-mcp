@@ -4,7 +4,9 @@ Changes an operator or user of the server would notice. The format follows [Keep
 
 ## Unreleased
 
-No release has been tagged and no image is published; the server builds from a checkout. The first release will be `1.0.0` ([plan](docs/implementation-plan.md) step 8.4). Until then anything may change without notice: command names, policy file format, environment variables.
+## 0.1.0rc1 - 2026-11-23
+
+A release candidate that tests the release pipeline: TestPyPI, a GHCR `0.1.0rc1` tag and a GitHub pre-release. It is not a release and not for production. The first release will be `0.1.0` ([plan](docs/implementation-plan.md) step 8.4). Until then anything may change without notice: command names, policy file format, environment variables.
 
 ### Security
 

@@ -4,14 +4,19 @@ a key in `main`'s allowed-signers file, on a commit of `main`, naming pyproject'
 Real git and ssh-keygen against a local bare "origin", as the release job runs it."""
 
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
+from _load import load_script
 
-SCRIPT = Path(__file__).parents[2] / "scripts" / "release-verify.py"
+ROOT = Path(__file__).parents[2]
+SCRIPT = ROOT / "scripts" / "release-verify.py"
+TAG = load_script("release-verify").TAG
 
 pytestmark = pytest.mark.skipif(
     shutil.which("ssh-keygen") is None, reason="needs ssh-keygen (on the CI runners)"
@@ -157,6 +162,24 @@ def test_tag_name_pattern(repo: Repo, name: str) -> None:
     assert code != 0
     assert "vX.Y.Z" in log
     assert out == ""
+
+
+def test_pyproject_version_is_a_tag_this_accepts() -> None:
+    """The tag is compared to pyproject's version as a string, and the wheel's file name
+    carries the PEP 440 normalized version. Within TAG's grammar only a leading zero
+    (`0.01.0`) normalizes differently, so both agree when there is none."""
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    assert TAG.fullmatch(f"v{version}")
+    assert not re.search(r"(?<!\d)0\d", version), version
+
+
+def test_releasing_doc_tags_are_accepted() -> None:
+    # Every concrete tag the maintainer copies from the doc; `vX.Y.ZrcN` placeholders have no digit.
+    text = (ROOT / "docs" / "releasing.md").read_text()
+    tags = re.findall(r"(?:(?<=refs/tags/)|(?<![\w/.-]))v\d[^\s`]*", text)
+    assert len(tags) >= 4
+    for tag in tags:
+        assert TAG.fullmatch(tag), tag
 
 
 def test_lightweight_tag_refused(repo: Repo) -> None:

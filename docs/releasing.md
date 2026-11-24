@@ -25,7 +25,7 @@ For the maintainer. How [`release.yml`](../.github/workflows/release.yml) works 
 
 ## Cutting a release
 
-1. On a branch, set `version` in `pyproject.toml` (PEP 440: `0.1.0rc1`, `1.0.0`), run `uv lock`, and move the changelog's **Unreleased** entries under the version. Merge to `main` with CI green.
+1. On a branch, set `version` in `pyproject.toml` (canonical PEP 440: `0.1.0rc1`, `0.1.0`), run `uv lock`, and move the changelog's **Unreleased** entries under the version. Merge to `main` with CI green. An `rcN` only tests the pipeline; a final folds its rc sections' entries into its own. With the first final (`0.1.0`), also move the classifier to `3 - Alpha` and the README's status (plan 8.4).
 2. Tag that merge commit on `main` and push the tag:
 
    ```bash
@@ -40,13 +40,13 @@ For the maintainer. How [`release.yml`](../.github/workflows/release.yml) works 
 4. One tag at a time: a run waiting for approval holds the `release` concurrency group, and a third tag pushed meanwhile cancels the second's queued run. Push the next tag after the last run has ended.
 5. `vX.Y.ZrcN` goes to TestPyPI, a GHCR `X.Y.ZrcN` tag and a GitHub pre-release; `vX.Y.Z` to PyPI, GHCR `X.Y.Z` and a release. Nothing is tagged `latest`.
 
-A refused tag (unsigned, not on `main`, version mismatch) fails `verify` and publishes nothing. Delete it and tag again (deleting needs the ruleset bypass):
+A refused tag (unsigned, not on `main`, version mismatch) fails `verify` and publishes nothing. Delete it, fix the cause (for a mismatch, step 1 again: the tag must equal `version` on `main`), and tag again (deleting needs the ruleset bypass):
 
 ```bash
 git push origin :refs/tags/v0.1.0rc1
 ```
 
-If a run fails after `image` pushed, the GHCR tag exists but no release does; fix, bump the rc number and tag again rather than reusing the tag.
+If a run fails after `image` pushed, the GHCR tag exists but no release does; fix, bump the rc number (step 1: `version`, `uv lock`, merged to `main`) and tag again rather than reusing the tag.
 
 ## Checking a release
 
