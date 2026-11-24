@@ -25,11 +25,32 @@ def test_summary_says_it_is_not_okta_s() -> None:
 
 def test_development_status_matches_the_readme() -> None:
     status = [c for c in PROJECT["classifiers"] if c.startswith("Development Status ::")]
-    assert status == ["Development Status :: 2 - Pre-Alpha"]
-    # Move both together: until a first release is published, the README says
-    # "under active development" and the classifier stays Pre-Alpha.
-    assert "**Under active development." in README
-    assert "pre-alpha" not in README.lower()
+    assert status == ["Development Status :: 3 - Alpha"]
+    # Move both together (plan 8.4): from the first release, 0.1.0, the classifier is Alpha and
+    # the README says so; "under active development" and "no release" went with Pre-Alpha.
+    assert "**Alpha." in README
+    for doc in ("README.md", "SECURITY.md", "CONTRIBUTING.md"):
+        text = (ROOT / doc).read_text().lower()
+        for retired in ("no release yet", "there is no release", "under active development"):
+            assert retired not in text, (doc, retired)
+        assert "pre-alpha" not in text, doc
+
+
+def test_readme_links_work_on_pypi() -> None:
+    """PyPI shows the README as the project description: a relative link resolves against
+    pypi.org and 404s (seen on TestPyPI for 0.1.0rc1), and its headings get no anchors."""
+    links = [
+        *re.findall(r"\]\(([^)\s]+)\)", README),  # inline
+        *re.findall(r"^ {0,3}\[[^\]]+\]:\s*<?([^\s>]+)", README, re.M),  # reference definitions
+        *re.findall(r"""\b(?:href|src)\s*=\s*["']?([^"'\s>]+)""", README),  # HTML
+    ]
+    assert links
+    assert [u for u in links if not u.startswith("https://")] == []
+    for url in links:
+        if url.startswith(REPO + "/"):
+            m = re.fullmatch(rf"{REPO}/(?:(?:blob|tree)/main/([^#]+)(?:#.*)?|releases)", url)
+            assert m, url  # main, not another branch: what the project URLs point at
+            assert m[1] is None or (ROOT / m[1]).exists(), url
 
 
 def test_python_classifiers_match_requires_python() -> None:

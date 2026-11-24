@@ -4,7 +4,7 @@ Issues and pull requests are welcome. For a suspected vulnerability, use [SECURI
 
 ## Before you start
 
-- The project is under active development, with no release yet, and follows a written [plan](docs/implementation-plan.md). For anything larger than a fix, open an issue first so the change can be placed in it.
+- The project is alpha and follows a written [plan](docs/implementation-plan.md). For anything larger than a fix, open an issue first so the change can be placed in it.
 - [`AGENTS.md`](AGENTS.md) holds the rules every change follows, for people as well as coding agents: the read-only invariant, registry first, fail closed, tests with every change, and the list of trust boundaries.
 
 ## Making a change
