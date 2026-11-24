@@ -97,6 +97,19 @@ def test_runbook_gives_the_same_image(service: dict[str, Any]) -> None:
     assert found == {service["image"]}
 
 
+def test_single_platform_notes_name_the_pinned_tag(service: dict[str, Any]) -> None:
+    """Notes that `X` is `linux/amd64` only (8.4.1): once a multi-arch tag is pinned, a stale note
+    for the old one fails here instead of telling ARM operators to emulate."""
+    match = IMAGE_REF.fullmatch(str(service["image"]))
+    assert match
+    docs = [COMPOSE, *(ROOT / p for p in ("README.md", "docs/runbook.md"))]
+    docs.append(ROOT / "docs" / "deployment-scenarios.md")
+    pattern = re.compile(r"`?(\d+\.\d+\.\d+\w*)`? (?:image )?is `?linux/amd64`? only")
+    notes = {(d.name, v) for d in docs for v in pattern.findall(d.read_text(encoding="utf-8"))}
+    assert notes, "no amd64-only note found: drop this test with the multi-arch release"
+    assert {v for _, v in notes} == {match["tag"]}, notes
+
+
 def test_environment_names_are_config_variables(environment: dict[str, str]) -> None:
     known = set(_NAMES) | {f"{s}_FILE" for s in _SECRETS}
     assert set(environment) <= known, set(environment) - known

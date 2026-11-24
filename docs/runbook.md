@@ -65,7 +65,7 @@ sudo chown 10001:10001 secrets/* policy.yaml
 sudo chmod 0400 secrets/* policy.yaml
 ```
 
-In a checkout, `policy.yaml` and `secrets/` are git-ignored there. The container runs as uid 10001 and Compose mounts these files with their host owner and mode, so they must be readable by 10001 (§11.4).
+In a checkout, git ignores `docker/policy.yaml` and `docker/secrets/`. The container runs as uid 10001 and Compose mounts these files with their host owner and mode, so they must be readable by 10001 (§11.4).
 
 **Replacing a mounted file later** (policy, key, cursor key): Docker bind-mounts a single file by inode, and editors and `install` write a new one, so a running container keeps reading the old file until it restarts. Replace with `install`, which sets owner 10001 and mode 0400 in one step, then recreate the container, which also applies any change to the compose file:
 
