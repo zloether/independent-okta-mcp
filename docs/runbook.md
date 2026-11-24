@@ -28,7 +28,8 @@ You need:
 
 - An Okta org with API Access Management ([prerequisites](okta-setup.md#prerequisites)) and a Super Administrator to run setup.
 - A Linux host with Docker Engine ≥ 25 and Compose v2, and a reverse proxy with a certificate for the public hostname.
-- The repository checkout on that host. Until an image is published, compose builds from it.
+- The image the [compose example](../docker/compose.example.yaml) pins: `ghcr.io/zloether/independent-okta-mcp:0.1.0@sha256:9e783a8eed3e5f33ccc450eb09b3117e831fa7d5e6a0328c11f4d03aa6d34108`, the digest in the release notes. Check its attestation before the first `up` and after each bump ([Checking a release](releasing.md#checking-a-release)). `0.1.0` is `linux/amd64` only: on an ARM host uncomment `platform: linux/amd64` in the compose file, which runs it under emulation (slower), until a multi-arch release.
+- `docker/compose.example.yaml` and `docker/policy.example.yaml` from the release's tag: a checkout of the tag, or the two files copied to a directory on the host.
 
 ## 2. Okta setup
 
@@ -52,7 +53,7 @@ Then make the Okta-side controls the server can't check (§8.2, §10, R7). Neith
 
 ### 3.1 Files
 
-From the checkout's `docker/` directory:
+From the directory holding `compose.example.yaml` and `policy.example.yaml` (in a checkout, `docker/`):
 
 ```sh
 cp policy.example.yaml policy.yaml               # then edit: your group IDs, your roles
@@ -64,7 +65,7 @@ sudo chown 10001:10001 secrets/* policy.yaml
 sudo chmod 0400 secrets/* policy.yaml
 ```
 
-`policy.yaml` and `secrets/` are git-ignored there. The container runs as uid 10001 and Compose mounts these files with their host owner and mode, so they must be readable by 10001 (§11.4).
+In a checkout, git ignores `docker/policy.yaml` and `docker/secrets/`. The container runs as uid 10001 and Compose mounts these files with their host owner and mode, so they must be readable by 10001 (§11.4).
 
 **Replacing a mounted file later** (policy, key, cursor key): Docker bind-mounts a single file by inode, and editors and `install` write a new one, so a running container keeps reading the old file until it restarts. Replace with `install`, which sets owner 10001 and mode 0400 in one step, then recreate the container, which also applies any change to the compose file:
 
@@ -80,7 +81,7 @@ Edit the `CHANGE` values in [`compose.example.yaml`](../docker/compose.example.y
 Check first, so a configuration, key or policy error shows as one `check failed` report rather than a container that won't stay up (§4.2 has the details):
 
 ```sh
-docker compose -f compose.example.yaml build
+docker compose -f compose.example.yaml pull
 docker compose -f compose.example.yaml run --rm okta-mcp --check
 ```
 
@@ -170,15 +171,15 @@ The container's hardening (read-only filesystem, no capabilities, uid 10001; des
 
 ### 4.1 Upgrade
 
-The server is stateless. Pull the new checkout (or change the pinned image tag and digest). Before restarting, check the live policy against the new version: a release can rename or remove a command, or tighten what the loader accepts, and then the policy that loads today stops the new server from starting. Build first, so the check runs the image that will serve:
+The server is stateless. Change the image's tag and digest in the compose file to the new release's, from its release notes, and check its attestation ([Checking a release](releasing.md#checking-a-release)). Before restarting, check the live policy against the new version: a release can rename or remove a command, or tighten what the loader accepts, and then the policy that loads today stops the new server from starting. Pull first, so the check runs the image that will serve:
 
 ```sh
-docker compose -f compose.example.yaml build    # with a published image: docker compose pull
+docker compose -f compose.example.yaml pull
 docker compose -f compose.example.yaml run --rm okta-mcp --check
 docker compose -f compose.example.yaml up -d --wait
 ```
 
-If the check fails, the running server is untouched: fix the policy (§4.2) or go back to the old checkout. `pull_policy: build` rebuilds from the checkout on `up`. Outstanding cursors survive a restart if the cursor key is unchanged. Okta-side objects don't change on upgrade. Read the release notes for new scopes, since a new domain needs a grant, an `OKTA_SCOPES` change and possibly a broader role.
+If the check fails, the running server is untouched: fix the policy (§4.2) or put the old tag and digest back. Outstanding cursors survive a restart if the cursor key is unchanged. Okta-side objects don't change on upgrade. Read the release notes for new scopes, since a new domain needs a grant, an `OKTA_SCOPES` change and possibly a broader role.
 
 ### 4.2 Policy change
 
@@ -187,7 +188,7 @@ If the check fails, the running server is untouched: fix the policy (§4.2) or g
 
    ```sh
    sudo install -o 10001 -g 10001 -m 0400 /path/to/reviewed/policy.yaml policy.new.yaml
-   docker compose -f compose.example.yaml build    # if the checkout changed since the last up
+   docker compose -f compose.example.yaml pull     # if the image changed since the last up
    docker compose -f compose.example.yaml run --rm \
      -v ./policy.new.yaml:/etc/okta-mcp/policy.new.yaml:ro \
      -e MCP_POLICY_FILE=/etc/okta-mcp/policy.new.yaml \

@@ -1,13 +1,14 @@
-# Example deployment (design §11.4, plan 7.2). Until an image is published this builds from
-# the repo checkout, so run it from this directory of the checkout: fill in the values marked
-# CHANGE, copy policy.example.yaml to policy.yaml and edit it, put the secrets in ./secrets/
-# (policy.yaml and secrets/ are git-ignored here), then:
+# Example deployment (design §11.4, plan 7.2). It runs the published image, pinned by digest, so
+# this directory can live anywhere: copy this file and policy.example.yaml from the release's
+# tag, fill in the values marked CHANGE, copy policy.example.yaml to policy.yaml and edit it,
+# put the secrets in ./secrets/ (policy.yaml and secrets/ are git-ignored in the checkout), then:
 #
+#   docker compose -f compose.example.yaml pull
 #   docker compose -f compose.example.yaml up -d
 #   curl -s http://127.0.0.1:8080/readyz
 #
-# `pull_policy: build` rebuilds on every `up`, so a `git pull` takes effect. With a published
-# image, delete `build:` and `pull_policy:`; then the directory can live anywhere.
+# Check the digest before the first `up` and after each bump: docs/releasing.md, "Checking a
+# release" (`gh attestation verify oci://…`).
 #
 # TLS terminates at a reverse proxy in front of this port (Caddy, nginx, a load balancer); the
 # container speaks plain HTTP and must never be reachable by anything but that proxy.
@@ -23,15 +24,17 @@ name: okta-mcp
 
 services:
   okta-mcp:
-    # CHANGE: pin a released tag and digest (image:tag@sha256:...) once one is published; until
-    # then build from the repo checkout. Never :latest.
-    image: okta-mcp:local
-    build:
-      context: ..
-      # Optional: build on your own base, pinned by digest (Dockerfile, design §11.2).
-      # args:
-      #   BASE_IMAGE: registry.example.com/python:3.12-slim@sha256:<digest>
-    pull_policy: build
+    # A released tag pinned by its digest, from the release notes; never :latest. Bump both
+    # together after reading the changelog (docs/runbook.md §4.1).
+    # 0.1.0 is linux/amd64 only: on an ARM host (an arm64 Mac, Graviton) uncomment `platform:`
+    # to run it under emulation, slower, until a multi-arch release.
+    image: ghcr.io/zloether/independent-okta-mcp:0.1.0@sha256:9e783a8eed3e5f33ccc450eb09b3117e831fa7d5e6a0328c11f4d03aa6d34108
+    # platform: linux/amd64
+    # To build your own instead (a patched checkout, or your own base with the BASE_IMAGE build
+    # arg; design §11.2), work in the checkout's docker/ directory, since the build context is
+    # `..`: replace `image:` with `image: okta-mcp:local`, `build: {context: ..}` and
+    # `pull_policy: build`, and run tests/container/ against it (docs/deployment-scenarios.md,
+    # "A pinned image").
     restart: unless-stopped
 
     # Runtime privileges. The image already runs as uid 10001 with no setuid binaries; these

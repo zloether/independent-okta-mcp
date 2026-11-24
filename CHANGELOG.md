@@ -4,6 +4,10 @@ Changes an operator or user of the server would notice. The format follows [Keep
 
 ## Unreleased
 
+### Changed
+
+- `docker/compose.example.yaml` and the runbook run the published `0.1.0` image, `ghcr.io/zloether/independent-okta-mcp:0.1.0`, pinned by digest, instead of building from a checkout; upgrades are a tag and digest bump and `docker compose pull`. The `0.1.0` image is `linux/amd64` only: on an ARM host, set `platform: linux/amd64` (emulated) until a multi-arch release (arm64 is planned).
+
 ## 0.1.0 - 2026-11-23
 
 The first release: alpha, not for production orgs yet. Before `1.0` a minor version can rename commands or change the policy file format and environment variables. The release candidate `0.1.0rc1` (TestPyPI, a GHCR `0.1.0rc1` tag and a GitHub pre-release) only tested the pipeline and had the same entries; use `0.1.0`.

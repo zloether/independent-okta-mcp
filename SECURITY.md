@@ -20,6 +20,10 @@ This is a personal project maintained in spare time. Expect an acknowledgement w
 
 Security fixes ship only in new versions. They are not backported: only the latest release is supported, and getting a fix means upgrading to the release that has it. Each fix is listed under **Security** in the [changelog](CHANGELOG.md), with what an operator should check (for example, a role that held an affected command). Read it before upgrading ([runbook §4.1](docs/runbook.md#41-upgrade)).
 
+This holds for both artifacts, the container image and the PyPI package. A vulnerability in a third-party component (the image's base OS packages, or a dependency pinned in `requirements.lock`) is fixed in the next release, with no release made just for it, and listed under **Security** like any other fix; a published image digest and a release's lock never change.
+
+A release with a known vulnerability stays published: it is not yanked from PyPI or deleted from GHCR, and the changelog names the release that fixes it. Only a release found to be compromised (malicious code in a published file) is taken down, from both, and announced in a GitHub security advisory ([procedure](docs/releasing.md#taking-down-a-compromised-release)).
+
 ## What counts
 
 Anything that breaks a property the [design](docs/design/mcp-server.md) claims (§12), for example:
