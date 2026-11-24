@@ -22,6 +22,8 @@ Security fixes ship only in new versions. They are not backported: only the late
 
 This holds for both artifacts, the container image and the PyPI package. A vulnerability in a third-party component (the image's base OS packages, or a dependency pinned in `requirements.lock`) is fixed in the next release, with no release made just for it, and listed under **Security** like any other fix; a published image digest and a release's lock never change.
 
+A release with a known vulnerability stays published: it is not yanked from PyPI or deleted from GHCR, and the changelog names the release that fixes it. Only a release found to be compromised (malicious code in a published file) is taken down, from both, and announced in a GitHub security advisory.
+
 ## What counts
 
 Anything that breaks a property the [design](docs/design/mcp-server.md) claims (§12), for example:
