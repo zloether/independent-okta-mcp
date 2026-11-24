@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import base64
 import os
+import re
+import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
@@ -18,7 +20,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from okta_mcp.config import _NAMES, _SECRETS, load_config  # pyright: ignore[reportPrivateUsage]
 
-DOCKER = Path(__file__).parents[1] / "docker"
+ROOT = Path(__file__).parents[1]
+DOCKER = ROOT / "docker"
 COMPOSE = DOCKER / "compose.example.yaml"
 
 
@@ -68,12 +71,30 @@ def test_port_published_on_loopback_only(service: dict[str, Any]) -> None:
         assert isinstance(port, str) and port.startswith("127.0.0.1:"), port
 
 
-def test_image_not_latest(service: dict[str, Any]) -> None:
+IMAGE_REF = re.compile(
+    r"ghcr\.io/(?P<repo>[a-z0-9._-]+/[a-z0-9._-]+):(?P<tag>[0-9][\w.]*)@sha256:[0-9a-f]{64}"
+)
+
+
+def test_image_is_a_release_pinned_by_digest(service: dict[str, Any]) -> None:
+    """The published image, tag and digest (8.3.2): a tag alone can be moved, and a `build:`
+    left beside `image:` would have Compose build instead of pulling what was verified."""
     image = str(service["image"])
-    assert ":" in image and not image.endswith(":latest")
-    if "build" in service:
-        # Otherwise Compose tries Docker Hub first, and never rebuilds an existing local tag.
-        assert service["pull_policy"] == "build"
+    match = IMAGE_REF.fullmatch(image)
+    assert match, image
+    source = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["urls"]["Source"]
+    assert source == f"https://github.com/{match['repo']}"
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert re.search(rf"^## {re.escape(match['tag'])} - ", changelog, re.M), "not a release"
+    for key in ("build", "pull_policy"):
+        assert key not in service, key
+
+
+def test_runbook_gives_the_same_image(service: dict[str, Any]) -> None:
+    # Runbook §1 names the image an operator verifies; it must be the one the example runs.
+    runbook = (ROOT / "docs" / "runbook.md").read_text(encoding="utf-8")
+    found = {m[0] for m in IMAGE_REF.finditer(runbook)}
+    assert found == {service["image"]}
 
 
 def test_environment_names_are_config_variables(environment: dict[str, str]) -> None:
@@ -122,7 +143,7 @@ def test_secrets_are_files_in_the_ignored_directory(
 
 
 def test_operator_files_are_git_ignored(service: dict[str, Any]) -> None:
-    ignore = (Path(__file__).parents[1] / ".gitignore").read_text(encoding="utf-8").splitlines()
+    ignore = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "docker/secrets/" in ignore
     for m in service["volumes"]:
         source = PurePosixPath(str(cast(dict[str, Any], m)["source"]))
