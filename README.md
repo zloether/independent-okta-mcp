@@ -31,6 +31,17 @@ What is left is tracked in the [plan](https://github.com/zloether/independent-ok
 
 From a [release](https://github.com/zloether/independent-okta-mcp/releases): the container image from GHCR, pinned by the digest in its release notes (the supported way; `linux/amd64` and `linux/arm64` from `0.1.1`), or the package installed from the release's hashed `requirements.lock` and wheel ([runbook §3.6](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md#36-without-a-container-install-from-a-release)). A plain `pip install independent-okta-mcp` from PyPI resolves unpinned dependency versions and is not supported for production. The license is not OSI-approved (see License below), which some company dependency policies block.
 
+## Usage
+
+An operator deploys the server ([runbook](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md)) and gives users its URL and the client app's ID. With Claude Code:
+
+```sh
+claude mcp add --transport http okta https://mcp.example.com/mcp \
+  --client-id 0oa1client0000000000 --callback-port 8765
+```
+
+In a session, run `/mcp`, pick `okta` and sign in with Okta in the browser. The server then lists only the tools you can call: `okta_status` and `okta_help` for everyone, plus one `okta_<domain>` tool per domain your role allows (for a helpdesk role, say, `okta_users` and `okta_groups`). Ask for `okta_status` first: it says who you are to the server, your roles, the commands each tool lets you run, and any your role allows that are hidden because the service app lacks the Okta scopes for them. Every call is read-only and checked against your role; try `okta_groups list`. Other clients: [compatibility matrix](https://github.com/zloether/independent-okta-mcp/blob/main/docs/compatibility-matrix.md).
+
 ## Local dev mode (stdio)
 
 Try it against a dev org from a local MCP client. No authentication: the caller is the principal in a file, checked by the normal policy. Refused when `MCP_ENV=production`.

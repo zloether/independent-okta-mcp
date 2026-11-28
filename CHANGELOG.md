@@ -7,6 +7,8 @@ Changes an operator or user of the server would notice. The format follows [Keep
 ### Changed
 
 - `docker/compose.example.yaml` and runbook §1 run `0.1.1`, `ghcr.io/zloether/independent-okta-mcp:0.1.1`, pinned by its index digest, which runs natively on ARM hosts (an arm64 Mac, Graviton); the `platform: linux/amd64` note is gone.
+- The runbook, checked by a deployment on a clean machine: commands to fetch the compose and policy files, verify the image's attestation and generate the service key; `okta-setup.py` run from a checkout of the release's tag; Caddy install and run steps, including a single-machine trial on `localhost`; Docker Desktop on macOS; what to do when a client signs in but the server rejects its token. Snippets no longer carry trailing comments, which interactive zsh runs as a command.
+- The README has a usage section: connecting Claude Code, signing in, and what a user sees.
 
 ## 0.1.1 - 2026-11-24
 
