@@ -18,7 +18,8 @@ setup = load_script("okta-setup")
 
 def _one_liner() -> str:
     match = re.search(
-        r"uv run python -c '([^']+)' okta-mcp-service-2\.pub\.pem", RUNBOOK.read_text()
+        r"uv run --frozen --no-dev python -c '([^']+)' okta-mcp-service-2\.pub\.pem",
+        RUNBOOK.read_text(),
     )
     assert match is not None, "runbook §4.4 kid one-liner not found"
     return match.group(1)

@@ -40,7 +40,7 @@ claude mcp add --transport http okta https://mcp.example.com/mcp \
   --client-id 0oa1client0000000000 --callback-port 8765
 ```
 
-In a session, run `/mcp`, pick `okta` and sign in with Okta in the browser. The server then lists only the tools you can call: `okta_status` and `okta_help` for everyone, plus one `okta_<domain>` tool per domain your role allows (for a helpdesk role, say, `okta_users` and `okta_groups`). Ask for `okta_status` first: it says who you are to the server, your roles, the commands each tool lets you run, and any your role allows that are hidden because the service app lacks the Okta scopes for them. Every call is read-only and checked against your role; try `okta_groups list`. Other clients: [compatibility matrix](https://github.com/zloether/independent-okta-mcp/blob/main/docs/compatibility-matrix.md).
+In a session, run `/mcp`, pick `okta` and sign in with Okta in the browser. The server then lists only the tools you can call: `okta_status` always, and `okta_help` plus one `okta_<domain>` tool per domain your role allows (for a helpdesk role, say, `okta_users` and `okta_groups`). Ask for `okta_status` first: it says who you are to the server, your roles, the commands each tool lets you run, and any your role allows that are hidden because the service app lacks the Okta scopes for them. Every call is read-only and checked against your role; try `okta_groups list`. Other clients: [compatibility matrix](https://github.com/zloether/independent-okta-mcp/blob/main/docs/compatibility-matrix.md).
 
 ## Local dev mode (stdio)
 

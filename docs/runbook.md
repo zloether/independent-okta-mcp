@@ -42,6 +42,7 @@ You need:
   For a later release, set `REF` to its tag (`vX.Y.Z`):
 
   ```sh
+  mkdir okta-mcp && cd okta-mcp
   REF=main
   for f in compose.example.yaml policy.example.yaml; do
     curl -fsSLO "https://raw.githubusercontent.com/zloether/independent-okta-mcp/$REF/docker/$f"
@@ -58,7 +59,7 @@ cd independent-okta-mcp && uv sync --frozen --no-dev
 cp scripts/okta-setup.example.yaml okta-setup.yaml
 ```
 
-`okta-setup.yaml` names your org: don't commit it, and keep it for `check` (§4.8).
+`okta-setup.yaml` names your org: don't commit it (git ignores it at the checkout's root from the release after `0.1.1`), and keep it for `check` (§4.8).
 
 In short:
 
@@ -69,7 +70,7 @@ In short:
    openssl pkey -in okta-mcp-service.pem -pubout -out okta-mcp-service.pub.pem
    ```
 2. Fill `okta-setup.yaml`, including `mcp_public_url` (what clients will connect to, ending in `/mcp`; `https`, since the image runs with `MCP_ENV=production`, which refuses `http` even on `localhost`, though the setup tool accepts it for dev mode), each MCP client's exact redirect URI (from the client's section in [`compatibility-matrix.md`](compatibility-matrix.md); for Claude Code `http://localhost:8765/callback`, not the example's `127.0.0.1`), and `refresh_tokens` if you chose B (§1). On an org set up before, use the existing objects' names and token lifetimes: the tool finds objects by name, creates any it doesn't find, and never changes an existing client's grant types or the rule's lifetimes, so a mismatch shows as `manual`.
-3. `uv run --frozen python scripts/okta-setup.py check --config okta-setup.yaml`, then the same with `apply` (or `terraform plan` / `apply`). `apply` adds the key only to a service app it creates. For an existing one, `check` reports `the configured public key is not registered`: print the JWK as in §4.4 step 2 and paste it as there (step 3), then remove any other key the app has.
+3. `uv run --frozen --no-dev python scripts/okta-setup.py check --config okta-setup.yaml`, then the same with `apply` (or `terraform plan` / `apply`). `apply` adds the key only to a service app it creates. For an existing one, `check` reports `the configured public key is not registered`: print the JWK as in §4.4 step 2 and paste it as there (step 3), then remove any other key the app has.
 4. If the scopes need Org or Super Administrator, assign it by hand ([why](okta-setup.md#what-apply-will-and-wont-change)).
 5. Re-run `check` until it exits `0`. Save the values it prints: `MCP_ISSUER`, `MCP_ALLOWED_CLIENT_IDS`, `OKTA_CLIENT_ID`, `OKTA_KEY_ID`, `OKTA_SCOPES` and the group IDs.
 6. Revoke the setup API token.
@@ -85,7 +86,7 @@ Then make the Okta-side controls the server can't check (§8.2, §10, R7). Neith
 
 ### 3.1 Files
 
-From the directory holding `compose.example.yaml` and `policy.example.yaml` (in a checkout, `docker/`):
+From the directory holding `compose.example.yaml` and `policy.example.yaml` (§1; not the §2 setup checkout of the `v0.1.1` tag, whose compose file pins `0.1.0`):
 
 ```sh
 cp policy.example.yaml policy.yaml
@@ -191,6 +192,7 @@ caddy run
 CA="$HOME/Library/Application Support/Caddy/pki/authorities/local/root.crt"
 curl -s --cacert "$CA" https://localhost/healthz
 IP=$(ipconfig getifaddr en0)
+[ -n "$IP" ] || echo "no address on en0: set IP from en1"
 curl -m 5 http://$IP:8080/healthz
 nc -vz -w 5 $IP 8080
 ```
@@ -199,11 +201,16 @@ The first prints `{"status":"ok"}`; the other two must fail to connect. In §3.4
 
 Whatever the proxy, set a request body limit (tool calls are a few KB; the server itself refuses bodies over 4 MiB), connection and header timeouts, and a per-address request rate if the endpoint is internet-facing: the server limits each signed-in user, not unauthenticated senders. Don't cache responses; tool lists differ per user.
 
+From another host on the same network, both of these must fail to connect:
+
 ```sh
-# from ANOTHER host on the same network: both must fail to connect
 curl -m 5 http://<server-host-ip>:8080/healthz
 nc -vz -w 5 <server-host-ip> 8080
-# through the proxy: must succeed
+```
+
+Through the proxy, this must succeed:
+
+```sh
 curl -s https://mcp.example.com/healthz
 ```
 
@@ -213,11 +220,11 @@ Turn on `MCP_TRUST_PROXY` only after both direct attempts fail, and only if you 
 
 ```sh
 curl -si https://mcp.example.com/mcp | grep -iE '^(HTTP|www-authenticate)'
-# 401, with WWW-Authenticate: Bearer ... resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
 curl -s https://mcp.example.com/.well-known/oauth-protected-resource/mcp
 curl -s https://mcp.example.com/.well-known/oauth-protected-resource
-# both: resource = MCP_PUBLIC_URL, authorization_servers = [MCP_ISSUER]
 ```
+
+The first prints a `401` with `WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp", scope="okta-mcp"`; the other two both give `resource` = `MCP_PUBLIC_URL` and `authorization_servers` = `[MCP_ISSUER]`.
 
 Then sign in from an MCP client as one test user per role. Check that `okta_status` shows the expected roles and that each tool list holds only that role's commands. Also check a user who is in a role group from the setup config that `policy.yaml` doesn't map (add one to the setup config for the test if needed): they get a token but see only `okta_status`, which says their groups map to no role. A user in none of the setup config's role groups can't get a token at all, because the authorization server's rule and the client app assignments list exactly those groups. That includes a hand-made `mcp-okta-*` group. How each client connects, and which have been tried, is in [`compatibility-matrix.md`](compatibility-matrix.md).
 
@@ -314,7 +321,7 @@ Rotate on a schedule (at least yearly), whenever someone who could read the key 
 2. Print its public JWK and `kid`, from the checkout of §2 (the one-liner needs its dependencies). The `kid` is the RFC 7638 thumbprint, the same value the setup tools compute:
 
    ```sh
-   uv run python -c 'import sys,json,hashlib,base64; from jwt.algorithms import RSAAlgorithm as R; j=R.to_jwk(R.prepare_key(R(R.SHA256),open(sys.argv[1]).read()),as_dict=True); m=json.dumps({"e":j["e"],"kty":"RSA","n":j["n"]},separators=(",",":"),sort_keys=True); k=base64.urlsafe_b64encode(hashlib.sha256(m.encode()).digest()).rstrip(b"=").decode(); print(json.dumps({"kty":"RSA","kid":k,"use":"sig","alg":"RS256","n":j["n"],"e":j["e"]}))' okta-mcp-service-2.pub.pem
+   uv run --frozen --no-dev python -c 'import sys,json,hashlib,base64; from jwt.algorithms import RSAAlgorithm as R; j=R.to_jwk(R.prepare_key(R(R.SHA256),open(sys.argv[1]).read()),as_dict=True); m=json.dumps({"e":j["e"],"kty":"RSA","n":j["n"]},separators=(",",":"),sort_keys=True); k=base64.urlsafe_b64encode(hashlib.sha256(m.encode()).digest()).rstrip(b"=").decode(); print(json.dumps({"kty":"RSA","kid":k,"use":"sig","alg":"RS256","n":j["n"],"e":j["e"]}))' okta-mcp-service-2.pub.pem
    ```
 
 3. Add it to the service app (Applications → the service app → General → Public Keys → Add key, then paste the JWK) and leave the old key active. The console keeps the pasted `kid` (2026-11-28: `check` read it back as the thumbprint); if the console ever shows another, use that one.
@@ -364,7 +371,7 @@ The default `MCP_REQUESTS_PER_MINUTE` (600) is above some Okta buckets (the user
 
 ### 4.8 Drift
 
-Run `uv run python scripts/okta-setup.py check --config okta-setup.yaml` on a schedule. `check` reads the service app's grants and admin-role assignments, and the setup guide calls for a Super Administrator token for that. A Read-only or Org Administrator token can't run it: Okta refuses the service app's grants read (`GET /api/v1/apps/{id}/grants`, `403 E0000006`) and `check` exits `2` (dev org, 2026-11-23 and 2026-11-28). A custom admin role wasn't tried. A scheduled job that holds a Super Administrator token is a bigger risk than the drift it catches, so either run `check` by hand on a calendar, or keep that token in a secret store with the same care as the service key. It exits `1` on any `todo` or `manual` item, for example a grant or admin role someone added to the service app, an access policy widened to all clients, or a second key. Under Terraform, a scheduled `terraform plan -detailed-exitcode` catches changes to the objects it manages, but not an extra access policy or rule someone adds on the authorization server; `check` reports those, so run it too, or alert on policy and rule changes for that server in the System Log.
+Run `uv run --frozen --no-dev python scripts/okta-setup.py check --config okta-setup.yaml` on a schedule. `check` reads the service app's grants and admin-role assignments, and the setup guide calls for a Super Administrator token for that. A Read-only or Org Administrator token can't run it: Okta refuses the service app's grants read (`GET /api/v1/apps/{id}/grants`, `403 E0000006`) and `check` exits `2` (dev org, 2026-11-23 and 2026-11-28). A custom admin role wasn't tried. A scheduled job that holds a Super Administrator token is a bigger risk than the drift it catches, so either run `check` by hand on a calendar, or keep that token in a secret store with the same care as the service key. It exits `1` on any `todo` or `manual` item, for example a grant or admin role someone added to the service app, an access policy widened to all clients, or a second key. Under Terraform, a scheduled `terraform plan -detailed-exitcode` catches changes to the objects it manages, but not an extra access policy or rule someone adds on the authorization server; `check` reports those, so run it too, or alert on policy and rule changes for that server in the System Log.
 
 ### 4.9 Rate-limit sizing
 
