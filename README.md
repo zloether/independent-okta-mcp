@@ -11,9 +11,9 @@ An independent project: not affiliated with, endorsed by or supported by Okta, I
 | | |
 |---|---|
 | Done | The server, policy engine, 24 command domains, container and setup tools, tested against mocked Okta in CI |
-| Checked against an Okta dev org | The setup script; most commands through stdio dev mode; OAuth sign-in from Claude Code to this server over loopback HTTP and through a TLS proxy (Caddy), with tool calls; the compose example up to a ready container; the service app's rate-limit share capping its requests; `diagnostics login-failures` against real sign-in failures (lockout, unassigned app, policy DENY, MFA, device assurance and posture). The Kubernetes example ran on a local cluster |
+| Checked against an Okta dev org | The setup script; most commands through stdio dev mode; OAuth sign-in from Claude Code to this server over loopback HTTP and through a TLS proxy (Caddy), with tool calls and token refresh (option B); a deployment from the [runbook](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md) on a clean machine; the compose example up to a ready container; the service app's rate-limit share capping its requests; `diagnostics login-failures` against real sign-in failures (lockout, unassigned app, policy DENY, MFA, device assurance and posture). The Kubernetes example ran on a local cluster |
 | Checked nightly in CI against an Okta org | The service token with DPoP; every registry command but eight the CI org can't serve; each example role's allowed and refused calls; paging; path routing; `diagnostics login-failures` on four sign-in failures the job causes ([plan 8.2.1](https://github.com/zloether/independent-okta-mcp/blob/main/docs/implementation-plan.md)) |
-| Not yet done | Token refresh against this server; clients other than Claude Code; a deployment from the [runbook](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md) on a clean machine; `diagnostics login-failures` on IdP and threat events; the runbook steps marked **unverified** |
+| Not yet done | Clients other than Claude Code; `diagnostics login-failures` on IdP and threat events; the runbook steps marked **unverified** |
 | Review | Written and reviewed with AI assistance (Claude Code), directed by the maintainer. No independent security audit ([SECURITY.md](https://github.com/zloether/independent-okta-mcp/blob/main/SECURITY.md#review-status)) |
 
 What is left is tracked in the [plan](https://github.com/zloether/independent-okta-mcp/blob/main/docs/implementation-plan.md).
@@ -30,6 +30,17 @@ What is left is tracked in the [plan](https://github.com/zloether/independent-ok
 ## Install
 
 From a [release](https://github.com/zloether/independent-okta-mcp/releases): the container image from GHCR, pinned by the digest in its release notes (the supported way; `linux/amd64` and `linux/arm64` from `0.1.1`), or the package installed from the release's hashed `requirements.lock` and wheel ([runbook §3.6](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md#36-without-a-container-install-from-a-release)). A plain `pip install independent-okta-mcp` from PyPI resolves unpinned dependency versions and is not supported for production. The license is not OSI-approved (see License below), which some company dependency policies block.
+
+## Usage
+
+An operator deploys the server ([runbook](https://github.com/zloether/independent-okta-mcp/blob/main/docs/runbook.md)) and gives users its URL and the client app's ID. With Claude Code:
+
+```sh
+claude mcp add --transport http okta https://mcp.example.com/mcp \
+  --client-id 0oa1client0000000000 --callback-port 8765
+```
+
+In a session, run `/mcp`, pick `okta` and sign in with Okta in the browser. The server then lists only the tools you can call: `okta_status` always, and `okta_help` plus one `okta_<domain>` tool per domain your role allows (for a helpdesk role, say, `okta_users` and `okta_groups`). Ask for `okta_status` first: it says who you are to the server, your roles, the commands each tool lets you run, and any your role allows that are hidden because the service app lacks the Okta scopes for them. Every call is read-only and checked against your role; try `okta_groups list`. Other clients: [compatibility matrix](https://github.com/zloether/independent-okta-mcp/blob/main/docs/compatibility-matrix.md).
 
 ## Local dev mode (stdio)
 

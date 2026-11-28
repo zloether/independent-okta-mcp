@@ -28,16 +28,49 @@ You need:
 
 - An Okta org with API Access Management ([prerequisites](okta-setup.md#prerequisites)) and a Super Administrator to run setup.
 - A Linux host with Docker Engine ≥ 25 and Compose v2, and a reverse proxy with a certificate for the public hostname.
-- The image the [compose example](../docker/compose.example.yaml) pins: `ghcr.io/zloether/independent-okta-mcp:0.1.1@sha256:3a4d9cd4e6fafa07b4f0ecf248d8cb69c6ee2d28130ba64d55eb44664400296b`, the digest in the release notes. Check its attestation before the first `up` and after each bump ([Checking a release](releasing.md#checking-a-release)). It is one index of `linux/amd64` and `linux/arm64`, so an ARM host runs it natively.
-- `docker/compose.example.yaml` and `docker/policy.example.yaml` from the release's tag: a checkout of the tag, or the two files copied to a directory on the host. For `0.1.1` take them from `main` instead: the switch to `0.1.1` landed after its tag, whose compose file still pins `0.1.0` (`linux/amd64` only).
+- The image the [compose example](../docker/compose.example.yaml) pins: `ghcr.io/zloether/independent-okta-mcp:0.1.1@sha256:3a4d9cd4e6fafa07b4f0ecf248d8cb69c6ee2d28130ba64d55eb44664400296b`, the digest in the release notes. It is one index of `linux/amd64` and `linux/arm64`, so an ARM host runs it natively. Check its attestation before the first `up` and after each bump, with the [GitHub CLI](https://cli.github.com) signed in (`gh auth login`). The flags pin it to `release.yml` run for that tag on a GitHub-hosted runner; `--repo` alone accepts any workflow or branch in the repository ([Checking a release](releasing.md#checking-a-release)):
+
+  ```sh
+  gh attestation verify \
+    oci://ghcr.io/zloether/independent-okta-mcp@sha256:3a4d9cd4e6fafa07b4f0ecf248d8cb69c6ee2d28130ba64d55eb44664400296b \
+    --repo zloether/independent-okta-mcp \
+    --signer-workflow zloether/independent-okta-mcp/.github/workflows/release.yml \
+    --source-ref refs/tags/v0.1.1 --deny-self-hosted-runners
+  ```
+- `docker/compose.example.yaml` and `docker/policy.example.yaml` from the release's tag: a checkout of the tag, or the two files downloaded to an empty directory on the host. For `0.1.1` take them from `main` instead: the switch to `0.1.1` landed after its tag, whose compose file still pins `0.1.0` (`linux/amd64` only).
+
+  For a later release, set `REF` to its tag (`vX.Y.Z`):
+
+  ```sh
+  mkdir okta-mcp && cd okta-mcp
+  REF=main
+  for f in compose.example.yaml policy.example.yaml; do
+    curl -fsSLO "https://raw.githubusercontent.com/zloether/independent-okta-mcp/$REF/docker/$f"
+  done
+  ```
 
 ## 2. Okta setup
 
-Follow [`okta-setup.md`](okta-setup.md) with either `scripts/okta-setup.py` or `terraform/okta/`, not both. In short:
+Follow [`okta-setup.md`](okta-setup.md) with either `scripts/okta-setup.py` or `terraform/okta/`, not both. Both run on a trusted machine (not the server) from a checkout of the release's tag, with [uv](https://docs.astral.sh/uv/) for the script; the server host needs neither. The checkout pins the script's dependencies to `uv.lock`, which matters for a tool that holds a Super Administrator token:
 
-1. Generate the service app's key pair on a trusted machine. The private key goes only to the server's secrets directory.
-2. Fill the setup config, including `mcp_public_url` (what clients will connect to, ending in `/mcp`) and each MCP client's exact redirect URI.
-3. `check`, then `apply` (or `terraform plan` / `apply`).
+```sh
+git clone --branch v0.1.1 https://github.com/zloether/independent-okta-mcp
+cd independent-okta-mcp && uv sync --frozen --no-dev
+cp scripts/okta-setup.example.yaml okta-setup.yaml
+```
+
+`okta-setup.yaml` names your org: don't commit it (git ignores it at the checkout's root from the release after `0.1.1`), and keep it for `check` (§4.8).
+
+In short:
+
+1. Generate the service app's key pair on that machine, in the checkout (git ignores `*.pem`). `public_key_file` in `okta-setup.yaml` names the public half; the private key goes only to the server's secrets directory (§3.1):
+
+   ```sh
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out okta-mcp-service.pem
+   openssl pkey -in okta-mcp-service.pem -pubout -out okta-mcp-service.pub.pem
+   ```
+2. Fill `okta-setup.yaml`, including `mcp_public_url` (what clients will connect to, ending in `/mcp`; `https`, since the image runs with `MCP_ENV=production`, which refuses `http` even on `localhost`, though the setup tool accepts it for dev mode), each MCP client's exact redirect URI (from the client's section in [`compatibility-matrix.md`](compatibility-matrix.md); for Claude Code `http://localhost:8765/callback`, not the example's `127.0.0.1`), and `refresh_tokens` if you chose B (§1). On an org set up before, use the existing objects' names and token lifetimes: the tool finds objects by name, creates any it doesn't find, and never changes an existing client's grant types or the rule's lifetimes, so a mismatch shows as `manual`.
+3. `uv run --frozen --no-dev python scripts/okta-setup.py check --config okta-setup.yaml`, then the same with `apply` (or `terraform plan` / `apply`). `apply` adds the key only to a service app it creates. For an existing one, `check` reports `the configured public key is not registered`: print the JWK as in §4.4 step 2 and paste it as there (step 3), then remove any other key the app has.
 4. If the scopes need Org or Super Administrator, assign it by hand ([why](okta-setup.md#what-apply-will-and-wont-change)).
 5. Re-run `check` until it exits `0`. Save the values it prints: `MCP_ISSUER`, `MCP_ALLOWED_CLIENT_IDS`, `OKTA_CLIENT_ID`, `OKTA_KEY_ID`, `OKTA_SCOPES` and the group IDs.
 6. Revoke the setup API token.
@@ -53,11 +86,16 @@ Then make the Okta-side controls the server can't check (§8.2, §10, R7). Neith
 
 ### 3.1 Files
 
-From the directory holding `compose.example.yaml` and `policy.example.yaml` (in a checkout, `docker/`):
+From the directory holding `compose.example.yaml` and `policy.example.yaml` (§1; not the §2 setup checkout of the `v0.1.1` tag, whose compose file pins `0.1.0`):
 
 ```sh
-cp policy.example.yaml policy.yaml               # then edit: your group IDs, your roles
-umask 077                                        # new secret files are owner-only from the start
+cp policy.example.yaml policy.yaml
+```
+
+Edit `policy.yaml` now, while you still own it: your group IDs (from `check`, §2), your roles. Then add the secrets, under exactly these names (the compose file's `secrets:` section reads them; only the private key goes here, not the public one), and hand everything to uid 10001, after which only `sudo` can change the files (to change them later, see "Replacing a mounted file" below). `umask 077` makes the new secret files owner-only from the start:
+
+```sh
+umask 077
 mkdir -p secrets
 head -c 32 /dev/urandom | base64 > secrets/cursor_key
 cp /path/to/okta-mcp-service.pem secrets/okta_private_key.pem
@@ -66,6 +104,8 @@ sudo chmod 0400 secrets/* policy.yaml
 ```
 
 In a checkout, git ignores `docker/policy.yaml` and `docker/secrets/`. The container runs as uid 10001 and Compose mounts these files with their host owner and mode, so they must be readable by 10001 (§11.4).
+
+**Docker Desktop on macOS** (for a trial, not production): skip the `chown`. Its file sharing opens the host side of a bind mount as your macOS user, so a file owned by 10001 fails at `run` or `up` with `invalid mount config for type "bind": stat …: permission denied`. Keep the files owned by you, mode 0400; the container's uid 10001 reads them through the share (Docker Desktop, macOS, 2026-11-28).
 
 **Replacing a mounted file later** (policy, key, cursor key): Docker bind-mounts a single file by inode, and editors and `install` write a new one, so a running container keeps reading the old file until it restarts. Replace with `install`, which sets owner 10001 and mode 0400 in one step, then recreate the container, which also applies any change to the compose file:
 
@@ -89,9 +129,11 @@ Then:
 
 ```sh
 docker compose -f compose.example.yaml up -d --wait
-curl -s http://127.0.0.1:8080/healthz          # {"status":"ok"}
-curl -s http://127.0.0.1:8080/readyz           # {"status":"ready"}; 503 for a few seconds while keys and token load
+curl -s http://127.0.0.1:8080/healthz
+curl -s http://127.0.0.1:8080/readyz
 ```
+
+`/healthz` answers `{"status":"ok"}`, `/readyz` `{"status":"ready"}`, or `503` for a few seconds while keys and token load.
 
 These use the loopback port. With the shared-network option (§3.3), which publishes no port, run them from the proxy's container instead, against `http://okta-mcp:8080`. `docker compose ps` also shows the image's own health check (`healthy`) either way.
 
@@ -104,7 +146,9 @@ A configuration, key or policy error stops the server with exit status `2` and t
 
 Point the proxy at `127.0.0.1:8080`, or at `okta-mcp:8080` with the shared-network option in the compose file, and serve it at `MCP_PUBLIC_URL`. Then confirm that only the proxy can reach the port. Docker's published ports bypass host firewalls such as ufw (§11.4).
 
-The proxy should cap what it accepts. A minimal Caddyfile (run in front of this server on 2026-11-16, as part of a fuller one: a body over 1 MB is refused with 413, sign-in and tool calls pass through):
+The proxy is yours to install and run; the compose file doesn't include one. Any TLS reverse proxy works. The steps below use [Caddy](https://caddyserver.com/docs/install), which gets and renews the certificate itself.
+
+**On the server host (Linux).** Install Caddy from its Debian/Ubuntu or Fedora package ([install docs](https://caddyserver.com/docs/install)), which runs it as a systemd service reading `/etc/caddy/Caddyfile`. Put this there, with your `MCP_PUBLIC_URL`'s hostname (run in front of this server on 2026-11-16, as part of a fuller one: a body over 1 MB is refused with 413, sign-in and tool calls pass through):
 
 ```
 mcp.example.com {
@@ -115,13 +159,58 @@ mcp.example.com {
 }
 ```
 
-Whatever the proxy, set a request body limit (tool calls are a few KB; the server itself refuses bodies over 4 MiB), connection and header timeouts, and a per-address request rate if the endpoint is internet-facing: the server limits each signed-in user, not unauthenticated senders. Don't cache responses; tool lists differ per user.
+```sh
+sudo systemctl reload caddy
+```
+
+For a publicly trusted certificate, the hostname's DNS must point at this host and Let's Encrypt must reach it on port 80 or 443. An internal-only host needs the [DNS challenge](https://caddyserver.com/docs/automatic-https#dns-challenge) or a certificate from your own CA (`tls` directive) instead.
+
+**On one machine, for a trial** (macOS with Docker Desktop, say). `MCP_PUBLIC_URL` is `https://localhost/mcp`, and Caddy signs `localhost` with its own local CA. Install Caddy (`brew install caddy` on macOS) and save this as `Caddyfile` in the compose directory:
+
+```
+{
+	skip_install_trust
+}
+
+localhost {
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+Then start it from that directory, in a terminal of its own; it runs in the foreground, reads `./Caddyfile`, and stops on Ctrl-C:
 
 ```sh
-# from ANOTHER host on the same network: both must fail to connect
+caddy run
+```
+
+`skip_install_trust` keeps Caddy out of the system trust store; hand its root certificate to each client instead. Caddy creates it on the first run; start Claude Code (a Node program, which doesn't read the macOS keychain) with `NODE_EXTRA_CA_CERTS` set to it (§3.4). From another terminal, check the proxy, and that the port isn't reachable on the machine's network address (here standing in for "another host", below; `en1` if `en0` prints nothing):
+
+```sh
+CA="$HOME/Library/Application Support/Caddy/pki/authorities/local/root.crt"
+curl -s --cacert "$CA" https://localhost/healthz
+IP=$(ipconfig getifaddr en0)
+[ -n "$IP" ] || echo "no address on en0: set IP from en1"
+curl -m 5 http://$IP:8080/healthz
+nc -vz -w 5 $IP 8080
+```
+
+The first prints `{"status":"ok"}`; the other two must fail to connect. In §3.4, add `--cacert "$CA"` to each `curl` and use `https://localhost`.
+
+Whatever the proxy, set a request body limit (tool calls are a few KB; the server itself refuses bodies over 4 MiB), connection and header timeouts, and a per-address request rate if the endpoint is internet-facing: the server limits each signed-in user, not unauthenticated senders. Don't cache responses; tool lists differ per user.
+
+From another host on the same network, both of these must fail to connect:
+
+```sh
 curl -m 5 http://<server-host-ip>:8080/healthz
 nc -vz -w 5 <server-host-ip> 8080
-# through the proxy: must succeed
+```
+
+Through the proxy, this must succeed:
+
+```sh
 curl -s https://mcp.example.com/healthz
 ```
 
@@ -130,14 +219,16 @@ Turn on `MCP_TRUST_PROXY` only after both direct attempts fail, and only if you 
 ### 3.4 Smoke test
 
 ```sh
-curl -si https://mcp.example.com/mcp | head -5
-# 401, with WWW-Authenticate: Bearer ... resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+curl -si https://mcp.example.com/mcp | grep -iE '^(HTTP|www-authenticate)'
 curl -s https://mcp.example.com/.well-known/oauth-protected-resource/mcp
 curl -s https://mcp.example.com/.well-known/oauth-protected-resource
-# both: resource = MCP_PUBLIC_URL, authorization_servers = [MCP_ISSUER]
 ```
 
+The first prints a `401` with `WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp", scope="okta-mcp"`; the other two both give `resource` = `MCP_PUBLIC_URL` and `authorization_servers` = `[MCP_ISSUER]`.
+
 Then sign in from an MCP client as one test user per role. Check that `okta_status` shows the expected roles and that each tool list holds only that role's commands. Also check a user who is in a role group from the setup config that `policy.yaml` doesn't map (add one to the setup config for the test if needed): they get a token but see only `okta_status`, which says their groups map to no role. A user in none of the setup config's role groups can't get a token at all, because the authorization server's rule and the client app assignments list exactly those groups. That includes a hand-made `mcp-okta-*` group. How each client connects, and which have been tried, is in [`compatibility-matrix.md`](compatibility-matrix.md).
+
+If the client signs in but the server rejects the token (Claude Code: "got new credentials, but … rejected them"), run `okta-setup.py check` again first: a `manual` line on the authorization server's audience or the client app (an `MCP_PUBLIC_URL` that changed after setup, say) is the usual cause. Otherwise set `MCP_LOG_LEVEL: DEBUG`, recreate the container, sign in again, and read the `token_rejected` lines: each ends in a fixed reason (`aud`, `iss`, `cid not in MCP_ALLOWED_CLIENT_IDS`, …), never the token. Set it back afterwards.
 
 ### 3.5 Tell your users
 
@@ -147,20 +238,22 @@ Results are Okta data, and some of it is controlled by outsiders. For example, f
 
 The image is the supported way to run the server. To install the package yourself (to build your own image, or on a host without Docker), use a release's assets, never a bare `pip install`: the wheel's dependency metadata holds version ranges, so a plain `pip install independent-okta-mcp` resolves whatever versions are newest that day, not the ones CI tested. That is **not supported for production**. Each release carries `requirements.lock` (every dependency pinned with its hashes, exported from `uv.lock`), the wheel and sdist, and `SHA256SUMS`.
 
+Set `VERSION` to the release, without the `v`. `--repo` alone accepts any workflow or branch in the repository; the other flags pin the attestation to the release run. Run `okta-mcp --check` with the server's environment set. Python 3.12 or later:
+
 ```sh
-VERSION=X.Y.Z          # the release, without the v
+VERSION=X.Y.Z
 REPO=zloether/independent-okta-mcp
 gh release download "v$VERSION" --repo "$REPO" \
   --pattern requirements.lock --pattern SHA256SUMS --pattern '*.whl'
 sha256sum -c --ignore-missing SHA256SUMS
 gh attestation verify independent_okta_mcp-"$VERSION"-py3-none-any.whl --repo "$REPO" \
   --signer-workflow "$REPO/.github/workflows/release.yml" --source-ref "refs/tags/v$VERSION" \
-  --deny-self-hosted-runners   # --repo alone accepts any workflow or branch in the repository
+  --deny-self-hosted-runners
 
-python3.12 -m venv /opt/okta-mcp                   # Python 3.12 or later
+python3.12 -m venv /opt/okta-mcp
 /opt/okta-mcp/bin/pip install --require-hashes --no-deps -r requirements.lock
 /opt/okta-mcp/bin/pip install --no-deps independent_okta_mcp-"$VERSION"-py3-none-any.whl
-/opt/okta-mcp/bin/okta-mcp --check                 # with the server's environment set
+/opt/okta-mcp/bin/okta-mcp --check
 ```
 
 `--require-hashes` refuses any dependency whose file doesn't match the lock; `--no-deps` on both steps keeps pip from resolving anything the lock doesn't name. The wheel isn't in the lock (it's the release's own build), so it is checked by `SHA256SUMS` and its attestation instead. From a checkout of the release tag, `uv sync --frozen --no-dev` installs the same set from `uv.lock`.
@@ -184,11 +277,11 @@ If the check fails, the running server is untouched: fix the policy (§4.2) or p
 ### 4.2 Policy change
 
 1. Edit `policy.yaml` in version control, and get it reviewed. The policy decides who reads what, so treat a change like an access grant.
-2. Check it before it goes live. From the `docker/` directory, put the new file beside the live one as `policy.new.yaml`, readable by uid 10001, and run `okta-mcp --check` in a one-off container of the same service, so it sees the same variables, secrets and user as the server:
+2. Check it before it goes live. From the `docker/` directory, put the new file beside the live one as `policy.new.yaml`, readable by uid 10001, pull if the image changed since the last `up`, and run `okta-mcp --check` in a one-off container of the same service, so it sees the same variables, secrets and user as the server:
 
    ```sh
    sudo install -o 10001 -g 10001 -m 0400 /path/to/reviewed/policy.yaml policy.new.yaml
-   docker compose -f compose.example.yaml pull     # if the image changed since the last up
+   docker compose -f compose.example.yaml pull
    docker compose -f compose.example.yaml run --rm \
      -v ./policy.new.yaml:/etc/okta-mcp/policy.new.yaml:ro \
      -e MCP_POLICY_FILE=/etc/okta-mcp/policy.new.yaml \
@@ -225,13 +318,13 @@ Rotate on a schedule (at least yearly), whenever someone who could read the key 
    openssl pkey -in okta-mcp-service-2.pem -pubout -out okta-mcp-service-2.pub.pem
    ```
 
-2. Print its public JWK and `kid`. This is the RFC 7638 thumbprint, the same value the setup tools compute:
+2. Print its public JWK and `kid`, from the checkout of §2 (the one-liner needs its dependencies). The `kid` is the RFC 7638 thumbprint, the same value the setup tools compute:
 
    ```sh
-   uv run python -c 'import sys,json,hashlib,base64; from jwt.algorithms import RSAAlgorithm as R; j=R.to_jwk(R.prepare_key(R(R.SHA256),open(sys.argv[1]).read()),as_dict=True); m=json.dumps({"e":j["e"],"kty":"RSA","n":j["n"]},separators=(",",":"),sort_keys=True); k=base64.urlsafe_b64encode(hashlib.sha256(m.encode()).digest()).rstrip(b"=").decode(); print(json.dumps({"kty":"RSA","kid":k,"use":"sig","alg":"RS256","n":j["n"],"e":j["e"]}))' okta-mcp-service-2.pub.pem
+   uv run --frozen --no-dev python -c 'import sys,json,hashlib,base64; from jwt.algorithms import RSAAlgorithm as R; j=R.to_jwk(R.prepare_key(R(R.SHA256),open(sys.argv[1]).read()),as_dict=True); m=json.dumps({"e":j["e"],"kty":"RSA","n":j["n"]},separators=(",",":"),sort_keys=True); k=base64.urlsafe_b64encode(hashlib.sha256(m.encode()).digest()).rstrip(b"=").decode(); print(json.dumps({"kty":"RSA","kid":k,"use":"sig","alg":"RS256","n":j["n"],"e":j["e"]}))' okta-mcp-service-2.pub.pem
    ```
 
-3. Add it to the service app (Applications → the service app → General → Public Keys → Add key, then paste the JWK) and leave the old key active. Unverified: whether the console keeps the pasted `kid` or assigns its own. Use the `kid` the console shows.
+3. Add it to the service app (Applications → the service app → General → Public Keys → Add key, then paste the JWK) and leave the old key active. The console keeps the pasted `kid` (2026-11-28: `check` read it back as the thumbprint); if the console ever shows another, use that one.
 4. On the server, install the new private key as `secrets/okta_private_key.pem` (owner 10001, mode 0400, as in §3.1), set `OKTA_KEY_ID` to the new `kid`, and run `docker compose -f compose.example.yaml up -d --force-recreate --wait`. `/readyz` turning `ready` proves Okta accepted the new key. The service token is fetched again at startup.
 5. Deactivate, then delete, the old key in the console. `okta-setup.py check` reports `manual` while both keys are present. Update `public_key_file` in the setup config to the new public key, then `check` exits `0` again.
 6. Destroy every copy of the old private key.
@@ -278,7 +371,7 @@ The default `MCP_REQUESTS_PER_MINUTE` (600) is above some Okta buckets (the user
 
 ### 4.8 Drift
 
-Run `uv run python scripts/okta-setup.py check --config okta-setup.yaml` on a schedule. `check` reads the service app's grants and admin-role assignments, and the setup guide calls for a Super Administrator token for that. A Read-only Administrator token can't run it: Okta refuses the service app's grants read (`GET /api/v1/apps/{id}/grants`, `403 E0000006`) and `check` exits `2` (dev org, 2026-11-23). Roles between Read-only and Super Administrator weren't tried. A scheduled job that holds a Super Administrator token is a bigger risk than the drift it catches, so either run `check` by hand on a calendar, or keep that token in a secret store with the same care as the service key. It exits `1` on any `todo` or `manual` item, for example a grant or admin role someone added to the service app, an access policy widened to all clients, or a second key. Under Terraform, a scheduled `terraform plan -detailed-exitcode` catches changes to the objects it manages, but not an extra access policy or rule someone adds on the authorization server; `check` reports those, so run it too, or alert on policy and rule changes for that server in the System Log.
+Run `uv run --frozen --no-dev python scripts/okta-setup.py check --config okta-setup.yaml` on a schedule. `check` reads the service app's grants and admin-role assignments, and the setup guide calls for a Super Administrator token for that. A Read-only or Org Administrator token can't run it: Okta refuses the service app's grants read (`GET /api/v1/apps/{id}/grants`, `403 E0000006`) and `check` exits `2` (dev org, 2026-11-23 and 2026-11-28). A custom admin role wasn't tried. A scheduled job that holds a Super Administrator token is a bigger risk than the drift it catches, so either run `check` by hand on a calendar, or keep that token in a secret store with the same care as the service key. It exits `1` on any `todo` or `manual` item, for example a grant or admin role someone added to the service app, an access policy widened to all clients, or a second key. Under Terraform, a scheduled `terraform plan -detailed-exitcode` catches changes to the objects it manages, but not an extra access policy or rule someone adds on the authorization server; `check` reports those, so run it too, or alert on policy and rule changes for that server in the System Log.
 
 ### 4.9 Rate-limit sizing
 
@@ -308,10 +401,10 @@ Check the dashboard after a change too: the server's 429s are its own, but other
 
 ## 5. Kill switch
 
-In order of speed. Do as many as the incident needs (§11.4). Only step 1 takes effect at once. Steps 2–4 stop new tokens, not ones already issued, because the server checks user tokens locally and never learns that Okta revoked one.
+In order of speed. Do as many as the incident needs (§11.4). Steps 1 and 2 take effect at once. Steps 3 and 4 stop new tokens, not ones already issued, because the server checks user tokens locally and never learns that Okta revoked one.
 
 1. **Stop the server:** `docker compose -f compose.example.yaml down`, or remove the route at the proxy. This takes seconds and ends all MCP access.
-2. **Deactivate the service app** (Applications → the service app → Deactivate). This is the step for a leaked service key. Unverified (plan 7.3): whether Okta also refuses service tokens issued before the deactivation, or lets them run out (up to an hour). Until that is known, assume a stolen token works for an hour after this step.
+2. **Deactivate the service app** (Applications → the service app → Deactivate). This is the step for a leaked service key. Okta also refuses service tokens issued before the deactivation: the server's next call gets `401 invalid_token`, then its token requests `400 invalid_client` (whose log hint names the key settings, but here the cause is the deactivated app), so MCP calls that reach Okta fail too (dev org, 2026-11-28). **Deactivating removes the app's Okta API scope grants and admin roles**, and reactivating doesn't restore them: token requests then fail with `400 consent_required`. To bring it back, reactivate, then grant the scopes and assign the admin role again by hand (Applications → the service app → Okta API Scopes, and Admin roles; `okta-setup.py check` lists what's missing, and `apply` won't add them to an existing app). The server keeps retrying its token request, so no restart is needed: check `/readyz`.
 3. **Rotate the service key** (§4.4) if the key may have leaked: delete its public key from the app. This stops new service tokens only. A token the thief already holds is bound to the thief's own DPoP key and stays valid for its lifetime, so do step 2 as well.
 4. **Cut user sign-in:** deactivate the `okta-mcp` authorization server, or remove the client apps from its access policy. Users' access tokens already issued keep passing the server's checks until they expire (≤ 30 minutes as set up). If that window matters, also do step 1. Under B, also revoke the affected users' tokens (§4.3).
 5. **Rotate the cursor key** (`secrets/cursor_key`, §4.5) if it may have leaked. Outstanding cursors stop working when the container is recreated.

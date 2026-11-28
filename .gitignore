@@ -245,3 +245,6 @@ environment.*
 # Compose example: secrets placed next to docker/compose.example.yaml
 docker/secrets/
 docker/policy.yaml
+
+# okta-setup.py config: names the org (runbook §2)
+/okta-setup.yaml

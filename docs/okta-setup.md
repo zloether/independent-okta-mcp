@@ -87,11 +87,13 @@ Some endpoints also need an Okta feature that not every org has, whatever the ro
 
 ## Before you start
 
-1. **An admin API token.** `apply` creates an authorization server and assigns an admin role, which needs a **Super Administrator** token. `check` only reads, but those reads include admin-role assignments, so use the same token (a Read-only Administrator token stops at the service app's grants with `403`; [runbook §4.8](runbook.md#48-drift)). The token is used only by this tool. Never give it to the server, and revoke it when you are done.
+1. **An admin API token.** `apply` creates an authorization server and assigns an admin role, which needs a **Super Administrator** token. `check` only reads, but those reads include admin-role assignments, so use the same token (a Read-only or Org Administrator token stops at the service app's grants with `403`; [runbook §4.8](runbook.md#48-drift)). The token is used only by this tool. Never give it to the server, and revoke it when you are done.
+
+   Create it under Security > API > Tokens:
 
    ```sh
    export OKTA_ORG_URL=https://example.okta.com
-   export OKTA_SETUP_API_TOKEN=…   # Security > API > Tokens
+   export OKTA_SETUP_API_TOKEN=…
    ```
 
 2. **The service app key pair.** The tool reads only the public half. The private key goes to the server as a secret (`OKTA_PRIVATE_KEY_FILE`).
@@ -128,8 +130,10 @@ Under B, `lifetime_minutes` is how often users must sign in again, whatever the 
 
 ```sh
 uv run python scripts/okta-setup.py check --config okta-setup.yaml
-uv run python scripts/okta-setup.py apply --config okta-setup.yaml   # add --yes to skip the prompt
+uv run python scripts/okta-setup.py apply --config okta-setup.yaml
 ```
+
+Add `--yes` to `apply` to skip the prompt.
 
 Each line has a status:
 
@@ -188,10 +192,10 @@ The rule must allow the authorization code grant only, so a rule that also lists
 
 2. Copy `terraform/okta/terraform.tfvars.example` to `terraform.tfvars` and edit it. Add a backend to `versions.tf`. State holds IDs and settings but no secrets: the clients have none and the service app holds only the public key.
 
-3. Run with a Super Administrator token, as for the script:
+3. Run with a Super Administrator token, as for the script. The org comes from `okta_org_url` in `terraform.tfvars`:
 
    ```sh
-   export OKTA_API_TOKEN=…   # the org comes from okta_org_url in terraform.tfvars
+   export OKTA_API_TOKEN=…
    cd terraform/okta && terraform init && terraform plan
    ```
 

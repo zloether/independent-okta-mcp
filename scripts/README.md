@@ -19,11 +19,13 @@ Exit status, for all of them: `0` done or nothing to do, `1` work remains, drift
 
 Sets up the Okta side: authorization server, role groups, OIDC client apps, and the server's service app. It runs with a **Super Administrator** API token, so read [docs/okta-setup.md](../docs/okta-setup.md) first. Use this or [`terraform/okta/`](../terraform/okta/), not both, on one org.
 
+Copy the example config and edit it; `--yes` skips `apply`'s prompt:
+
 ```
-cp scripts/okta-setup.example.yaml okta-setup.yaml    # edit it
+cp scripts/okta-setup.example.yaml okta-setup.yaml
 export OKTA_ORG_URL=https://your-org.okta.com OKTA_SETUP_API_TOKEN=...
 uv run python scripts/okta-setup.py check --config okta-setup.yaml
-uv run python scripts/okta-setup.py apply --config okta-setup.yaml   # [--yes] skips the prompt
+uv run python scripts/okta-setup.py apply --config okta-setup.yaml
 ```
 
 `check` only reads. `apply` shows its plan and asks before it creates missing objects and links. It never deletes or loosens anything; other differences are reported for you to fix by hand. The setup token is for this script only; never give it to the server.
